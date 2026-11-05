@@ -307,6 +307,70 @@ test('a multi-line value keeps its line breaks; the page gives it a paste box', 
   assert.equal((await result).values.get('KEY'), pem)
 })
 
+test('Later sits left of Cancel; it answers 200, saves nothing and rejects with exit code 6 naming every box', async () => {
+  const { urlReady, result, stored } = startCard({ fields: [{ name: 'A' }, { name: 'B', optional: true }, { name: 'C' }] })
+  const url = await urlReady
+  const page = (await send(url)).text
+  assert.ok(page.includes('<button type="button" id="later">Later</button>'))
+  assert.ok(page.indexOf('id="later"') < page.indexOf('id="cancel"'))
+
+  const res = await send(`${url}/later`, { method: 'POST', body: {} })
+  assert.equal(res.status, 200)
+  assert.deepEqual(JSON.parse(res.text), { later: true })
+  await assert.rejects(result, (e) => {
+    assert.ok(e instanceof KeypromptError)
+    assert.equal(e.exitCode, 6)
+    assert.equal(e.message, 'The person chose Later for A, B and C. Nothing was saved.')
+    return true
+  })
+  const again = await send(`${url}/submit`, { method: 'POST', body: { values: { A: 'a', C: 'c' } } }).catch(() => ({ status: 'closed' }))
+  assert.ok(again.status === 410 || again.status === 'closed')
+  assert.deepEqual(stored, [])
+})
+
+test('Later from a foreign Host or Origin, without JSON, or as a GET is refused, and the card keeps waiting', async () => {
+  const { urlReady, result, stored } = startCard()
+  const url = await urlReady
+  const u = new URL(url)
+  assert.equal((await send(`${url}/later`, { method: 'POST', origin: 'https://evil.example', body: {} })).status, 403)
+  assert.equal((await send(`${url}/later`, { method: 'POST', origin: null, body: {} })).status, 403)
+  assert.equal((await send(`${url}/later`, { method: 'POST', host: `evil.example:${u.port}`, body: {} })).status, 403)
+  assert.equal((await send(`${u.origin}/card/${'A'.repeat(43)}/later`, { method: 'POST', body: {} })).status, 404)
+  assert.equal((await send(`${url}/later`, { method: 'POST', contentType: 'text/plain', body: {} })).status, 415)
+  assert.equal((await send(`${url}/later`)).status, 405)
+
+  // None of those ended the card: a real submit still works.
+  assert.equal((await send(`${url}/submit`, { method: 'POST', body: one('sk') })).status, 200)
+  assert.equal((await result).values.get('OPENAI_API_KEY'), 'sk')
+  assert.deepEqual(stored, [{ values: { OPENAI_API_KEY: 'sk' }, remember: true }])
+})
+
+test('Later while a save is under way gives 409, so "Nothing was saved" is never said about a card that saved', async () => {
+  let release
+  const gate = new Promise((r) => {
+    release = r
+  })
+  let saving
+  const started = new Promise((r) => {
+    saving = r
+  })
+  const { urlReady, result } = startCard({
+    onSubmit: async () => {
+      saving()
+      await gate
+    },
+  })
+  const url = await urlReady
+  const submit = send(`${url}/submit`, { method: 'POST', body: one('sk') })
+  await started
+  const later = await send(`${url}/later`, { method: 'POST', body: {} })
+  assert.equal(later.status, 409)
+  assert.deepEqual(JSON.parse(later.text), { error: 'Already saving. Wait a moment.' })
+  release()
+  assert.equal((await submit).status, 200)
+  assert.equal((await result).values.get('OPENAI_API_KEY'), 'sk')
+})
+
 test('the size cap allows a large value and refuses a body over 1 MiB', async () => {
   const { urlReady, result, stored } = startCard()
   const url = await urlReady

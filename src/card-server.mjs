@@ -2,6 +2,7 @@ import { randomBytes, timingSafeEqual } from 'node:crypto'
 import { createServer } from 'node:http'
 import { renderCard } from './card-page.mjs'
 import { EXIT, KeypromptError } from './errors.mjs'
+import { joinNames } from './save.mjs'
 
 /** 12 fields of up to 64 KiB each, with room for JSON escaping. */
 const MAX_BODY_BYTES = 1024 * 1024
@@ -70,7 +71,7 @@ function sameString(a, b) {
 
 /**
  * Serve the secret card on 127.0.0.1 behind a one-time path token and wait
- * for the person to submit or cancel it.
+ * for the person to submit it, cancel it or choose Later.
  *
  * Guards: loopback only; an unguessable 256-bit token in the path; the Host
  * header must be this exact loopback address (stops DNS-rebinding pages) and a
@@ -136,7 +137,7 @@ export function requestSecretWithCard(request) {
         return
       }
 
-      if (req.method !== 'POST' || (action !== 'submit' && action !== 'cancel')) {
+      if (req.method !== 'POST' || (action !== 'submit' && action !== 'cancel' && action !== 'later')) {
         send(405, { error: 'Method not allowed.' })
         return
       }
@@ -164,6 +165,17 @@ export function requestSecretWithCard(request) {
         if (action === 'cancel') {
           send(200, { cancelled: true })
           finish(() => reject(new KeypromptError('The person closed the secret card without saving.', { exitCode: EXIT.CANCELLED })))
+          return
+        }
+        if (action === 'later') {
+          // A save already under way may still succeed, and then "Nothing was saved" would be false.
+          if (busy) {
+            send(409, { error: 'Already saving. Wait a moment.' })
+            return
+          }
+          send(200, { later: true })
+          const names = joinNames(request.fields.map((f) => f.name))
+          finish(() => reject(new KeypromptError(`The person chose Later for ${names}. Nothing was saved.`, { exitCode: EXIT.DEFERRED })))
           return
         }
         /** @type {{ values?: unknown, remember?: unknown } | null} */

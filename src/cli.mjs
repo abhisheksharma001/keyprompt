@@ -133,6 +133,22 @@ export function setReport(fields, values, storeLabel) {
 }
 
 /**
+ * What `run` tells the agent when the person chose Later: the command was not
+ * started, and the agent should carry on without these names for now. Only the
+ * command's name is shown, never its arguments.
+ * @param {import('./card-server.mjs').CardField[]} fields The names on the card.
+ * @param {string} command
+ */
+export function laterForRun(fields, command) {
+  const one = fields.length === 1
+  return new KeypromptError(
+    `The person chose Later for ${joinNames(fields.map((f) => f.name))}. Nothing was saved and ${command} did not run. ` +
+      `Carry on with work that does not need ${one ? 'it' : 'these'}; ask again only when you are about to use ${one ? 'it' : 'them'}.`,
+    { exitCode: EXIT.DEFERRED },
+  )
+}
+
+/**
  * @param {string[]} argv
  * @returns {Promise<number>} exit code
  */
@@ -173,14 +189,19 @@ export async function main(argv) {
       throw new KeypromptError('Usage: keyprompt run NAME[,NAME...] -- COMMAND [ARGS...]', { exitCode: EXIT.USAGE })
     }
     const store = getStore()
+    const [command, ...commandArgs] = args.command
     const secrets = await collectSecrets(store, fields, async ({ fields: missing, allowSessionOnly }) => {
-      const asked = await askWithCard(store, missing, { reason: args.reason, by: args.by, replacing: false, allowSessionOnly })
+      const asked = await askWithCard(store, missing, { reason: args.reason, by: args.by, replacing: false, allowSessionOnly }).catch(
+        (error) => {
+          if (error instanceof KeypromptError && error.exitCode === EXIT.DEFERRED) throw laterForRun(missing, command)
+          throw error
+        },
+      )
       // The card needs at least one value, so this names at least one.
       const given = missing.filter((f) => asked.values.has(f.name)).map((f) => f.name)
       process.stderr.write(`keyprompt: ${joinNames(given)} ${asked.remembered ? `saved in the ${store.label}` : 'received for this run only'}.\n`)
       return asked
     })
-    const [command, ...commandArgs] = args.command
     return runWithSecrets(command, commandArgs, secrets, { redact: args.redact })
   }
 

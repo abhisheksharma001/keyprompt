@@ -62,3 +62,17 @@ S-5's `saveAll` puts the cut-off value back, so problem 2 left no damage; nothin
 **Files:** `src/store/macos.mjs`, `test/macos-parse.test.mjs`, `test/store.integration.test.mjs`.
 **Research:** lookup (done, above) · **Model:** opus — it writes to the password store · **Confidence:** 0.95 — reproduced on the real Keychain and matched to Apple's source.
 **Fix step:** S-7 (PR #9). On 2026-11-05 Abhishek chose to fix it inside S-7 rather than as its own step. `addCommand` refuses any command over 4,094 bytes before `security` runs, and `maxValueLength` is now 4,029, the most that fits even with a one-letter name.
+
+### B-6 — Cancel or the 5-minute deadline during a save says "nothing was saved", but the save goes on
+
+**Seen:** in `requestSecretWithCard` (`src/card-server.mjs`), `/cancel` and the deadline timer end the card at once, even while `onSubmit` is still saving. The save carries on and finishes. Reproduced on 2026-11-05 during S-9 with a scratch script: a fake 400 ms save and either a 200 ms deadline or a `/cancel` 100 ms into the save. No real store was used.
+- **Deadline:** the card rejected with exit 5, "Nobody filled in the secret card in time (5 minutes).", and then the save finished and the page got `200 {"remembered":true}`, so it shows "Saved".
+- **Cancel:** the card rejected with exit 4, "The person closed the secret card without saving.", and then the save finished.
+
+The deadline is the real-world path. Someone presses Save near the end of the 5 minutes, and a macOS Keychain write (one `security` process per name, maybe behind a Keychain prompt) is still running when the timer fires. The agent is told nobody answered, but the key is stored. The page's own Cancel button is disabled during a save, so the Cancel case needs a request the page would not send. The code is the same on `main`; S-9 did not change it. S-9's new `/later` does wait: it answers 409 during a save.
+**Requirement:** invariant 9 in `.claude/CLAUDE.md` (every word shown to people is literally true). Also PRD A5, whose "Cancelled. Nothing was saved." and "This card timed out. Nothing was saved." captions would be false in the same moment.
+**Needs first:** nothing.
+**Blocks:** S-14, which shows "This card timed out. Nothing was saved." at the deadline.
+**Files:** `src/card-server.mjs`, `test/card-server.test.mjs`.
+**Research:** none · **Model:** opus — it changes how the card server ends · **Confidence:** 0.95 that the gap is real (reproduced). The likely fix: a deadline or Cancel that lands during a save waits for that save, then reports what really happened. Confidence in that fix is 0.8.
+**Fix step:** not queued yet.

@@ -6,6 +6,7 @@ export const EXIT = {
   NOT_FOUND: 3,
   CANCELLED: 4,
   TIMED_OUT: 5,
+  DEFERRED: 6,
 }
 
 /** An expected failure with a message written for the person (or agent) reading it. */
