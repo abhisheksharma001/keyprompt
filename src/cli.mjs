@@ -84,15 +84,17 @@ function requesterLabel(/** @type {string | undefined} */ by) {
  */
 async function askWithCard(store, name, options) {
   process.stderr.write(`keyprompt: opened a secure card in the browser for ${name}. Waiting for it to be filled in...\n`)
-  return requestSecretWithCard({
-    name,
+  const { remembered, values } = await requestSecretWithCard({
+    fields: [{ name }],
     reason: options.reason,
     requester: requesterLabel(options.by),
     storeLabel: store.label,
     replacing: options.replacing,
     allowSessionOnly: options.allowSessionOnly,
     open: openInBrowser,
-    onSubmit: async (value, remember) => {
+    onSubmit: async (submitted, remember) => {
+      // One required field, so the card only submits when it is filled in.
+      const value = /** @type {string} */ (submitted.get(name))
       if (value.length > store.maxValueLength) {
         throw new KeypromptError(`That value is ${value.length} characters; the ${store.label} holds at most ${store.maxValueLength}.`)
       }
@@ -101,6 +103,7 @@ async function askWithCard(store, name, options) {
       await recordSaved(name, { reason: options.reason, store: store.id })
     },
   })
+  return { remembered, value: /** @type {string} */ (values.get(name)) }
 }
 
 /**

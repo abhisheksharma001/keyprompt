@@ -33,12 +33,20 @@ export function cardStyle() {
   .meta, .hint, .note, footer { color: var(--muted); font-size: 13px; }
   .meta { margin: 6px 0 0; }
   .note { margin: 10px 0 0; }
-  .field { display: flex; gap: 8px; margin-top: 16px; }
-  input[type=password], input[type=text] {
+  .rows { display: grid; gap: 14px; margin-top: 16px; }
+  .label { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+  .tag { font-size: 12px; line-height: 1; color: var(--muted); padding: 4px 7px; border-radius: 999px; border: 1px solid var(--line); }
+  .field { display: flex; gap: 8px; margin-top: 6px; }
+  .field.stack { flex-direction: column; }
+  input[type=password], input[type=text], textarea {
     flex: 1; min-width: 0; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line);
     background: var(--field); color: var(--text); font: 14px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   }
-  input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  textarea { flex: none; width: 100%; min-height: 72px; resize: vertical; }
+  .value[aria-invalid=true] { border-color: var(--err); }
+  .pasted { display: flex; align-items: center; gap: 8px; }
+  .count { flex: 1; font-size: 13px; color: var(--muted); }
+  input:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
   button {
     padding: 10px 14px; border-radius: 10px; border: 1px solid var(--line); background: var(--card);
     color: var(--text); font: inherit; font-weight: 600; cursor: pointer;
