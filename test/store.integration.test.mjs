@@ -35,7 +35,7 @@ const testName = () => `KEYPROMPT_TEST_${randomBytes(4).toString('hex').toUpperC
 test('round-trips values through the OS password store byte for byte', { skip: !enabled }, async () => {
   const store = getStore()
   const name = testName()
-  const values = process.platform === 'darwin' ? [...VALUES, ...MULTILINE] : VALUES
+  const values = [...VALUES, ...MULTILINE]
   try {
     assert.equal(await store.read(name), null)
     for (const value of values) {
