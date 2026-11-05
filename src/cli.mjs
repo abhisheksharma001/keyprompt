@@ -30,6 +30,7 @@ Usage:
   keyprompt has NAME        Exit 0 if NAME is saved, 3 if not. Never shows the value.
   keyprompt list            Saved names, reasons and dates. Never values.
   keyprompt delete NAME     Remove NAME from the password store.
+  keyprompt demo            Open a sample card to see how it looks. Nothing you type is saved.
   keyprompt install-skill   Teach Claude Code to use keyprompt (writes ~/.claude/skills/keyprompt).
 
 There is deliberately no command that prints a secret.
@@ -166,6 +167,25 @@ export function laterForRun(fields, command) {
 }
 
 /**
+ * The card `keyprompt demo` opens: sample boxes and no store. Its submit keeps
+ * nothing, and the page says it is a demo. The `demo` command never calls
+ * `getStore()` or the catalog.
+ * @returns {Omit<import('./card-server.mjs').CardRequest, 'open'>}
+ */
+export function demoRequest() {
+  return {
+    fields: parseFields(['DEMO_API_KEY', 'DEMO_ACCOUNT_ID:visible', 'DEMO_PRIVATE_KEY:multiline:optional']),
+    reason: 'A demo of the keyprompt card. Nothing you type here is saved.',
+    requester: 'keyprompt demo',
+    storeLabel: 'nowhere (demo)',
+    replacing: false,
+    allowSessionOnly: false,
+    demo: true,
+    onSubmit: async () => {},
+  }
+}
+
+/**
  * @param {string[]} argv
  * @returns {Promise<number>} exit code
  */
@@ -220,6 +240,20 @@ export async function main(argv) {
       return asked
     })
     return runWithSecrets(command, commandArgs, secrets, { redact: args.redact })
+  }
+
+  if (verb === 'demo') {
+    if (rest.length > 0 || args.command.length > 0) throw new KeypromptError('Usage: keyprompt demo', { exitCode: EXIT.USAGE })
+    process.stderr.write('keyprompt: opened the demo card in the browser. Nothing you type there is saved. Waiting for you to press Save, Later or Cancel...\n')
+    try {
+      await requestSecretWithCard({ ...demoRequest(), open: openInBrowser })
+    } catch (error) {
+      // Cancel and Later are ways to finish a demo, not failures. A timeout or a browser that would not open still is.
+      const finished = error instanceof KeypromptError && (error.exitCode === EXIT.CANCELLED || error.exitCode === EXIT.DEFERRED)
+      if (!finished) throw error
+    }
+    process.stdout.write('Demo finished. Nothing was saved.\n')
+    return EXIT.OK
   }
 
   if (verb === 'has') {

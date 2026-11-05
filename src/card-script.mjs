@@ -9,6 +9,8 @@ export function cardScript() {
   const cancel = document.getElementById('cancel')
   const later = document.getElementById('later')
   const error = document.getElementById('error')
+  // A demo card keeps nothing, so no message may say "Saved".
+  const demo = document.querySelector('main.card').hasAttribute('data-demo')
 
   function lock(locked) {
     save.disabled = locked; cancel.disabled = locked; later.disabled = locked
@@ -114,6 +116,10 @@ export function cardScript() {
     lock(true)
     try {
       const { ok, data } = await post('/submit', { values, remember: remember ? remember.checked : true })
+      if (ok && demo) {
+        finish('Demo finished', 'Nothing you typed was saved. You can close this tab.')
+        return
+      }
       if (ok) {
         finish(data.remembered ? 'Saved' : 'Ready', data.remembered
           ? 'Saved securely and kept private. You can close this tab.'
