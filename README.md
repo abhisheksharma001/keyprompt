@@ -76,7 +76,7 @@ Exit codes:
 | `5` | Nobody filled in the card within 5 minutes. |
 | `6` | You chose **Later**. Nothing was saved. |
 
-Once the command in `keyprompt run` has started, `run` exits with the command's own exit code. If it stops before that (4, 5 or 6), it says so in a message that starts with `keyprompt:`.
+Once the command in `keyprompt run` has started, `run` exits with the command's own exit code. If it stops before that, it says why in a message that starts with `keyprompt:`, and the exit code is one from the table (for example 4, 5 or 6).
 
 ## For agents
 
@@ -117,7 +117,7 @@ You can see or delete them there yourself at any time. `~/.keyprompt/catalog.jso
 
 - Needs a desktop session to open the card. Over plain SSH or in CI it stops with a clear message; use that environment's own secret store (GitHub Actions secrets, for example).
 - Masking catches exact copies of a value. A program that prints a key base64-encoded, URL-encoded or only partly is not masked, so agents must still not print secrets on purpose.
-- The OS password store caps how long one value can be. Windows Credential Manager: 1,280 characters. macOS: about 4,000 characters on one line, or about 2,000 with line breaks (a shorter name leaves a little more room). Linux: keyprompt allows 65,536 characters; values near that size have not been tested. A value that is too long is refused, and the card says so.
+- The OS password store caps how long one value can be. Windows Credential Manager: 1,280 characters. macOS: about 4,000 bytes on one line, or about 2,000 with line breaks (a shorter name leaves a little more room). Linux: keyprompt allows 65,536 characters; values near that size have not been tested. A value that is too long is refused, and the card says so.
 - Line breaks inside a value (a PEM key, say) are kept on macOS, Windows and Linux. CI checks this with short values (up to 160 bytes on Windows and Linux); the size limits above still apply.
 
 See [SECURITY.md](SECURITY.md) for exactly what keyprompt protects against and what it doesn't.

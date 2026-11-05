@@ -74,7 +74,7 @@ keyprompt run TWILIO_ACCOUNT_SID:visible,TWILIO_AUTH_TOKEN -- python send_sms.py
 ```
 
 - The program reads the secret from its environment (`$OPENAI_API_KEY`). If a name is not saved yet, `run` opens one card for the missing names (hints work here too; names already saved are not asked again). The user can untick **Remember on this computer** to give a value for this one command only.
-- `run` can stop before the command starts, with exit 4, 5 or 6 as above and a message starting `keyprompt:`. On exit 6 the command did not run; follow the exit 6 advice above. Once the command has started, the exit code is the command's own.
+- `run` can stop before the command starts, with a message starting `keyprompt:` and an exit code from the table above (for example 4, 5 or 6). On exit 6 the command did not run; follow the exit 6 advice above. Once the command has started, the exit code is the command's own.
 - Exact copies of the value in the command's output are replaced with `[keyprompt:NAME]`. Transformed copies (base64, partial) are not caught, so still never print secrets on purpose.
 - When a tool needs the value as an argument, let a shell inside `run` expand it, so it never appears in your own command text:
   - macOS / Linux: `keyprompt run API_TOKEN -- sh -c 'curl -sS -H "Authorization: Bearer $API_TOKEN" https://api.example.com/me'`
@@ -88,7 +88,7 @@ keyprompt run TWILIO_ACCOUNT_SID:visible,TWILIO_AUTH_TOKEN -- python send_sms.py
 
 ## Size limits
 
-The OS password store caps how long one value can be. Windows holds 1,280 characters. macOS holds about 4,000 characters on one line, or about 2,000 with line breaks (a shorter name leaves a little more room). A value that is too long is refused and the card says so, with the numbers.
+The OS password store caps how long one value can be. Windows holds 1,280 characters. macOS holds about 4,000 bytes on one line, or about 2,000 with line breaks (a shorter name leaves a little more room). A value that is too long is refused and the card says so, with the numbers.
 
 ## When it can't work
 

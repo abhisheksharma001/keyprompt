@@ -30,7 +30,7 @@ One entry per open question. A guess never goes into code: it goes here first. F
 **Confidence:** 0.5 (low) — the limit comes from the existing code comment; neither option has been tried.
 **Review:** higher model.
 **Status:** open — parked. The card already refuses over-long values with a clear message (`src/cli.mjs:96-98`).
-**Answer:** —
+**Answer:** — (the fix options are still open). The limit itself was checked in S-10: Microsoft's CREDENTIALW page says the blob "cannot be larger than CRED_MAX_CREDENTIAL_BLOB_SIZE (5*512) bytes", which is 2,560 (https://learn.microsoft.com/en-us/windows/win32/api/wincred/ns-wincred-credentialw, read live 2026-11-06). The helper stores UTF-16LE, 2 bytes per character (`src/store/windows.mjs`), so 1,280 characters. A value near that size was never saved on a real Windows machine.
 
 ### R-3 — Do multi-line values round-trip on Linux (`secret-tool`) and Windows (PowerShell helper)?
 
