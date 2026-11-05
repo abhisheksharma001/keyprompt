@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { chmodSync, existsSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { test } from 'node:test'
 import { laterForRun, parseArgs, setReport } from '../src/cli.mjs'
+import { EXIT } from '../src/errors.mjs'
 import { getStore } from '../src/store/index.mjs'
 
 const BIN = fileURLToPath(new URL('../bin/keyprompt.mjs', import.meta.url))
@@ -31,6 +32,28 @@ test('help lists the commands and says there is no getter', () => {
   for (const word of ['set', 'run', 'has', 'list', 'delete', 'install-skill', 'no command that prints a secret']) {
     assert.ok(r.stdout.includes(word), word)
   }
+})
+
+test('help shows the FIELD grammar and every exit code', () => {
+  const r = cli(['--help'])
+  assert.equal(r.status, 0)
+  for (const word of ['FIELD', ':visible', ':multiline', ':optional', 'Later']) {
+    assert.ok(r.stdout.includes(word), word)
+  }
+  const codes = r.stdout.split('Exit codes:')[1].split('Options:')[0]
+  for (const code of Object.values(EXIT)) {
+    assert.match(codes, new RegExp(`(^|\\s)${code} [a-z]`), `exit code ${code}`)
+  }
+})
+
+test('the README lists every exit code, and the skill explains Later (exit 6)', () => {
+  const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8')
+  const skill = readFileSync(new URL('../skill/SKILL.md', import.meta.url), 'utf8')
+  for (const code of Object.values(EXIT)) {
+    assert.match(readme, new RegExp(`^\\| \`${code}\` \\|`, 'm'), `README exit code ${code}`)
+  }
+  assert.match(skill, /exit 6/)
+  assert.match(skill, /Later/)
 })
 
 test('there is no get command', () => {
