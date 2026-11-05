@@ -86,3 +86,13 @@ The deadline is the real-world path. Someone presses Save near the end of the 5 
 **Files:** `src/card-server.mjs`, `test/card-server.test.mjs`; the `closed` caption in src/buddy.mjs, the PRD table row and the 410 branch (`finishFinal`) in src/card-script.mjs.
 **Research:** none · **Model:** sonnet · **Confidence:** 0.95 — reproduced.
 **Fix step:** not queued yet. Proposed: one sentence true for every ending, for example "This card is no longer active. Close this tab."
+
+### B-8 — With "Remember" unticked, the buddy still puts the key in the vault
+
+**Seen:** pressing Save with "Remember on this computer" unticked shows the `stashing` pose: the vault door open and the key carried towards it. Since S-13 the key also travels into the vault and disappears (600 ms). The caption says "Handing it over…" and the end says "Handed to this one command. Not saved.", so the words are true but the picture shows a save that does not happen. The PRD's replacement table changes only the caption for this case, not the pose. Found 2026-11-06 in S-13 while checking the motion frame by frame; the still pose has been like this since S-12.
+**Requirement:** invariant 9 in `.claude/CLAUDE.md` in spirit (its letter covers words; this is the picture); the `stashing` row of the buddy table and the "Remember unticked" row of the replacement table in `docs/prd/card-v2.md`.
+**Needs first:** Abhishek's choice of picture for waiting on a one-run Save.
+**Blocks:** nothing.
+**Files:** src/buddy.mjs (the pose and its motion), src/card-script.mjs (the mood set on Save), the two PRD tables, test/buddy.test.mjs.
+**Research:** none · **Model:** sonnet · **Confidence:** 0.9 that the picture misleads (seen in the S-13 frames); whether it matters is Abhishek's call.
+**Fix step:** not queued yet. Proposed: with Remember unticked, Save waits with the envelope in hand and the vault shut (a `handing` pose), so the vault opens only for a save.

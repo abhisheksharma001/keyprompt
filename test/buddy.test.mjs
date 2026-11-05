@@ -3,10 +3,27 @@ import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { test } from 'node:test'
-import { BUDDY_NAME, buddyStyle, buddySvg, CAPTION_VARIANTS, MOODS } from '../src/buddy.mjs'
+import { BUDDY_NAME, buddyStyle, buddySvg, CAPTION_VARIANTS, MOODS, STASH_MS } from '../src/buddy.mjs'
+import { cardScript } from '../src/card-script.mjs'
 
 const svg = buddySvg()
 const style = buddyStyle()
+
+/** Every @keyframes set by name, as its frames: where in the run, and what it sets. */
+function keyframes() {
+  return Object.fromEntries([...style.matchAll(/@keyframes ([a-z-]+) \{ (.*) \}$/gm)].map(([, name, body]) => [
+    name,
+    [...body.matchAll(/([0-9a-z%, ]+?) \{ ([^}]*) \}/g)].map(([, at, decls]) => ({ at: at.trim(), decls })),
+  ]))
+}
+
+/** Each rule that starts an animation: the mood, the part, the keyframes name and the whole line. */
+function animations() {
+  return style.split('\n').filter((l) => / animation: b-/.test(l)).map((line) => {
+    const [, mood, part] = line.match(/\[data-mood="([a-z-]+)"\] \.([a-z-]+)/)
+    return { mood, part, name: line.match(/animation: (b-[a-z-]+)/)[1], line }
+  })
+}
 
 test('MOODS is the buddy table in the PRD, caption for caption', () => {
   const prd = readFileSync(new URL('../docs/prd/card-v2.md', import.meta.url), 'utf8')
@@ -77,6 +94,53 @@ test('a caption that names the store has a demo caption that does not', () => {
     assert.ok(!text.includes('{store}'), text)
   }
   assert.ok(CAPTION_VARIANTS.oneRun.listening)
+})
+
+test('motion: every mood but watching and closed moves, only transform and opacity, and only listening and asleep loop', () => {
+  const frames = keyframes()
+  const runs = animations()
+  const moved = [...new Set(runs.map((r) => r.mood))].sort()
+  assert.deepEqual(moved, ['asleep', 'bye', 'later', 'listening', 'locked', 'one-run', 'oops', 'peek-proof', 'stashing'])
+  assert.deepEqual([...new Set(runs.map((r) => r.name))].sort(), Object.keys(frames).sort())
+  for (const [name, list] of Object.entries(frames)) {
+    for (const { decls } of list) {
+      for (const [, prop] of decls.matchAll(/([a-z-]+):/g)) assert.ok(['transform', 'opacity'].includes(prop), `${name} moves ${prop}`)
+    }
+  }
+  for (const { mood, line } of runs) {
+    if (line.includes('infinite')) assert.ok(['listening', 'asleep'].includes(mood), `${mood} loops`)
+  }
+})
+
+test('motion: when the computer asks for less motion, nothing moves and the card does not wait', () => {
+  assert.match(style, /@media \(prefers-reduced-motion: reduce\) \{ \.buddy, \.buddy \* \{ animation: none !important; \} \}/)
+  assert.ok(cardScript().includes("if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return Promise.resolve()"))
+})
+
+test('motion: a part with a still transform ends its animation on that transform', () => {
+  const frames = keyframes()
+  const still = {}
+  for (const line of style.split('\n').filter((l) => l.includes('{ transform:') && l.includes('[data-mood='))) {
+    const transform = line.slice(line.indexOf('{ transform: ') + 13, line.lastIndexOf(';'))
+    for (const [, mood, part] of line.matchAll(/\[data-mood="([a-z-]+)"\] \.([a-z-]+)/g)) still[`${mood} ${part}`] = transform
+  }
+  let checked = 0
+  for (const { mood, part, name } of animations()) {
+    const pose = still[`${mood} ${part}`]
+    if (!pose) continue
+    const end = frames[name].filter(({ at, decls }) => /\b(to|100%)/.test(at) && decls.includes('transform:')).pop()
+    if (end) assert.ok(end.decls.includes(`transform: ${pose};`), `${name} in ${mood} ends off ${pose}`)
+    checked++
+  }
+  assert.ok(checked >= 2, `checked ${checked}`)
+})
+
+test("the done screen waits only for the key's trip into the vault, which is under 1.2 s", () => {
+  assert.ok(STASH_MS > 0 && STASH_MS <= 1200, String(STASH_MS))
+  assert.ok(style.includes(`.key { animation: b-key-in ${STASH_MS}ms `))
+  const script = cardScript()
+  assert.ok(script.includes(`const STASH_MS = ${STASH_MS}`))
+  assert.ok(script.includes('if (ok) await settle(started)'))
 })
 
 test("only src/buddy.mjs spells the buddy's name", () => {

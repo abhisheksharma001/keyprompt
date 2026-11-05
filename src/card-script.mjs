@@ -1,4 +1,4 @@
-import { CAPTION_VARIANTS, CAPTIONS } from './buddy.mjs'
+import { CAPTION_VARIANTS, CAPTIONS, STASH_MS } from './buddy.mjs'
 
 /** The card's browser script text. renderCard places it inside the page's nonce'd <script> element. */
 export function cardScript() {
@@ -19,6 +19,7 @@ export function cardScript() {
   const store = caption.getAttribute('data-store') || ''
   const CAPTIONS = ${JSON.stringify(CAPTIONS)}
   const VARIANTS = ${JSON.stringify(CAPTION_VARIANTS)}
+  const STASH_MS = ${STASH_MS}
   // Saving or ended: focus no longer changes the buddy's mood.
   let still = false
   // The first box has focus on load, so focus alone would skip the opening
@@ -160,6 +161,14 @@ export function cardScript() {
     else finish('Closed', 'oops', message || 'This card is no longer active.')
   }
 
+  // The done screen waits for what is left of the key's trip into the vault,
+  // and not at all when the computer asks for less motion.
+  function settle(started) {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return Promise.resolve()
+    const left = STASH_MS - (Date.now() - started)
+    return new Promise((resolve) => setTimeout(resolve, Math.max(0, left)))
+  }
+
   async function post(path, body) {
     const res = await fetch(base + path, {
       method: 'POST',
@@ -184,8 +193,10 @@ export function cardScript() {
     lock(true)
     still = true
     setMood('stashing')
+    const started = Date.now()
     try {
       const { ok, status, data } = await post('/submit', { values, remember: remember ? remember.checked : true })
+      if (ok) await settle(started)
       if (ok && demo) {
         finish('Demo finished', 'locked')
         return
