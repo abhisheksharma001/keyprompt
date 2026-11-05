@@ -1,0 +1,120 @@
+# Research log
+
+One entry per open question. A guess never goes into code: it goes here first. Format and confidence scale: `~/.claude/skills/mystandard/SKILL.md` sections 9 and 15 (high ≥ 0.9, medium 0.7–0.89, low < 0.7).
+
+---
+
+### R-1 — Can the macOS Keychain store a value with line breaks if we hand it over as hex?
+
+**Where:** card v2 · S-7 · `src/store/macos.mjs:53-66` · `macosStore.write`
+**Find out:** whether `security -i` accepts `add-generic-password -U -s keyprompt -a NAME -l "…" -X <hex>` on stdin, and whether `find-generic-password -g` then prints the `password: 0x<HEX> "…"` form so `parsePasswordLine` round-trips the bytes exactly. If yes: always write with `-X` (also removes the quoting code). If no: keep the line-break refusal on macOS and say so on the card.
+**Confidence:** 0.8 (medium) — `-X  Specify password data to be added as a hexadecimal string` is printed by `security add-generic-password -h` on this Mac (macOS, 2026-11-05). The full round trip has not been run.
+**Review:** none — running the integration test decides it.
+**Status:** open (half answered).
+**Answer:** —
+
+### R-2 — How do we store values longer than 1,280 characters on Windows?
+
+**Where:** later (parked) · `src/store/windows.mjs:127-129` · `maxValueLength`
+**Find out:** Windows Credential Manager caps a credential blob at 2,560 bytes, which the code stores as UTF-16, so 1,280 characters. An RSA-2048 PEM key (about 1,700 characters) and a Google service-account JSON file (about 2,300) do not fit. Options: split one value across several credentials (`keyprompt:NAME`, `keyprompt:NAME#2`, …) with an atomic write and read, or a DPAPI-protected file. Which one is safe and simple?
+**Confidence:** 0.5 (low) — the limit comes from the existing code comment; neither option has been tried.
+**Review:** higher model.
+**Status:** open — parked. The card already refuses over-long values with a clear message (`src/cli.mjs:96-98`).
+**Answer:** —
+
+### R-3 — Do multi-line values round-trip on Linux (`secret-tool`) and Windows (PowerShell helper)?
+
+**Where:** card v2 · S-8 · `src/store/linux.mjs:43-50`, `src/store/windows.mjs` (the embedded PowerShell script)
+**Find out:** whether `secret-tool store` keeps line breaks inside a value read from stdin and `secret-tool lookup` returns exactly those bytes; whether the Windows helper reads all of stdin or only one line. Whatever fails gets fixed in S-8.
+**Confidence:** 0.4 (low) — from memory only.
+**Review:** none — the CI run in S-8 decides it.
+**Status:** open.
+**Answer:** —
+
+### R-4 — What do we call the mascot, and what may it look like?
+
+**Where:** card v2 · decision D-2 · S-12
+**Find out:** Abhishek picks an original name and look.
+**Confidence:** 0.9 that "Pingu" cannot be used in a public repo. PINGU is a trademark of Joker, Inc. (owned by Mattel), US application 99410827 filed 2025-09-24, status "notice of allowance issued" (trademarkia.com/pingu-99410827, read 2026-11-05). Joker, Inc. opposed another applicant's mark in May 2026 (TTAB case 91307372, trademarkia.com, read 2026-11-05). Wikipedia: Pingu's IP is held by Joker, Inc./Mattel (en.wikipedia.org/wiki/Pingu, read 2026-11-05). A penguin as an animal is not anyone's property; the Pingu name and character design are. Not legal advice.
+**Review:** none.
+**Status:** decided 2026-11-05 — Abhishek chose **Pinguu** after the evidence below. Re-check before S-16 and S-17.
+**Answer:** "Pinguu" is risky, not blocked. Evidence (search 2026-11-05, cached copies):
+- **Mattel opposes look-alikes.** Joker, Inc. (a Mattel subsidiary) filed a US opposition against the mark **PINU**, one letter off, describing Pingu as "a playful, curious, and occasionally mischievous little boy penguin" (USPTO TTAB 91303787, notice dated December 2025, ttabvue.uspto.gov, indexed 2026-05-26).
+- **Not every opposition wins.** Japan's patent office dismissed Joker, Inc.'s opposition to "pingu・pongu" on 2026-05-22: it was treated as one made-up term, and Joker had not proved current fame (marks-iplaw.jp, indexed 2026-08-02). That is a Japanese ruling on a compound word, so it says little about "Pinguu".
+- **"Pinguu" is already in use:** a crypto trading bot (pinguu.tech, github.com/ffischer42/Pinguu_App), a UK care-home staff-location product, and a UK company PINGUU STORE LTD (dissolved 2021).
+
+Judgment (not legal advice): low risk while keyprompt is small and free; the risk rises with popularity, and with a penguin that looks like Pingu. Guards are in decision D-2.
+
+### R-5 — What do competing tools actually do, and where can a lite tool do better?
+
+**Where:** card v2 · the PRD section "What others do"
+**Find out:** for Infisical Agent Vault, AgentSecrets, Secretless AI (source code), and AgentsRoom, 1Password for AI agents and native features in Claude Code, Codex, Cursor and Copilot (docs only): how the agent asks, how the human enters, storage, injection, masking, approvals, setup cost, overclaims, user complaints.
+**Confidence:** 0.8 (medium) — the open-source tools were read in their source at pinned commits, and the closed ones in live docs. Nothing was installed or run, so this is code reading, not observed behaviour.
+**Review:** Opus 5.5 read all four reports on 2026-11-05.
+**Status:** answered 2026-11-05.
+**Answer:** the summary table is in `docs/prd/card-v2.md` ("What others do"). Key evidence:
+- **Infisical Agent Vault**
+  - Read at Infisical/infisical@41db38dca9f7, Infisical/cli@42e316e33baa, Infisical/agent-vault@2cb47bff789d.
+  - The agent cannot request a missing key; it gets a 403 or 407 (docs `platform/agent-vault/proxies.mdx:175-200`). The old "proposals" flow is deprecated (agent-vault docs/learn/proposals.mdx).
+  - Delivery is an HTTPS proxy that needs a trusted certificate. There is no output masking.
+  - The CLI's session TTL defaults to "never" (`cmd/agent_vault_run.go:842`), while the docs say 7 days. Issue infisical#8987 confirms this (gh, live, 2026-11-05).
+  - The code lives under the enterprise licence (`backend/src/ee/LICENSE.md`). Pricing: first 5,000 brokered requests a month free, then $2 per 1,000 (live fetch, 2026-11-05).
+- **AgentSecrets**
+  - Read at the-17/agentsecrets@be53766186fd. Go, about 24k lines, 196 stars (gh, live, 2026-11-05).
+  - A missing key gives error SEC-404, and the agent tells the user to type `secrets set KEY=VALUE` (`pkg/proxy/engine.go:578-582`, `commands/workflow_content.go:89-95`). The value is a command-line argument (`commands/secrets.go:57,126-135`).
+  - `env --` injects every secret in the project (`commands/env.go:73,93-96`).
+  - Its masking catches encoded forms (`commands/env.go:220-329`).
+  - It needs an account and a daemon. Issue #5, "Local mode, no login", is open since 2026-04-08 (gh, live).
+  - The README overclaims (`README.md:5,43-49`) and links a `SECURITY.md` that does not exist.
+- **Secretless AI**
+  - Read at opena2a-org/secretless-ai@f2568f133c01. TypeScript, about 53k lines, Apache-2.0, 26 stars (gh, live).
+  - There is no request flow. Input is one hidden terminal line, so a pasted multi-line value keeps only its first line (`hidden-line.ts:46-101`).
+  - `run` does not mask output (`run.ts:86,111-114`), but refuses a value found in the command's arguments (`run.ts:66-79`).
+  - Claude Code hooks: PreToolUse blocks env dumps and secret-file reads; UserPromptSubmit blocks prompts containing keys; Stop redacts the transcript (`init.ts:428-515`).
+  - Telemetry is on by default (`README.md:86-104`). The fallback file's encryption key can be rebuilt from HOME and USER (`local.ts:84-96`).
+- **AgentsRoom** (live docs): the agent asks you to add the key in their desktop app. Values are stored with Electron safeStorage in `~/.agentsroom/secrets.json` and filled into `{{secret:NAME}}` at launch. Pro costs €7.99/mo (cached 2026-10-22).
+- **1Password** (live blog, 2026-10-22): the agent asks, you approve, and 1Password fills in a website login. That covers web sign-ins only, for partner agents. `op run` masks output. The Environments MCP server returns names only.
+- **The agents themselves** (live `gh` changelogs):
+  - Claude Code 2.1.287 "Added URL prompts from MCP servers on the 2025-11-25 protocol". No local feature for asking the human for a key, as of 2.1.318.
+  - Codex 0.164.0 masks credentials in remote Bash.
+- **Close projects** (cached package pages, unverified): keymask, pi-secrets, keyward. See R-9.
+
+### R-6 — Could keyprompt plug into any MCP agent through "URL mode elicitation"?
+
+**Where:** later (parked) · a possible future `keyprompt mcp` server
+**Find out:** which agent clients implement URL mode, and whether a keyprompt MCP server could hand them the card URL that way.
+**Confidence:** 0.8 (medium) for the spec side and Claude Code.
+- **Spec:** the MCP spec (version 2026-07-28, client/elicitation) says servers MUST NOT use form mode for passwords or API keys and MUST use URL mode. URL mode sends the person to a separate page whose data never passes through the client (modelcontextprotocol.io/specification/2026-07-28/client/elicitation, read 2026-11-05). That describes keyprompt's card.
+- **Clients:**
+  - Claude Code 2.1.287: "Added URL prompts from MCP servers on the 2025-11-25 protocol". It asks the person, then opens the URL in the browser (CHANGELOG via `gh`, live, and code.claude.com/docs/en/mcp, live, both 2026-11-05).
+  - VS Code's source declares URL mode support (live).
+  - Codex and Cursor: unconfirmed.
+**Review:** higher model before any build.
+**Status:** open — parked.
+**Answer:** —
+
+### R-7 — Is the npm package name free?
+
+**Where:** card v2 · S-17
+**Find out:** whether `keyprompt` can be published under that name.
+**Confidence:** 0.9 — `npm view keyprompt` returned 404 Not Found on 2026-11-05. Names can be taken at any time; check again right before publishing.
+**Status:** answered 2026-11-05 (re-check at S-17).
+**Answer:** free on 2026-11-05.
+
+### R-8 — How do we hide a pasted multi-line secret on the card?
+
+**Where:** card v2 · S-4 · the card page (multi-line field)
+**Find out:** an `<input type=password>` cannot hold line breaks, and a `<textarea>` shows text in the clear. Options: (a) a small "paste here" box that, once something is pasted, hides it and shows only "27 lines, 1,704 characters pasted" with a Show button; (b) the CSS `-webkit-text-security: disc` on the textarea (browser support must be checked in the primary source, e.g. MDN or caniuse, for Chrome, Safari and Firefox). Recommendation: (a), because it works in every browser and also shows the person what arrived.
+**Confidence:** 0.6 (low) on (b)'s Firefox support — from memory. (a) needs no browser feature beyond `paste` events.
+**Review:** none.
+**Status:** open — S-4 uses (a) unless (b) is checked and works everywhere.
+**Answer:** —
+
+### R-9 — How mature is keymask, the closest rival?
+
+**Where:** card v2 · the PRD section "What others do"
+**Find out:** keymask (`@trevorbyrum/keymask` on npm) reportedly has a `request_secret` tool that opens a local multi-field form and saves to the keychain or `.env`, plus `run_with_secrets` that redacts output. Is it real and maintained, and how good is its form? If it already does the card moment well, our edge is only the buddy, the receipt, Later and zero setup, and the README should say so.
+**Confidence:** 0.4 (low) — one cached libraries.io page (indexed 2026-09-26); not read live, source not read.
+**Review:** none — reading its source at a commit settles it.
+**Status:** open — do before S-16 (README positioning).
+**Answer:** —
