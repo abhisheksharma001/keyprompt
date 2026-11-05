@@ -1,3 +1,5 @@
+import { CAPTION_VARIANTS, CAPTIONS } from './buddy.mjs'
+
 /** The card's browser script text. renderCard places it inside the page's nonce'd <script> element. */
 export function cardScript() {
   return `(() => {
@@ -11,9 +13,54 @@ export function cardScript() {
   const error = document.getElementById('error')
   // A demo card keeps nothing, so no message may say "Saved".
   const demo = document.querySelector('main.card').hasAttribute('data-demo')
+  const buddy = document.querySelector('.buddy')
+  const caption = document.getElementById('caption')
+  const heading = document.querySelector('h1')
+  const store = caption.getAttribute('data-store') || ''
+  const CAPTIONS = ${JSON.stringify(CAPTIONS)}
+  const VARIANTS = ${JSON.stringify(CAPTION_VARIANTS)}
+  // Saving or ended: focus no longer changes the buddy's mood.
+  let still = false
+  // The first box has focus on load, so focus alone would skip the opening
+  // caption. The buddy follows focus from the person's first click, key or
+  // paste in the form; it never looks at what was typed.
+  let engaged = false
 
   function lock(locked) {
     save.disabled = locked; cancel.disabled = locked; later.disabled = locked
+  }
+
+  // A caption must stay true: a demo saves nothing, and with "Remember"
+  // unticked the value goes to one command, not to the store.
+  function captionFor(id) {
+    const variants = demo ? VARIANTS.demo : remember && !remember.checked ? VARIANTS.oneRun : {}
+    return (variants[id] || CAPTIONS[id]).split('{store}').join(store)
+  }
+
+  // The buddy follows focus, the kind of box and the outcome, never what was typed.
+  function setMood(id, text) {
+    buddy.setAttribute('data-mood', id)
+    caption.textContent = text === undefined ? captionFor(id) : text
+    caption.classList.toggle('err', id === 'oops')
+  }
+
+  function moodFor(element) {
+    if (!element || !element.classList || !element.classList.contains('value')) return 'listening'
+    return element.type === 'password' ? 'peek-proof' : 'watching'
+  }
+
+  form.addEventListener('focusin', (event) => {
+    if (engaged && !still) setMood(moodFor(event.target))
+  })
+  form.addEventListener('focusout', (event) => {
+    if (engaged && !still && moodFor(event.relatedTarget) === 'listening') setMood('listening')
+  })
+  for (const type of ['pointerdown', 'keydown', 'paste']) {
+    form.addEventListener(type, () => {
+      if (engaged) return
+      engaged = true
+      if (!still) setMood(moodFor(document.activeElement))
+    }, true)
   }
 
   if (remember) {
@@ -23,6 +70,15 @@ export function cardScript() {
     remember.addEventListener('change', () => {
       save.textContent = remember.checked ? savedAction : 'Use for this run'
       footer.textContent = remember.checked ? savedFooter : 'Held for this one command only · never shown to your agent'
+      if (!still) setMood(moodFor(document.activeElement))
+    })
+  }
+
+  for (const button of document.querySelectorAll('[data-preview]')) {
+    button.addEventListener('click', () => {
+      const id = button.getAttribute('data-preview')
+      const text = CAPTIONS[id] ? CAPTIONS[id].split('{store}').join('password store') : 'the card shows the error from the save, word for word.'
+      setMood(id, 'Preview: ' + text)
     })
   }
 
@@ -79,17 +135,29 @@ export function cardScript() {
         toggle.textContent = show ? 'Hide' : 'Show'
         toggle.setAttribute('aria-pressed', String(show))
         box.focus()
+        // The box may have kept focus, so no focus event says it is shown now.
+        if (!still) setMood(moodFor(box))
       })
     }
     if (box.hasAttribute('data-paste')) pasteBox(box, row)
   }
 
-  function finish(title, text) {
+  // The card has ended: the title and the buddy say how. Its caption already
+  // says "You can close this tab." when the mood is closed.
+  function finish(title, id, text) {
+    still = true
     for (const row of rows) row.querySelector('.value').value = ''
-    document.getElementById('done-title').textContent = title
-    document.getElementById('done-text').textContent = text
+    heading.textContent = title
+    setMood(id, text)
     document.getElementById('form-view').hidden = true
-    document.getElementById('done-view').hidden = false
+    document.getElementById('done-view').hidden = id === 'closed'
+  }
+
+  // The server ended the card. 410 means it was already used; anything else is
+  // that request's own error.
+  function finishFinal(status, message) {
+    if (status === 410) finish('Closed', 'closed')
+    else finish('Closed', 'oops', message || 'This card is no longer active.')
   }
 
   async function post(path, body) {
@@ -101,7 +169,7 @@ export function cardScript() {
     })
     let data = {}
     try { data = await res.json() } catch {}
-    return { ok: res.ok, data }
+    return { ok: res.ok, status: res.status, data }
   }
 
   form.addEventListener('submit', async (event) => {
@@ -114,28 +182,38 @@ export function cardScript() {
       values[row.dataset.name] = box.value
     }
     lock(true)
+    still = true
+    setMood('stashing')
     try {
-      const { ok, data } = await post('/submit', { values, remember: remember ? remember.checked : true })
+      const { ok, status, data } = await post('/submit', { values, remember: remember ? remember.checked : true })
       if (ok && demo) {
-        finish('Demo finished', 'Nothing you typed was saved. You can close this tab.')
+        finish('Demo finished', 'locked')
         return
       }
       if (ok) {
-        finish(data.remembered ? 'Saved' : 'Ready', data.remembered
-          ? 'Saved securely and kept private. You can close this tab.'
-          : 'Handed to the command for this run only, not saved. You can close this tab.')
+        finish(data.remembered ? 'Saved' : 'Ready', data.remembered ? 'locked' : 'one-run')
         return
       }
-      error.textContent = data.error || 'Could not save. Try again.'
-      if (data.final) { finish('Closed', data.error || 'This card is no longer active.') }
+      const message = data.error || 'Could not save. Try again.'
+      if (data.final) {
+        finishFinal(status, message)
+        return
+      }
+      still = false
       const missing = rows.find((row) => row.dataset.name === data.field)
       if (missing) {
+        // The box gets focus, so the buddy follows it and the message stays by the buttons.
+        error.textContent = message
         const box = missing.querySelector('.value')
         box.setAttribute('aria-invalid', 'true')
         box.focus()
+        setMood(moodFor(box))
+      } else {
+        setMood('oops', message)
       }
     } catch {
-      error.textContent = 'The request stopped waiting. Close this tab and ask your agent to try again.'
+      still = false
+      setMood('oops', 'The request stopped waiting. Close this tab and ask your agent to try again.')
     }
     lock(false)
   })
@@ -144,16 +222,19 @@ export function cardScript() {
     error.textContent = ''
     lock(true)
     try {
-      const { ok, data } = await post('/cancel', {})
+      const { ok, status, data } = await post('/cancel', {})
       if (ok) {
-        finish('Cancelled', 'Nothing was saved. You can close this tab.')
+        finish('Cancelled', 'bye')
         return
       }
-      error.textContent = data.error || 'That did not work. Try again.'
-      if (data.final) { finish('Closed', data.error || 'This card is no longer active.') }
+      if (data.final) {
+        finishFinal(status, data.error)
+        return
+      }
+      setMood('oops', data.error || 'That did not work. Try again.')
     } catch {
       // No answer means the card already ended, maybe with a save from another tab.
-      finish('Closed', 'This card is no longer active. You can close this tab.')
+      finish('Closed', 'closed', 'This card is no longer active. You can close this tab.')
       return
     }
     lock(false)
@@ -163,15 +244,18 @@ export function cardScript() {
     error.textContent = ''
     lock(true)
     try {
-      const { ok, data } = await post('/later', {})
+      const { ok, status, data } = await post('/later', {})
       if (ok) {
-        finish('Later', 'Okay, later. Nothing was saved. You can close this tab.')
+        finish('Later', 'later')
         return
       }
-      error.textContent = data.error || 'That did not work. Try again.'
-      if (data.final) { finish('Closed', data.error || 'This card is no longer active.') }
+      if (data.final) {
+        finishFinal(status, data.error)
+        return
+      }
+      setMood('oops', data.error || 'That did not work. Try again.')
     } catch {
-      error.textContent = 'The request stopped waiting. Close this tab and ask your agent to try again.'
+      setMood('oops', 'The request stopped waiting. Close this tab and ask your agent to try again.')
     }
     lock(false)
   })

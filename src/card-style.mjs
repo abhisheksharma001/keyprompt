@@ -2,13 +2,13 @@
 export function cardStyle() {
   return `  :root {
     --bg: #f4f4f5; --card: #ffffff; --text: #18181b; --muted: #71717a; --line: #e4e4e7;
-    --field: #fafafa; --accent: #18181b; --accent-text: #ffffff; --ok: #15803d; --err: #b91c1c;
+    --field: #fafafa; --accent: #18181b; --accent-text: #ffffff; --err: #b91c1c;
     color-scheme: light dark;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #09090b; --card: #18181b; --text: #fafafa; --muted: #a1a1aa; --line: #27272a;
-      --field: #0f0f11; --accent: #fafafa; --accent-text: #09090b; --ok: #4ade80; --err: #f87171;
+      --field: #0f0f11; --accent: #fafafa; --accent-text: #09090b; --err: #f87171;
     }
   }
   * { box-sizing: border-box; }
@@ -21,10 +21,20 @@ export function cardStyle() {
     width: 100%; max-width: 440px; background: var(--card); border: 1px solid var(--line);
     border-radius: 16px; padding: 24px; box-shadow: 0 10px 30px rgba(0,0,0,.08);
   }
-  .head { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
-  .icon { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; background: var(--field); border: 1px solid var(--line); }
-  h1 { font-size: 16px; margin: 0; font-weight: 600; }
-  .chip {
+  .head { display: flex; align-items: center; gap: 14px; margin-bottom: 14px; }
+  .head-text { flex: 1; min-width: 0; }
+  h1 { font-size: 16px; margin: 0 0 8px; font-weight: 600; }
+  .caption {
+    position: relative; margin: 0; padding: 8px 11px; border-radius: 12px; font-size: 13px; line-height: 1.4;
+    background: var(--field); border: 1px solid var(--line);
+  }
+  .caption::before {
+    content: ""; position: absolute; left: -5px; top: 13px; width: 8px; height: 8px; transform: rotate(45deg);
+    background: var(--field); border-left: 1px solid var(--line); border-bottom: 1px solid var(--line);
+  }
+  .caption.err { color: var(--err); }
+  .preview { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 14px; font-size: 12px; color: var(--muted); }
+  .preview button { padding: 4px 8px; border-radius: 999px; font: 500 12px/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }  .chip {
     display: inline-block; font: 600 13px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     padding: 6px 9px; border-radius: 8px; background: var(--field); border: 1px solid var(--line);
     word-break: break-all;
@@ -58,9 +68,6 @@ export function cardStyle() {
   .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
   .error { color: var(--err); font-size: 13px; margin: 10px 0 0; min-height: 1em; }
   footer { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); display: flex; gap: 6px; align-items: center; }
-  .done { text-align: center; padding: 8px 0; }
-  .done .tick { width: 44px; height: 44px; margin: 0 auto 10px; border-radius: 50%; display: grid; place-items: center; background: var(--field); border: 1px solid var(--line); color: var(--ok); }
-  .done h2 { font-size: 17px; margin: 0 0 4px; }
   .done p { margin: 0; color: var(--muted); font-size: 14px; }
   [hidden] { display: none !important; }`
 }

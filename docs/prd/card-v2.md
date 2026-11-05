@@ -146,6 +146,18 @@ The creature is **Pinguu**, a penguin who keeps keys in an ice vault (decision D
 
 `{store}` is the store label: "macOS Keychain", "Windows Credential Manager", "Linux keyring (Secret Service)", or "nowhere (demo)".
 
+**Where a table caption would be false, it is replaced (S-12, invariant 9).** These are the only replacements (`CAPTION_VARIANTS` in src/buddy.mjs):
+
+| Card | Mood | Caption instead |
+|---|---|---|
+| "Remember on this computer" unticked | `listening` | "Paste it here. It goes to this one command, not into the chat." |
+| "Remember on this computer" unticked | `stashing` | "Handing it over…" |
+| Demo (no store, nothing saved) | `listening` | "Try it: type anything. Nothing is saved." |
+| Demo | `stashing` | "Pretending to put it away…" |
+| Demo, after Save | `locked` | "Nothing was saved. This is how a real save looks." |
+
+A demo also has a row of buttons that preview every mood; a previewed caption starts with "Preview:", and `{store}` reads "password store" there. When Cancel gets no answer at all, the card shows the `closed` pose with "This card is no longer active. You can close this tab.", because it cannot know the card was used.
+
 **Caption rules (invariant 9):** captions describe what happened, never what is impossible. Banned: "your agent can never see this", "100% secure", "encrypted by …", "safe forever". The buddy reacts only to focus, field type and outcome — never to what was typed or its length.
 
 **Tech rules (invariants 5 and 7):** inline SVG and CSS only, under 8 KB, colours from the page's CSS variables so light and dark both work. Only `transform` and `opacity` animate. `prefers-reduced-motion: reduce` means no animation. No animation libraries: GSAP or Motion would need an outside script, which the card's security policy blocks, and a new dependency.

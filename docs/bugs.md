@@ -79,10 +79,10 @@ The deadline is the real-world path. Someone presses Save near the end of the 5 
 
 ### B-7 — After the deadline the card says "This card was already used"
 
-**Seen:** once a card has ended, every POST gets `410 { error: 'This card was already used. Close this tab.', final: true }` (`src/card-server.mjs`, the `settled` checks), and the page shows it under the title "Closed". When the card ended at its deadline, nobody used it, so the sentence is false. Reproduced on 2026-11-06 during S-20: a card with a 100 ms deadline rejected with exit 5, then a submit got exactly that 410. The window is short: the server closes 500 ms after the card ends, and after that the page gets no answer and shows its own "request stopped waiting" text. It has been like this since before card v2; S-20 reuses the same text for a body that was still arriving.
-**Requirement:** invariant 9 in `.claude/CLAUDE.md`.
+**Seen:** once a card has ended, every POST gets `410 { error: 'This card was already used. Close this tab.', final: true }` (`src/card-server.mjs`, the `settled` checks), and the page shows it under the title "Closed". When the card ended at its deadline, nobody used it, so the sentence is false. Reproduced on 2026-11-06 during S-20: a card with a 100 ms deadline rejected with exit 5, then a submit got exactly that 410. The window is short: the server closes 500 ms after the card ends, and after that the page gets no answer and shows its own "request stopped waiting" text. It has been like this since before card v2; S-20 reuses the same text for a body that was still arriving. **Since S-12** the page answers any 410 with the buddy's `closed` pose and the PRD caption "This card was already used. You can close this tab.", so the buddy says the same false sentence in that window.
+**Requirement:** invariant 9 in `.claude/CLAUDE.md`; the `closed` row of the buddy table in `docs/prd/card-v2.md`.
 **Needs first:** nothing.
 **Blocks:** nothing. S-14, which adds the deadline countdown, is the natural place to fold it in.
-**Files:** `src/card-server.mjs`, `test/card-server.test.mjs`.
+**Files:** `src/card-server.mjs`, `test/card-server.test.mjs`; the `closed` caption in src/buddy.mjs, the PRD table row and the 410 branch (`finishFinal`) in src/card-script.mjs.
 **Research:** none · **Model:** sonnet · **Confidence:** 0.95 — reproduced.
 **Fix step:** not queued yet. Proposed: one sentence true for every ending, for example "This card is no longer active. Close this tab."

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { request as httpRequest } from 'node:http'
 import { test } from 'node:test'
+import { MOODS } from '../src/buddy.mjs'
 import { requestSecretWithCard } from '../src/card-server.mjs'
 import { KeypromptError } from '../src/errors.mjs'
 import { saveAll } from '../src/save.mjs'
@@ -105,8 +106,29 @@ test('a demo card says it is a demo and never claims a save or a store', async (
   assert.ok(!page.includes('nowhere (demo)'))
   assert.ok(!page.includes('Remember on this computer'))
   const script = page.slice(page.indexOf('>', page.indexOf('<script nonce=')) + 1, page.lastIndexOf('</script>'))
-  assert.ok(script.includes("finish('Demo finished', 'Nothing you typed was saved. You can close this tab.')"))
+  assert.ok(script.includes("finish('Demo finished', 'locked')"))
   assert.doesNotThrow(() => new Function(script))
+  await send(`${url}/cancel`, { method: 'POST', body: {} })
+})
+
+test('the buddy listens on an ordinary card, and its caption names the store', async () => {
+  const { urlReady } = startCard()
+  const url = await urlReady
+  const page = await send(url)
+  assert.match(page.headers['content-security-policy'], /default-src 'none'/)
+  assert.ok(page.text.includes('<svg class="buddy" data-mood="listening"'))
+  assert.ok(page.text.includes('data-store="macOS Keychain">Paste it here. It goes to your macOS Keychain, not into the chat.</p>'))
+  assert.ok(!page.text.includes('data-preview='))
+  await send(`${url}/cancel`, { method: 'POST', body: {} })
+})
+
+test('a demo buddy names no store and has a button for every mood', async () => {
+  const { urlReady } = startCard({ demo: true, storeLabel: 'nowhere (demo)', allowSessionOnly: false })
+  const url = await urlReady
+  const page = (await send(url)).text
+  assert.ok(page.includes('<p class="caption" id="caption" aria-live="polite">Try it: type anything. Nothing is saved.</p>'))
+  assert.ok(!page.includes('data-store='))
+  for (const { id } of MOODS) assert.ok(page.includes(`<button type="button" data-preview="${id}">${id}</button>`), id)
   await send(`${url}/cancel`, { method: 'POST', body: {} })
 })
 
