@@ -6,7 +6,8 @@ import { openInBrowser } from './browser.mjs'
 import { requestSecretWithCard } from './card-server.mjs'
 import { readCatalog, recordRemoved, recordSavedMany } from './catalog.mjs'
 import { EXIT, KeypromptError } from './errors.mjs'
-import { assertName, parseFields, parseNames } from './names.mjs'
+import { collectSecrets } from './collect.mjs'
+import { assertName, parseFields } from './names.mjs'
 import { runWithSecrets } from './run.mjs'
 import { assertFits, joinNames, saveAll } from './save.mjs'
 import { getStore } from './store/index.mjs'
@@ -167,29 +168,18 @@ export async function main(argv) {
   }
 
   if (verb === 'run') {
-    const names = parseNames(rest)
-    if (names.length === 0 || args.command.length === 0) {
+    const fields = parseFields(rest)
+    if (fields.length === 0 || args.command.length === 0) {
       throw new KeypromptError('Usage: keyprompt run NAME[,NAME...] -- COMMAND [ARGS...]', { exitCode: EXIT.USAGE })
     }
     const store = getStore()
-    /** @type {Map<string, string>} */
-    const secrets = new Map()
-    for (const name of names) {
-      const saved = await store.read(name)
-      if (saved !== null) {
-        secrets.set(name, saved)
-        continue
-      }
-      const { values, remembered } = await askWithCard(store, [{ name }], {
-        reason: args.reason,
-        by: args.by,
-        replacing: false,
-        allowSessionOnly: true,
-      })
-      process.stderr.write(`keyprompt: ${name} ${remembered ? `saved in the ${store.label}` : 'received for this run only'}.\n`)
-      // One required field, so the card only submits when it is filled in.
-      secrets.set(name, /** @type {string} */ (values.get(name)))
-    }
+    const secrets = await collectSecrets(store, fields, async ({ fields: missing, allowSessionOnly }) => {
+      const asked = await askWithCard(store, missing, { reason: args.reason, by: args.by, replacing: false, allowSessionOnly })
+      // The card needs at least one value, so this names at least one.
+      const given = missing.filter((f) => asked.values.has(f.name)).map((f) => f.name)
+      process.stderr.write(`keyprompt: ${joinNames(given)} ${asked.remembered ? `saved in the ${store.label}` : 'received for this run only'}.\n`)
+      return asked
+    })
     const [command, ...commandArgs] = args.command
     return runWithSecrets(command, commandArgs, secrets, { redact: args.redact })
   }

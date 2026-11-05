@@ -44,6 +44,8 @@ test('bad names and bad usage are usage errors (exit 2)', () => {
   assert.equal(cli(['set', 'A', '--bogus']).status, 2)
   assert.equal(cli(['set']).status, 2) // no name
   assert.equal(cli(['set', 'A:bogus']).status, 2) // unknown hint
+  assert.equal(cli(['run', 'A:bogus', '--', 'echo']).status, 2) // unknown hint on run
+  assert.equal(cli(['run', 'A:optional']).status, 2) // hints are fine, the command is missing
 })
 
 test('set reports saved, replaced and empty names, never values', () => {
