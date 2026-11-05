@@ -17,14 +17,15 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const HELP = `keyprompt: give API keys to AI agents without pasting them into the chat.
 
 Usage:
-  keyprompt set NAME [--reason TEXT] [--by TEXT]
-      Open a secure secret card in the browser. The person pastes the value;
-      it is saved in the OS password store. Blocks until saved or cancelled.
+  keyprompt set FIELD [FIELD...] [--reason TEXT] [--by TEXT]
+      Open one secure card in the browser for all the FIELDs. The person
+      pastes the values; they are saved in the OS password store. Blocks until
+      the card is saved, cancelled or put off with Later.
 
-  keyprompt run NAME[,NAME...] [--reason TEXT] [--by TEXT] [--no-redact] -- COMMAND [ARGS...]
-      Run COMMAND with each secret in its environment as $NAME. A secret
-      that is not saved yet opens the card first. Exact copies of the values
-      are masked in COMMAND's output as [keyprompt:NAME].
+  keyprompt run FIELD[,FIELD...] [--reason TEXT] [--by TEXT] [--no-redact] -- COMMAND [ARGS...]
+      Run COMMAND with each secret in its environment as $NAME. Secrets that
+      are not saved yet open one card first. Exact copies of the values are
+      masked in COMMAND's output as [keyprompt:NAME].
 
   keyprompt has NAME        Exit 0 if NAME is saved, 3 if not. Never shows the value.
   keyprompt list            Saved names, reasons and dates. Never values.
@@ -34,6 +35,22 @@ Usage:
 There is deliberately no command that prints a secret.
 
 Names look like environment variables: OPENAI_API_KEY, STRIPE_SECRET_KEY.
+
+A FIELD is a NAME, then any hints, each after a colon:
+  :visible     Show what is typed, for an ID that is not secret.
+  :multiline   A paste box that keeps line breaks (a PEM key, a JSON key file).
+  :optional    May stay empty while at least one box on the card is filled in.
+Hints only change how a box looks on the card. Every value is still saved the
+same way and masked in COMMAND's output. At most 12 FIELDs per card.
+Example: keyprompt set TWILIO_ACCOUNT_SID:visible TWILIO_AUTH_TOKEN
+
+Exit codes:
+  0 ok                       4 the person cancelled the card
+  1 failed (message shown)   5 nobody filled it in within 5 minutes
+  2 bad usage                6 the person chose Later; nothing was saved
+  3 not saved (has, delete)
+  run exits with COMMAND's own code once COMMAND has started.
+
 Options:
   --reason TEXT   Shown on the card: why the secret is needed.
   --by TEXT       Shown on the card: who is asking (default: detected agent and folder).
