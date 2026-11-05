@@ -75,7 +75,7 @@ export function renderCard({ fields, reason, requester, storeLabel, replacing, a
       ? 'Secrets requested'
       : 'Secret requested'
   const action = replacing ? (several ? 'Replace values' : 'Replace value') : several ? `Save all ${fields.length}` : 'Save securely'
-  const demoHtml = demo ? '<p class="note demo" role="note"><strong>Demo — nothing you type is saved.</strong></p>' : ''
+  const demoHtml = demo ? '<p class="note" role="note"><strong>Demo — nothing you type is saved.</strong></p>' : ''
   const footerText = demo ? 'Demo · nothing is stored' : `Stored in your ${escapeHtml(storeLabel)} · never shown to your agent`
   const reasonHtml = reason ? `<p class="reason">${escapeHtml(reason)}</p>` : ''
   const requesterHtml = requester ? `<p class="meta">Requested by ${escapeHtml(requester)}</p>` : ''

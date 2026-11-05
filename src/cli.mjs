@@ -244,7 +244,7 @@ export async function main(argv) {
 
   if (verb === 'demo') {
     if (rest.length > 0 || args.command.length > 0) throw new KeypromptError('Usage: keyprompt demo', { exitCode: EXIT.USAGE })
-    process.stderr.write('keyprompt: opened the demo card in the browser. Nothing you type there is saved. Waiting for it to be closed...\n')
+    process.stderr.write('keyprompt: opened the demo card in the browser. Nothing you type there is saved. Waiting for you to press Save, Later or Cancel...\n')
     try {
       await requestSecretWithCard({ ...demoRequest(), open: openInBrowser })
     } catch (error) {
