@@ -38,15 +38,20 @@ async function writeCatalog(catalog) {
 }
 
 /**
- * @param {string} name
+ * Record names that were just saved, in one catalog write. A name saved
+ * without a reason keeps the reason it had.
+ * @param {string[]} names
  * @param {{ reason?: string, store: string }} entry
  */
-export async function recordSaved(name, entry) {
+export async function recordSavedMany(names, entry) {
   const catalog = await readCatalog()
-  catalog[name] = {
-    ...(entry.reason ? { reason: entry.reason } : catalog[name]?.reason ? { reason: catalog[name].reason } : {}),
-    store: entry.store,
-    updatedAt: new Date().toISOString(),
+  const updatedAt = new Date().toISOString()
+  for (const name of names) {
+    catalog[name] = {
+      ...(entry.reason ? { reason: entry.reason } : catalog[name]?.reason ? { reason: catalog[name].reason } : {}),
+      store: entry.store,
+      updatedAt,
+    }
   }
   await writeCatalog(catalog)
 }

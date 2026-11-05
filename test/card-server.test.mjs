@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import { request as httpRequest } from 'node:http'
 import { test } from 'node:test'
 import { requestSecretWithCard } from '../src/card-server.mjs'
+import { KeypromptError } from '../src/errors.mjs'
+import { saveAll } from '../src/save.mjs'
 
 /**
  * Start a card and hand back its URL, the pending result and the values the
@@ -245,6 +247,46 @@ test('every box empty gives 400 asking for at least one value', async () => {
   }
   assert.deepEqual(stored, [])
   await send(`${url}/cancel`, { method: 'POST', body: {} })
+})
+
+test('several saved fields: the card says Replace secrets and that empty boxes keep their values', async () => {
+  const { urlReady, result } = startCard({
+    fields: [{ name: 'A', saved: true }, { name: 'B', saved: true }],
+    replacing: true,
+  })
+  const url = await urlReady
+  const page = (await send(url)).text
+  assert.ok(page.includes('<h1>Replace secrets</h1>'))
+  assert.ok(page.includes("These values are already saved and can't be shown. Paste a new value to replace one; an empty box keeps its saved value."))
+  assert.ok(page.includes('>Replace values</button>'))
+  await send(`${url}/cancel`, { method: 'POST', body: {} })
+  await assert.rejects(result, (e) => e.exitCode === 4)
+})
+
+test('when the 2nd of 3 saves fails, the card shows the error and the store holds what it held before', async () => {
+  const items = new Map([['A', 'old-a']])
+  const store = {
+    id: 'fake',
+    label: 'test store',
+    maxValueLength: 100,
+    read: async (name) => items.get(name) ?? null,
+    write: async (name, value) => {
+      if (name === 'B') throw new KeypromptError('Could not save B to the test store.')
+      items.set(name, value)
+    },
+    remove: async (name) => items.delete(name),
+  }
+  const { urlReady, result } = startCard({
+    fields: [{ name: 'A', saved: true }, { name: 'B' }, { name: 'C' }],
+    onSubmit: (values) => saveAll(store, values),
+  })
+  const url = await urlReady
+  const res = await send(`${url}/submit`, { method: 'POST', body: { values: { A: 'new-a', B: 'b', C: 'c' } } })
+  assert.equal(res.status, 422)
+  assert.deepEqual(JSON.parse(res.text), { error: 'Could not save B: Could not save B to the test store. Nothing was changed.' })
+  assert.deepEqual([...items], [['A', 'old-a']])
+  await send(`${url}/cancel`, { method: 'POST', body: {} })
+  await assert.rejects(result, (e) => e.exitCode === 4)
 })
 
 test('a multi-line value keeps its line breaks; the page gives it a paste box', async () => {

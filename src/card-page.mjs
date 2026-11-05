@@ -66,13 +66,21 @@ function renderField(field, index) {
  */
 export function renderCard({ fields, reason, requester, storeLabel, replacing, allowSessionOnly, nonce }) {
   const several = fields.length > 1
-  const title = replacing ? 'Replace secret' : several ? 'Secrets requested' : 'Secret requested'
-  const action = several ? `Save all ${fields.length}` : replacing ? 'Replace value' : 'Save securely'
+  const title = replacing
+    ? several
+      ? 'Replace secrets'
+      : 'Replace secret'
+    : several
+      ? 'Secrets requested'
+      : 'Secret requested'
+  const action = replacing ? (several ? 'Replace values' : 'Replace value') : several ? `Save all ${fields.length}` : 'Save securely'
   const reasonHtml = reason ? `<p class="reason">${escapeHtml(reason)}</p>` : ''
   const requesterHtml = requester ? `<p class="meta">Requested by ${escapeHtml(requester)}</p>` : ''
-  const replaceNote = replacing
-    ? '<p class="note">A value is already saved. It can\'t be shown; paste the new one to replace it.</p>'
-    : ''
+  const replaceNote = !replacing
+    ? ''
+    : several
+      ? '<p class="note">These values are already saved and can\'t be shown. Paste a new value to replace one; an empty box keeps its saved value.</p>'
+      : '<p class="note">A value is already saved. It can\'t be shown; paste the new one to replace it.</p>'
   const rememberHtml = allowSessionOnly
     ? `<label class="check"><input type="checkbox" id="remember" checked> Remember on this computer</label>
        <p class="hint" id="remember-hint">Unchecked: used for this one command, then forgotten.</p>`
