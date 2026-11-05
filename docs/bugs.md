@@ -33,3 +33,13 @@ A bug is written here first, then into the plan, then fixed as its own step. For
 **Files:** `src/cli.mjs` (only `askWithCard`); a test with a catalog folder that cannot be written.
 **Research:** none · **Model:** sonnet · **Confidence:** 0.85 that the card shows the wrong message — the code path was read, not run.
 **Fix step:** not queued yet. Proposed: a catalog failure after a successful save does not fail the submit; the CLI writes one line to stderr instead ("Saved, but could not update the list of names: …").
+
+### B-4 — `run` cannot go on when every missing name is optional and the person leaves them all empty
+
+**Seen:** `keyprompt run X:optional -- COMMAND` with X not saved opens a card with one optional box. Leaving it empty and pressing Save answers "Paste at least one value." (the S-4 rule, `readValues` in `src/card-server.mjs`), so the only ways out are to type something or Cancel (exit 4). Reproduced on 2026-11-05 during S-6 (headless Chromium, real macOS Keychain, a dummy name): the card stayed open and `run` ended with exit 4. The PRD says an empty optional box is "simply absent from the command's environment" (`docs/prd/card-v2.md`, Command line), which this prevents whenever optional boxes are the only kind on the card. `set` is not affected: saving nothing is rightly refused.
+**Requirement:** the PRD line above.
+**Needs first:** a decision from Abhishek: should an all-empty card be allowed for `run` when no box is required? If yes, the card request needs an option for it (the server checks "at least one value" today for every card).
+**Blocks:** nothing now. S-10's agent instructions must not say that `:optional` lets the person skip a name until this is fixed.
+**Files:** `src/card-server.mjs` (`readValues` and the request), `src/cli.mjs`, `test/card-server.test.mjs`.
+**Research:** none · **Model:** opus — it changes a card server endpoint · **Confidence:** 0.9 that the gap is real (reproduced); 0.6 that "allow an empty submit" is the right fix, so a decision comes first.
+**Fix step:** not queued yet.
