@@ -170,6 +170,7 @@ export function buddyStyle() {
       --b-paper: oklch(0.96 0.005 250); --b-ink: oklch(0.22 0.03 255); --b-note: oklch(0.86 0.12 98);
     }
   }
+  @media (max-width: 400px) { .buddy { width: 96px; } }
   .buddy * { fill: none; }
   .buddy [class*="s-"] { stroke-linecap: round; stroke-linejoin: round; }
   .buddy .t-ink { fill: var(--b-ink); }

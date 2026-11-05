@@ -34,9 +34,7 @@ export function cardStyle() {
   }
   .caption.err { color: var(--err); }
   .preview { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 14px; font-size: 12px; color: var(--muted); }
-  .preview button { padding: 4px 8px; border-radius: 999px; font: 500 12px/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-  @media (max-width: 400px) { .buddy { width: 96px; } }
-  .chip {
+  .preview button { padding: 4px 8px; border-radius: 999px; font: 500 12px/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }  .chip {
     display: inline-block; font: 600 13px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     padding: 6px 9px; border-radius: 8px; background: var(--field); border: 1px solid var(--line);
     word-break: break-all;
