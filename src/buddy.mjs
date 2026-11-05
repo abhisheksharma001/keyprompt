@@ -134,6 +134,57 @@ export function buddySvg(mood = 'listening') {
 </svg>`
 }
 
+/**
+ * How long the key takes to go into the vault, in ms. After a successful save
+ * the card waits for what is left of it before the done screen, so it stays
+ * under 1.2 s (S-13).
+ */
+export const STASH_MS = 600
+
+/** Curves for the buddy's motion: arriving, swinging shut, travelling, breathing. */
+const EASE = {
+  out: 'cubic-bezier(.25,1,.5,1)',
+  in: 'cubic-bezier(.5,0,.75,0)',
+  inOut: 'cubic-bezier(.65,0,.35,1)',
+  loop: 'cubic-bezier(.37,0,.63,1)',
+}
+
+/**
+ * One keyframe set per mood. Only transform and opacity move, only listening
+ * and asleep loop, and a part with a still transform ends on it. Reduced
+ * motion turns all of it off, which leaves the still poses.
+ */
+function motionStyle() {
+  return `.buddy .door { transform-box: fill-box; transform-origin: 100% 50%; }
+  .buddy .key, .buddy .note, .buddy .sparkle { transform-box: fill-box; transform-origin: center; }
+  .buddy .arms [data-show~="bye"] { transform-box: view-box; transform-origin: 82px 70px; }
+  @keyframes b-bob { 0%, 100% { transform: none; } 50% { transform: scale(.99, 1.02); } }
+  @keyframes b-arms-up { from { transform: translateY(10px); } }
+  @keyframes b-key-in { 70% { transform: translate(10px, 9px) scale(.9); opacity: 1; } to { transform: translate(11px, 10px) scale(.6); opacity: 0; } }
+  @keyframes b-door-shut { from { transform: scaleX(.2); } }
+  @keyframes b-dial { from { transform: rotate(-135deg); } to { transform: rotate(135deg); } }
+  @keyframes b-pop { from { transform: scale(.9); opacity: 0; } }
+  @keyframes b-hand-over { 66% { transform: translate(3px, -10px); opacity: 1; } to { transform: translate(5px, -22px); opacity: 0; } }
+  @keyframes b-land { from { transform: translateY(-6px) rotate(5deg); opacity: 0; } }
+  @keyframes b-wave { 30% { transform: rotate(-14deg); } 70% { transform: rotate(9deg); } }
+  @keyframes b-float { 0% { transform: translateY(3px); opacity: 0; } 30% { opacity: 1; } 100% { transform: translate(3px, -5px); opacity: 0; } }
+  @keyframes b-shake { 0%, 100% { transform: rotate(-5deg); } 25% { transform: rotate(-9deg); } 50% { transform: rotate(-2deg); } 75% { transform: rotate(-6.5deg); } }
+  .buddy[data-mood="listening"] .pg { animation: b-bob 2.4s ${EASE.loop} infinite; }
+  .buddy[data-mood="peek-proof"] .arms [data-show~="peek-proof"] { animation: b-arms-up 200ms ${EASE.out}; }
+  .buddy[data-mood="stashing"] .key { animation: b-key-in ${STASH_MS}ms ${EASE.inOut} forwards; }
+  .buddy[data-mood="locked"] .door { animation: b-door-shut 250ms ${EASE.in}; }
+  .buddy[data-mood="locked"] .dial { animation: b-dial 400ms ${EASE.out} 250ms backwards; }
+  .buddy[data-mood="locked"] .sparkle { animation: b-pop 250ms ${EASE.out} 650ms backwards; }
+  .buddy[data-mood="one-run"] .envelope { animation: b-hand-over 900ms ${EASE.out} forwards; }
+  .buddy[data-mood="later"] .note { animation: b-land 300ms ${EASE.out}; }
+  .buddy[data-mood="bye"] .arms [data-show~="bye"] { animation: b-wave 500ms ${EASE.loop} 2; }
+  .buddy[data-mood="asleep"] .zzz text { animation: b-float 3s ${EASE.loop} infinite backwards; }
+  .buddy[data-mood="asleep"] .zzz text:nth-child(2) { animation-delay: 1s; }
+  .buddy[data-mood="asleep"] .zzz text:nth-child(3) { animation-delay: 2s; }
+  .buddy[data-mood="oops"] .pg { animation: b-shake 300ms ${EASE.out}; }
+  @media (prefers-reduced-motion: reduce) { .buddy, .buddy * { animation: none !important; } }`
+}
+
 /** Fill and stroke classes, each mapped to one of the buddy's colour variables. */
 const PAINT = {
   f: { body: 'body', wing: 'wing', belly: 'belly', gold: 'gold', scarf: 'scarf', cheek: 'cheek', ice: 'ice', snow: 'snow', door: 'door', deep: 'deep', edge: 'edge', paper: 'paper', ink: 'ink', note: 'note' },
@@ -142,7 +193,7 @@ const PAINT = {
 
 /**
  * The buddy's stylesheet: its colours for light and dark, which parts each
- * mood shows, and where it looks. No animation yet.
+ * mood shows, where it looks, and how it moves.
  */
 export function buddyStyle() {
   const paint = [
@@ -188,5 +239,6 @@ export function buddyStyle() {
   .buddy[data-mood="oops"] .pg { transform: rotate(-5deg); }
   .buddy[data-mood="asleep"] .pg { transform: rotate(4deg); }
   ${paint.join('\n  ')}
-  ${poses.join('\n  ')}`
+  ${poses.join('\n  ')}
+  ${motionStyle()}`
 }
