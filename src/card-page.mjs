@@ -1,3 +1,6 @@
+import { cardScript } from './card-script.mjs'
+import { cardStyle } from './card-style.mjs'
+
 /** @param {string} text */
 function escapeHtml(text) {
   return text
@@ -44,61 +47,7 @@ export function renderCard({ name, reason, requester, storeLabel, replacing, all
 <meta name="referrer" content="no-referrer">
 <title>${escapeHtml(title)}: ${escapeHtml(name)}</title>
 <style>
-  :root {
-    --bg: #f4f4f5; --card: #ffffff; --text: #18181b; --muted: #71717a; --line: #e4e4e7;
-    --field: #fafafa; --accent: #18181b; --accent-text: #ffffff; --ok: #15803d; --err: #b91c1c;
-    color-scheme: light dark;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #09090b; --card: #18181b; --text: #fafafa; --muted: #a1a1aa; --line: #27272a;
-      --field: #0f0f11; --accent: #fafafa; --accent-text: #09090b; --ok: #4ade80; --err: #f87171;
-    }
-  }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 16px;
-    background: var(--bg); color: var(--text);
-    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Ubuntu, sans-serif;
-  }
-  .card {
-    width: 100%; max-width: 440px; background: var(--card); border: 1px solid var(--line);
-    border-radius: 16px; padding: 24px; box-shadow: 0 10px 30px rgba(0,0,0,.08);
-  }
-  .head { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
-  .icon { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; background: var(--field); border: 1px solid var(--line); }
-  h1 { font-size: 16px; margin: 0; font-weight: 600; }
-  .chip {
-    display: inline-block; font: 600 13px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    padding: 6px 9px; border-radius: 8px; background: var(--field); border: 1px solid var(--line);
-    word-break: break-all;
-  }
-  .reason { margin: 12px 0 0; }
-  .meta, .hint, .note, footer { color: var(--muted); font-size: 13px; }
-  .meta { margin: 6px 0 0; }
-  .note { margin: 10px 0 0; }
-  .field { display: flex; gap: 8px; margin-top: 16px; }
-  input[type=password], input[type=text] {
-    flex: 1; min-width: 0; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line);
-    background: var(--field); color: var(--text); font: 14px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  }
-  input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
-  button {
-    padding: 10px 14px; border-radius: 10px; border: 1px solid var(--line); background: var(--card);
-    color: var(--text); font: inherit; font-weight: 600; cursor: pointer;
-  }
-  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
-  button:disabled { opacity: .5; cursor: default; }
-  .check { display: flex; gap: 8px; align-items: center; margin-top: 14px; font-size: 14px; }
-  .hint { margin: 4px 0 0 24px; }
-  .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
-  .error { color: var(--err); font-size: 13px; margin: 10px 0 0; min-height: 1em; }
-  footer { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); display: flex; gap: 6px; align-items: center; }
-  .done { text-align: center; padding: 8px 0; }
-  .done .tick { width: 44px; height: 44px; margin: 0 auto 10px; border-radius: 50%; display: grid; place-items: center; background: var(--field); border: 1px solid var(--line); color: var(--ok); }
-  .done h2 { font-size: 17px; margin: 0 0 4px; }
-  .done p { margin: 0; color: var(--muted); font-size: 14px; }
-  [hidden] { display: none !important; }
+${cardStyle()}
 </style>
 </head>
 <body>
@@ -140,81 +89,7 @@ export function renderCard({ name, reason, requester, storeLabel, replacing, all
   </footer>
 </main>
 <script nonce="${nonce}">
-(() => {
-  const base = location.pathname
-  const form = document.getElementById('form')
-  const value = document.getElementById('value')
-  const toggle = document.getElementById('toggle')
-  const remember = document.getElementById('remember')
-  const save = document.getElementById('save')
-  const cancel = document.getElementById('cancel')
-  const error = document.getElementById('error')
-
-  if (remember) {
-    const footer = document.getElementById('footer-text')
-    const savedFooter = footer.textContent
-    const savedAction = save.textContent
-    remember.addEventListener('change', () => {
-      save.textContent = remember.checked ? savedAction : 'Use for this run'
-      footer.textContent = remember.checked ? savedFooter : 'Held for this one command only · never shown to your agent'
-    })
-  }
-
-  toggle.addEventListener('click', () => {
-    const show = value.type === 'password'
-    value.type = show ? 'text' : 'password'
-    toggle.textContent = show ? 'Hide' : 'Show'
-    toggle.setAttribute('aria-pressed', String(show))
-    value.focus()
-  })
-
-  function finish(title, text) {
-    value.value = ''
-    document.getElementById('done-title').textContent = title
-    document.getElementById('done-text').textContent = text
-    document.getElementById('form-view').hidden = true
-    document.getElementById('done-view').hidden = false
-  }
-
-  async function post(path, body) {
-    const res = await fetch(base + path, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-      cache: 'no-store',
-    })
-    let data = {}
-    try { data = await res.json() } catch {}
-    return { ok: res.ok, data }
-  }
-
-  form.addEventListener('submit', async (event) => {
-    event.preventDefault()
-    error.textContent = ''
-    if (value.value.trim().length === 0) { error.textContent = 'Paste the value first.'; return }
-    save.disabled = true; cancel.disabled = true
-    try {
-      const { ok, data } = await post('/submit', { value: value.value, remember: remember ? remember.checked : true })
-      if (ok) {
-        finish(data.remembered ? 'Saved' : 'Ready', data.remembered
-          ? 'Saved securely and kept private. You can close this tab.'
-          : 'Handed to the command for this run only, not saved. You can close this tab.')
-        return
-      }
-      error.textContent = data.error || 'Could not save. Try again.'
-      if (data.final) { finish('Closed', data.error || 'This card is no longer active.') }
-    } catch {
-      error.textContent = 'The request stopped waiting. Close this tab and ask your agent to try again.'
-    }
-    save.disabled = false; cancel.disabled = false
-  })
-
-  cancel.addEventListener('click', async () => {
-    save.disabled = true; cancel.disabled = true
-    try { await post('/cancel', {}) } catch {}
-    finish('Cancelled', 'Nothing was saved. You can close this tab.')
-  })
-})()
+${cardScript()}
 </script>
 </body>
 </html>`
