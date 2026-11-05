@@ -12,12 +12,50 @@ function escapeHtml(text) {
 }
 
 /**
+ * One row per field: the name as a chip, a small tag per hint, then the box.
+ * A visible box is plain text; a multi-line one is a paste box that the page
+ * script hides once something is pasted (visible and multi-line together is a
+ * plain text area); every other box is a password box with Show.
+ *
+ * @param {import('./card-server.mjs').CardField} field
+ * @param {number} index
+ */
+function renderField(field, index) {
+  const name = escapeHtml(field.name)
+  const id = `field-${index}`
+  const tags = [field.visible && 'shown', field.multiline && 'multi-line', field.optional && 'optional']
+    .filter(Boolean)
+    .map((tag) => `<span class="tag">${tag}</span>`)
+    .join('')
+  const placeholder = field.saved ? 'Saved — leave empty to keep' : field.multiline ? 'Paste here' : 'Paste the value'
+  const common = `id="${id}" class="value" spellcheck="false" autocapitalize="off" autocorrect="off" placeholder="${placeholder}"${index === 0 ? ' autofocus' : ''}`
+  let box
+  if (field.multiline && field.visible) {
+    box = `<textarea ${common} rows="4" aria-label="Value for ${name}"></textarea>`
+  } else if (field.multiline) {
+    box = `<textarea ${common} rows="3" data-paste aria-label="Secret value for ${name}"></textarea>
+        <div class="pasted" hidden><span class="count" aria-live="polite"></span><button type="button" class="reveal" aria-pressed="false">Show</button><button type="button" class="clear">Clear</button></div>`
+  } else if (field.visible) {
+    box = `<input ${common} type="text" aria-label="Value for ${name}">`
+  } else {
+    box = `<input ${common} type="password" aria-label="Secret value for ${name}">
+        <button type="button" class="toggle" aria-pressed="false">Show</button>`
+  }
+  return `<div class="row" data-name="${name}">
+        <div class="label"><label class="chip" for="${id}">${name}</label>${tags}</div>
+        <div class="field${field.multiline ? ' stack' : ''}">
+        ${box}
+        </div>
+      </div>`
+}
+
+/**
  * The secure secret card. Everything in it is static except the escaped
- * name, reason, requester and store label; the value typed into it is only
- * ever POSTed back to the local server, never placed into the page.
+ * field names, reason, requester and store label; the values typed into it
+ * are only ever POSTed back to the local server, never placed into the page.
  *
  * @param {{
- *   name: string,
+ *   fields: import('./card-server.mjs').CardField[],
  *   reason?: string,
  *   requester?: string,
  *   storeLabel: string,
@@ -26,9 +64,10 @@ function escapeHtml(text) {
  *   nonce: string,
  * }} options
  */
-export function renderCard({ name, reason, requester, storeLabel, replacing, allowSessionOnly, nonce }) {
-  const title = replacing ? 'Replace secret' : 'Secret requested'
-  const action = replacing ? 'Replace value' : 'Save securely'
+export function renderCard({ fields, reason, requester, storeLabel, replacing, allowSessionOnly, nonce }) {
+  const several = fields.length > 1
+  const title = replacing ? 'Replace secret' : several ? 'Secrets requested' : 'Secret requested'
+  const action = several ? `Save all ${fields.length}` : replacing ? 'Replace value' : 'Save securely'
   const reasonHtml = reason ? `<p class="reason">${escapeHtml(reason)}</p>` : ''
   const requesterHtml = requester ? `<p class="meta">Requested by ${escapeHtml(requester)}</p>` : ''
   const replaceNote = replacing
@@ -45,7 +84,7 @@ export function renderCard({ name, reason, requester, storeLabel, replacing, all
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer">
-<title>${escapeHtml(title)}: ${escapeHtml(name)}</title>
+<title>${escapeHtml(title)}: ${fields.map((f) => escapeHtml(f.name)).join(', ')}</title>
 <style>
 ${cardStyle()}
 </style>
@@ -59,14 +98,12 @@ ${cardStyle()}
       </div>
       <h1>${escapeHtml(title)}</h1>
     </div>
-    <span class="chip">${escapeHtml(name)}</span>
     ${reasonHtml}
     ${requesterHtml}
     ${replaceNote}
     <form id="form" autocomplete="off">
-      <div class="field">
-        <input id="value" type="password" spellcheck="false" autocapitalize="off" autocorrect="off" aria-label="Secret value for ${escapeHtml(name)}" placeholder="Paste the value" autofocus>
-        <button type="button" id="toggle" aria-pressed="false">Show</button>
+      <div class="rows">
+      ${fields.map(renderField).join('\n      ')}
       </div>
       ${rememberHtml}
       <p class="error" id="error" role="alert"></p>

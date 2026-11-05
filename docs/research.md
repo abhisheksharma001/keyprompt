@@ -107,8 +107,8 @@ Judgment (not legal advice): low risk while keyprompt is small and free; the ris
 **Find out:** an `<input type=password>` cannot hold line breaks, and a `<textarea>` shows text in the clear. Options: (a) a small "paste here" box that, once something is pasted, hides it and shows only "27 lines, 1,704 characters pasted" with a Show button; (b) the CSS `-webkit-text-security: disc` on the textarea (browser support must be checked in the primary source, e.g. MDN or caniuse, for Chrome, Safari and Firefox). Recommendation: (a), because it works in every browser and also shows the person what arrived.
 **Confidence:** 0.6 (low) on (b)'s Firefox support — from memory. (a) needs no browser feature beyond `paste` events.
 **Review:** none.
-**Status:** open — S-4 uses (a) unless (b) is checked and works everywhere.
-**Answer:** —
+**Status:** answered 2026-11-05 — S-4 uses (a).
+**Answer:** (b) does work in all three now: `-webkit-text-security` is supported by Chrome 1+, Safari 3+ and Firefox 114+, and is non-standard (MDN browser-compat-data, https://raw.githubusercontent.com/mdn/browser-compat-data/main/css/properties/-webkit-text-security.json, read live 2026-11-05; MDN page https://developer.mozilla.org/en-US/docs/Web/CSS/Reference/Properties/-webkit-text-security, live 2026-11-05). S-4 still uses (a): it needs no non-standard CSS and it tells the person what arrived ("4 lines, 68 characters pasted"). The page catches the `paste` event on an empty box, puts the text in a hidden text area and shows the count with Show and Clear; typed text stays visible. Checked in headless Chromium (agent-browser 0.27.0) with a synthetic paste, 2026-11-05.
 
 ### R-9 — How mature is keymask, the closest rival?
 

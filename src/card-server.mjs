@@ -3,21 +3,63 @@ import { createServer } from 'node:http'
 import { renderCard } from './card-page.mjs'
 import { EXIT, KeypromptError } from './errors.mjs'
 
-const MAX_BODY_BYTES = 128 * 1024
+/** 12 fields of up to 64 KiB each, with room for JSON escaping. */
+const MAX_BODY_BYTES = 1024 * 1024
 export const DEFAULT_CARD_TIMEOUT_MS = 5 * 60 * 1000
 
 /**
- * @typedef {object} CardRequest
+ * One box on the card. The hints only change how the box looks; they never
+ * change what is protected.
+ * @typedef {object} CardField
  * @property {string} name
+ * @property {boolean} [visible] Shown as plain text (for IDs).
+ * @property {boolean} [multiline] A paste box that keeps line breaks.
+ * @property {boolean} [optional] May be left empty.
+ * @property {boolean} [saved] Already stored, so it may be left empty to keep the saved value.
+ */
+
+/**
+ * @typedef {object} CardRequest
+ * @property {CardField[]} fields
  * @property {string} [reason]
  * @property {string} [requester]
  * @property {string} storeLabel
  * @property {boolean} replacing
- * @property {boolean} allowSessionOnly Show "Remember on this computer"; when false the value is always saved.
- * @property {(value: string, remember: boolean) => Promise<void>} onSubmit Store (or hold) the value; throw to show the error on the card.
+ * @property {boolean} allowSessionOnly Show "Remember on this computer"; when false the values are always saved.
+ * @property {(values: Map<string, string>, remember: boolean) => Promise<void>} onSubmit Store (or hold) the non-empty values; throw to show the error on the card.
  * @property {(url: string) => Promise<boolean>} open Open the card for the person. Resolves false if nothing could be opened.
  * @property {number} [timeoutMs]
  */
+
+/**
+ * Check a submitted `values` object against the fields the card asked for.
+ * Returns the non-empty values, trimmed at both ends (line breaks inside are
+ * kept), in the card's order, or the 400 body to send back.
+ * @param {CardField[]} fields
+ * @param {unknown} values
+ * @returns {{ values: Map<string, string> } | { error: string, field?: string }}
+ */
+function readValues(fields, values) {
+  if (typeof values !== 'object' || values === null || Object.getPrototypeOf(values) !== Object.prototype) {
+    return { error: 'Malformed request.' }
+  }
+  const posted = /** @type {Record<string, unknown>} */ (values)
+  for (const key of Object.keys(posted)) {
+    if (!fields.some((f) => f.name === key) || typeof posted[key] !== 'string') {
+      return { error: 'Malformed request.' }
+    }
+  }
+  /** @type {Map<string, string>} */
+  const filled = new Map()
+  for (const field of fields) {
+    const raw = posted[field.name]
+    const value = typeof raw === 'string' ? raw.trim() : ''
+    if (value.length > 0) filled.set(field.name, value)
+    else if (!field.optional && !field.saved) return { error: `Fill in ${field.name}.`, field: field.name }
+  }
+  if (filled.size === 0) return { error: 'Paste at least one value.' }
+  return { values: filled }
+}
 
 /** @param {string} a @param {string} b */
 function sameString(a, b) {
@@ -37,7 +79,7 @@ function sameString(a, b) {
  * deadline after which nothing is accepted.
  *
  * @param {CardRequest} request
- * @returns {Promise<{ remembered: boolean, value: string }>}
+ * @returns {Promise<{ remembered: boolean, values: Map<string, string> }>}
  */
 export function requestSecretWithCard(request) {
   const token = randomBytes(32).toString('base64url')
@@ -82,7 +124,7 @@ export function requestSecretWithCard(request) {
         })
         res.end(
           renderCard({
-            name: request.name,
+            fields: request.fields,
             reason: request.reason,
             requester: request.requester,
             storeLabel: request.storeLabel,
@@ -124,7 +166,7 @@ export function requestSecretWithCard(request) {
           finish(() => reject(new KeypromptError('The person closed the secret card without saving.', { exitCode: EXIT.CANCELLED })))
           return
         }
-        /** @type {{ value?: unknown, remember?: unknown }} */
+        /** @type {{ values?: unknown, remember?: unknown } | null} */
         let body
         try {
           body = JSON.parse(Buffer.concat(chunks).toString('utf8'))
@@ -132,26 +174,27 @@ export function requestSecretWithCard(request) {
           send(400, { error: 'Malformed request.' })
           return
         }
-        const value = typeof body.value === 'string' ? body.value.trim() : ''
-        if (value.length === 0) {
-          send(400, { error: 'Paste the value first.' })
+        const checked = readValues(request.fields, body?.values)
+        if (!('values' in checked)) {
+          send(400, checked)
           return
         }
+        const { values } = checked
         if (busy) {
           send(409, { error: 'Already saving. Wait a moment.' })
           return
         }
-        const remember = request.allowSessionOnly ? body.remember !== false : true
+        const remember = request.allowSessionOnly ? body?.remember !== false : true
         busy = true
         try {
-          await request.onSubmit(value, remember)
+          await request.onSubmit(values, remember)
         } catch (error) {
           busy = false
           send(422, { error: error instanceof KeypromptError ? error.message : 'Could not save. Try again.' })
           return
         }
         send(200, { remembered: remember })
-        finish(() => resolve({ remembered: remember, value }))
+        finish(() => resolve({ remembered: remember, values }))
       })
     })
 
