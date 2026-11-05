@@ -116,6 +116,7 @@ ${cardStyle()}
       ${rememberHtml}
       <p class="error" id="error" role="alert"></p>
       <div class="actions">
+        <button type="button" id="later">Later</button>
         <button type="button" id="cancel">Cancel</button>
         <button type="submit" class="primary" id="save">${escapeHtml(action)}</button>
       </div>

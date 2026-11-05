@@ -7,7 +7,12 @@ export function cardScript() {
   const remember = document.getElementById('remember')
   const save = document.getElementById('save')
   const cancel = document.getElementById('cancel')
+  const later = document.getElementById('later')
   const error = document.getElementById('error')
+
+  function lock(locked) {
+    save.disabled = locked; cancel.disabled = locked; later.disabled = locked
+  }
 
   if (remember) {
     const footer = document.getElementById('footer-text')
@@ -106,7 +111,7 @@ export function cardScript() {
       box.removeAttribute('aria-invalid')
       values[row.dataset.name] = box.value
     }
-    save.disabled = true; cancel.disabled = true
+    lock(true)
     try {
       const { ok, data } = await post('/submit', { values, remember: remember ? remember.checked : true })
       if (ok) {
@@ -126,13 +131,30 @@ export function cardScript() {
     } catch {
       error.textContent = 'The request stopped waiting. Close this tab and ask your agent to try again.'
     }
-    save.disabled = false; cancel.disabled = false
+    lock(false)
   })
 
   cancel.addEventListener('click', async () => {
-    save.disabled = true; cancel.disabled = true
+    lock(true)
     try { await post('/cancel', {}) } catch {}
     finish('Cancelled', 'Nothing was saved. You can close this tab.')
+  })
+
+  later.addEventListener('click', async () => {
+    error.textContent = ''
+    lock(true)
+    try {
+      const { ok, data } = await post('/later', {})
+      if (ok) {
+        finish('Later', 'Okay, later. Nothing was saved. You can close this tab.')
+        return
+      }
+      error.textContent = data.error || 'That did not work. Try again.'
+      if (data.final) { finish('Closed', data.error || 'This card is no longer active.') }
+    } catch {
+      error.textContent = 'The request stopped waiting. Close this tab and ask your agent to try again.'
+    }
+    lock(false)
   })
 })()`
 }

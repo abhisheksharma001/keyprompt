@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync } from 'node:fs'
+import { randomBytes } from 'node:crypto'
+import { chmodSync, existsSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { test } from 'node:test'
-import { parseArgs, setReport } from '../src/cli.mjs'
+import { laterForRun, parseArgs, setReport } from '../src/cli.mjs'
+import { getStore } from '../src/store/index.mjs'
 
 const BIN = fileURLToPath(new URL('../bin/keyprompt.mjs', import.meta.url))
 
@@ -74,6 +76,58 @@ test('set reports saved, replaced and empty names, never values', () => {
       'Use them with: keyprompt run A,B -- <command>\n',
   )
   assert.ok(!report.includes('sk-'))
+})
+
+test('Later on run: exit 6, names the boxes and the command, never its arguments', () => {
+  const one = laterForRun([{ name: 'A' }], 'npm')
+  assert.equal(one.exitCode, 6)
+  assert.equal(
+    one.message,
+    'The person chose Later for A. Nothing was saved and npm did not run. Carry on with work that does not need it; ask again only when you are about to use it.',
+  )
+  assert.equal(
+    laterForRun([{ name: 'A' }, { name: 'B' }], 'npm').message,
+    'The person chose Later for A and B. Nothing was saved and npm did not run. Carry on with work that does not need these; ask again only when you are about to use them.',
+  )
+})
+
+// Reads the real OS password store, so it is opt-in like the store tests. The
+// fake browser is a script run by its #! line, which Windows cannot do.
+const realCard = process.env.KEYPROMPT_STORE_TEST === '1' && process.platform !== 'win32'
+
+test('clicking Later: set and run exit 6, nothing is saved, and run does not start the command', { skip: !realCard }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'keyprompt-later-'))
+  const browser = join(dir, 'later.mjs')
+  writeFileSync(
+    browser,
+    `#!${process.execPath}
+import { request } from 'node:http'
+const url = new URL(process.argv[2])
+const headers = { Origin: url.origin, 'Content-Type': 'application/json' }
+request({ hostname: url.hostname, port: url.port, path: url.pathname + '/later', method: 'POST', headers }).end('{}')
+`,
+  )
+  chmodSync(browser, 0o755)
+  const name = `KEYPROMPT_TEST_${randomBytes(4).toString('hex').toUpperCase()}`
+  const marker = join(dir, 'ran')
+  const env = { ...process.env, KEYPROMPT_HOME: dir, KEYPROMPT_BROWSER: browser }
+  const keyprompt = (args) => spawnSync(process.execPath, [BIN, ...args], { encoding: 'utf8', env, timeout: 15000 })
+  try {
+    const run = keyprompt(['run', name, '--', process.execPath, '-e', `require('fs').writeFileSync(${JSON.stringify(marker)}, 'ran')`])
+    assert.equal(run.status, 6, run.stderr)
+    assert.ok(run.stderr.includes(`keyprompt: The person chose Later for ${name}. Nothing was saved and ${process.execPath} did not run.`), run.stderr)
+    assert.equal(existsSync(marker), false)
+
+    const set = keyprompt(['set', name])
+    assert.equal(set.status, 6, set.stderr)
+    assert.ok(set.stderr.includes(`keyprompt: The person chose Later for ${name}. Nothing was saved.\n`), set.stderr)
+    assert.equal(set.stdout, '')
+
+    assert.equal(keyprompt(['has', name]).status, 3)
+    assert.equal(existsSync(join(dir, 'catalog.json')), false)
+  } finally {
+    await getStore().remove(name).catch(() => {})
+  }
 })
 
 test('list on a fresh machine says nothing is saved', () => {
