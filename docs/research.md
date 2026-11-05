@@ -36,10 +36,14 @@ One entry per open question. A guess never goes into code: it goes here first. F
 
 **Where:** card v2 · S-8 · `src/store/linux.mjs:43-50`, `src/store/windows.mjs` (the embedded PowerShell script)
 **Find out:** whether `secret-tool store` keeps line breaks inside a value read from stdin and `secret-tool lookup` returns exactly those bytes; whether the Windows helper reads all of stdin or only one line. Whatever fails gets fixed in S-8.
-**Confidence:** 0.4 (low) — from memory only.
-**Review:** none — the CI run in S-8 decides it.
-**Status:** open.
-**Answer:** —
+**Confidence:** 0.9 (high) — run in CI on the real stores; small values and one image per OS only (see the last bullet).
+**Review:** none — the CI run decided it.
+**Status:** answered 2026-11-05 (S-8).
+**Answer:** yes on both. No store change was needed.
+- **What ran.** CI run 42076047835 (https://github.com/abhisheksharma001/keyprompt/actions/runs/42076047835, PR #10, head 70df4d0, read live via `gh` on 2026-11-05): the test "round-trips values through the OS password store byte for byte" saved and read back `line1\nline2`, a four-line fake PEM with a trailing line break, and `a\r\nb`, each compared with `assert.equal`. It passed (not skipped) on Ubuntu and Windows, Node 20 and 22. In the Ubuntu and Windows logs, 70 of 72 tests passed and 2 were skipped: the two macOS-only `security -i` tests.
+- **Linux.** `secret-tool store` keeps every line of a value read from stdin, and `secret-tool lookup` returns exactly those bytes, trailing line break included. Seen on the `ubuntu-24.04` image, libsecret-tools 0.21.4-1build3 with gnome-keyring 46.1-2ubuntu0.2 (versions from the job log).
+- **Windows.** The PowerShell helper reads all of stdin (`CopyTo` into a stream), not one line, and returns the bytes unchanged. Seen on the `windows-2025-vs2026` image, which runs `powershell.exe`; I did not read its PowerShell version.
+- **Not covered.** Only three short multi-line values (the longest, the fake PEM, is 160 bytes) and one image per OS. A multi-line value near the Windows limit (1,280 characters, R-2) or the declared Linux limit (64 KiB) was not run.
 
 ### R-4 — What do we call the mascot, and what may it look like?
 
