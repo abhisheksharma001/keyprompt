@@ -1,0 +1,58 @@
+/** The card's stylesheet text. renderCard places it inside the page's <style> element. */
+export function cardStyle() {
+  return `  :root {
+    --bg: #f4f4f5; --card: #ffffff; --text: #18181b; --muted: #71717a; --line: #e4e4e7;
+    --field: #fafafa; --accent: #18181b; --accent-text: #ffffff; --ok: #15803d; --err: #b91c1c;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #09090b; --card: #18181b; --text: #fafafa; --muted: #a1a1aa; --line: #27272a;
+      --field: #0f0f11; --accent: #fafafa; --accent-text: #09090b; --ok: #4ade80; --err: #f87171;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 16px;
+    background: var(--bg); color: var(--text);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Ubuntu, sans-serif;
+  }
+  .card {
+    width: 100%; max-width: 440px; background: var(--card); border: 1px solid var(--line);
+    border-radius: 16px; padding: 24px; box-shadow: 0 10px 30px rgba(0,0,0,.08);
+  }
+  .head { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+  .icon { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; background: var(--field); border: 1px solid var(--line); }
+  h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  .chip {
+    display: inline-block; font: 600 13px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    padding: 6px 9px; border-radius: 8px; background: var(--field); border: 1px solid var(--line);
+    word-break: break-all;
+  }
+  .reason { margin: 12px 0 0; }
+  .meta, .hint, .note, footer { color: var(--muted); font-size: 13px; }
+  .meta { margin: 6px 0 0; }
+  .note { margin: 10px 0 0; }
+  .field { display: flex; gap: 8px; margin-top: 16px; }
+  input[type=password], input[type=text] {
+    flex: 1; min-width: 0; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line);
+    background: var(--field); color: var(--text); font: 14px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  button {
+    padding: 10px 14px; border-radius: 10px; border: 1px solid var(--line); background: var(--card);
+    color: var(--text); font: inherit; font-weight: 600; cursor: pointer;
+  }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  button:disabled { opacity: .5; cursor: default; }
+  .check { display: flex; gap: 8px; align-items: center; margin-top: 14px; font-size: 14px; }
+  .hint { margin: 4px 0 0 24px; }
+  .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+  .error { color: var(--err); font-size: 13px; margin: 10px 0 0; min-height: 1em; }
+  footer { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); display: flex; gap: 6px; align-items: center; }
+  .done { text-align: center; padding: 8px 0; }
+  .done .tick { width: 44px; height: 44px; margin: 0 auto 10px; border-radius: 50%; display: grid; place-items: center; background: var(--field); border: 1px solid var(--line); color: var(--ok); }
+  .done h2 { font-size: 17px; margin: 0 0 4px; }
+  .done p { margin: 0; color: var(--muted); font-size: 14px; }
+  [hidden] { display: none !important; }`
+}
