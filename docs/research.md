@@ -8,15 +8,25 @@ One entry per open question. A guess never goes into code: it goes here first. F
 
 **Where:** card v2 · S-7 · `src/store/macos.mjs:53-66` · `macosStore.write`
 **Find out:** whether `security -i` accepts `add-generic-password -U -s keyprompt -a NAME -l "…" -X <hex>` on stdin, and whether `find-generic-password -g` then prints the `password: 0x<HEX> "…"` form so `parsePasswordLine` round-trips the bytes exactly. If yes: always write with `-X` (also removes the quoting code). If no: keep the line-break refusal on macOS and say so on the card.
-**Confidence:** 0.8 (medium) — `-X  Specify password data to be added as a hexadecimal string` is printed by `security add-generic-password -h` on this Mac (macOS, 2026-11-05). The full round trip has not been run.
-**Review:** none — running the integration test decides it.
-**Status:** open (half answered).
-**Answer:** —
+**Confidence:** 0.95 (high) — run here on the real Keychain and matched to Apple's source.
+**Review:** none — the integration test decided it.
+**Status:** answered 2026-11-05 (S-7).
+**Answer:** yes, with a length limit nobody had written down.
+- **Hex works.** On macOS 27.0 (build 26A428), `security -i` accepted `add-generic-password -U … -X <hex>` on stdin, upper or lower case. `find-generic-password -g` printed `password: 0x<HEX>  "line1\012line2"`, and `parsePasswordLine` gave back the exact bytes for `\n`, `\r\n`, a fake PEM, non-ASCII and a value whose second line spells a `security` command (stored as data, never run). Run with dummy names on 2026-11-05, then deleted. `security add-generic-password -h` lists `-X` (same Mac, same day).
+- **The limit.** `security -i` reads one command into a 4,096-byte buffer, and a longer line is cut after 4,095 bytes; the rest runs as the next command. Evidence: apple-oss-distributions/Security at db15acbe6a7f (Security-61901.0.87.0.1), SecurityTool/macOS/security.c (`MAX_LINE_LEN` 4096 and the loop at lines 1180–1207) and SecurityTool/macOS/readline.c, read via `gh api`, live, 2026-11-05.
+  - Seen here: a 64 KiB value was saved cut off, and `security` reported `unknown command "7878…"` for the rest.
+  - The quote parser in security.c (`split_line`) only knows `\x` → `x`, so a line break cannot be escaped inside quotes.
+  - The prompted form (`-w` given last) uses `getpass()`, which reads the terminal, not stdin (keychain_add.c, same commit), so it is no way around the limit.
+  - No `security` command name is made only of hex digits (`security help`, this Mac), so a hex tail could never run as a real command.
+- **What S-7 built,** decided by Abhishek on 2026-11-05: a value with a line break goes as hex, and any other value keeps the quoted `-w` form, which fits twice as much. A command over 4,094 bytes is refused before `security` runs (B-5).
+  - Room for a one-line value: 4,031 − 2 × (name length) bytes, minus one byte for each `"` or `\`.
+  - Room for a value with line breaks: half of 4,033 − 2 × (name length), rounded down.
+  - So a 20-character name leaves 3,991 bytes on one line and 1,996 with line breaks. An RSA-2048 PEM (about 1,700) fits. An RSA-4096 PEM (about 3,200) and a pretty-printed Google service-account file (about 2,300) do not; R-2's idea of splitting a value across items would also cover macOS.
 
 ### R-2 — How do we store values longer than 1,280 characters on Windows?
 
 **Where:** later (parked) · `src/store/windows.mjs:127-129` · `maxValueLength`
-**Find out:** Windows Credential Manager caps a credential blob at 2,560 bytes, which the code stores as UTF-16, so 1,280 characters. An RSA-2048 PEM key (about 1,700 characters) and a Google service-account JSON file (about 2,300) do not fit. Options: split one value across several credentials (`keyprompt:NAME`, `keyprompt:NAME#2`, …) with an atomic write and read, or a DPAPI-protected file. Which one is safe and simple?
+**Find out:** Windows Credential Manager caps a credential blob at 2,560 bytes, which the code stores as UTF-16, so 1,280 characters. An RSA-2048 PEM key (about 1,700 characters) and a Google service-account JSON file (about 2,300) do not fit. macOS has a similar limit since S-7: about 2,000 bytes for a value with line breaks and about 4,000 for one line (R-1). Options: split one value across several credentials (`keyprompt:NAME`, `keyprompt:NAME#2`, …) with an atomic write and read, or a DPAPI-protected file. Which one is safe and simple?
 **Confidence:** 0.5 (low) — the limit comes from the existing code comment; neither option has been tried.
 **Review:** higher model.
 **Status:** open — parked. The card already refuses over-long values with a clear message (`src/cli.mjs:96-98`).
