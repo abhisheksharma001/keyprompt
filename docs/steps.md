@@ -21,7 +21,8 @@ Order: S-3, S-7, S-15 and S-18 touch different files from the S-2 → S-4 chain,
 | Step | Status | Learned |
 |---|---|---|
 | S-1 | done 2026-11-05 | Two of the three source-read rivals have no way to ask the person for a missing key, and none shows a receipt; that is the edge. "Pingu" is a live Mattel trademark (R-4). Claude Code 2.1.287 opens MCP URL prompts, which makes a v0.3 MCP server worth it. The agent itself can read a saved key from the macOS Keychain without a prompt (B-2). |
-| S-2 … S-19 | todo | — |
+| S-2 | done 2026-11-05 (PR #2, 2cc53b3) | `src/card-style.mjs` and `src/card-script.mjs` now hold the CSS and the browser script; `renderCard` output is byte-identical (8,473 bytes for the verify options). Both blocks had no backtick, backslash or `${`, so they copy into template literals exactly. The same-bytes diff is the only guard and S-4 will break it on purpose, so do not add a page snapshot test before then. |
+| S-3 … S-19 | todo | — |
 
 ---
 
