@@ -61,4 +61,4 @@ S-5's `saveAll` puts the cut-off value back, so problem 2 left no damage; nothin
 **Blocks:** S-7 — its hex form doubles a value's length on that line, so it needs the same check.
 **Files:** `src/store/macos.mjs`, `test/macos-parse.test.mjs`, `test/store.integration.test.mjs`.
 **Research:** lookup (done, above) · **Model:** opus — it writes to the password store · **Confidence:** 0.95 — reproduced on the real Keychain and matched to Apple's source.
-**Fix step:** S-7 (PR #?). On 2026-11-05 Abhishek chose to fix it inside S-7 rather than as its own step. `addCommand` refuses any command over 4,094 bytes before `security` runs, and `maxValueLength` is now 4,029, the most that fits even with a one-letter name.
+**Fix step:** S-7 (PR #9). On 2026-11-05 Abhishek chose to fix it inside S-7 rather than as its own step. `addCommand` refuses any command over 4,094 bytes before `security` runs, and `maxValueLength` is now 4,029, the most that fits even with a one-letter name.
