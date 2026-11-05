@@ -13,6 +13,7 @@ Plan: `docs/prd/card-v2.md`. Rules: `.claude/CLAUDE.md`. Standard: `~/.claude/sk
 | 3 Buddy | S-11 → S-12 → S-13 → S-14 | Demo command, the creature, motion, receipt and deadline |
 | 4 Honest and shipped | S-15, S-16 → S-17 | Headline fixed, README and 0.2.0, npm publish |
 | 4b Lite wins from the teardowns | S-18, S-19 | Masking catches encoded copies; refuse a key pasted into a command |
+| Fixes | S-20 | B-6: the card never ends while a save is under way |
 
 Order: S-3, S-7, S-15 and S-18 touch different files from the S-2 → S-4 chain, so they can be built in parallel by separate sessions. Everything else follows the arrows.
 
@@ -29,6 +30,7 @@ Order: S-3, S-7, S-15 and S-18 touch different files from the S-2 → S-4 chain,
 | S-7 | done 2026-11-05 (PR #9) | Hex (`-X`) round-trips line breaks exactly, but `security -i` reads at most 4,095 bytes of a line and runs the rest as its own command (Apple's security.c, 4,096-byte buffer). That was already true for one-line values on main (B-5, proved with a dummy item), and hex doubles a value's length on that line. Abhishek chose two forms: hex only for values with line breaks, the quoted form for the rest. `addCommand` refuses any command over 4,094 bytes before `security` runs, and `maxValueLength` is now 4,029. With a 20-character name, values with line breaks get 1,996 bytes (an RSA-2048 PEM fits, an RSA-4096 one does not) and one-line values 3,991. `saveAll` still writes, then rolls back, the names before an over-long one, because `assertFits` only knows the 4,029 cap; a per-name check before any write would need a store method. Because the cap is lower, a run-only (Remember unticked) value is now also refused over 4,029 characters on macOS. S-10 and S-16 should state the macOS and Windows limits. |
 | S-8 | done 2026-11-05 (PR #10) | The experiment passed on the first push: with the darwin-only condition removed from the round-trip test, `secret-tool` (Ubuntu 24.04, libsecret-tools 0.21.4) and the PowerShell helper (Windows, `windows-2025-vs2026`) saved and returned `line1\nline2`, a four-line fake PEM with a trailing line break, and `a\r\nb` exactly, on Node 20 and 22 (CI run 42076047835; the logs show the test ran, not skipped, and 2 skipped are the macOS-only tests). No store file changed, R-3 is answered, and nothing was loosened. Only 160-byte values were tried on Linux and Windows: a multi-line value near the Windows cap (1,280 characters, R-2) or Linux's declared 64 KiB was not run. The frozen PRD's A3 still says macOS; S-10 and S-16 may say line breaks work on all three systems, with that size caveat. |
 | S-9 | done 2026-11-05 (PR #11) | `EXIT.DEFERRED` is 6. `POST /later` passes the same Host, token, Origin and JSON checks as `/cancel`, answers `{ later: true }`, and the card rejects with "The person chose Later for A, B and C. Nothing was saved." During a save `/later` answers 409, so "Nothing was saved" is never said about a card that saved. `run` rewords it with `laterForRun` (`src/cli.mjs`), which names the command but never its arguments, so a value pasted into the arguments is not echoed. Both messages start "The person" (the step text had a lower-case "the" for `run`). The button sits in the right-hand group, `[Later] [Cancel] [Save]`, not on the far left as the PRD sketch draws it; moving it is styling for the buddy steps. An opt-in test (`KEYPROMPT_STORE_TEST=1`, not on Windows, because the fake browser is a `#!` script) drives the real CLI with a fake browser that clicks Later. While building the 409 guard I found that Cancel and the deadline do not wait for a save that is under way (B-6, reproduced). It blocks S-14. |
+| S-20 | done 2026-11-06 (PR #12) | Fixes B-6. The deadline no longer ends a card while a save runs: that save decides (saved, or its own error with exit 1). For `run`, a save that finishes after the deadline now starts the command, because the key was given. Cancel during a save answers 409, as Later does. A second gap of the same kind turned up and is closed: a submit whose body was still arriving when the card ended was saved anyway, because the "already ended" check ran only before the body was read. The page's Cancel ignored the server's answer; it now reads it, and with no answer at all it says "This card is no longer active" instead of "Nothing was saved", because another tab may have saved. Waiting adds no new hang: `bin/keyprompt.mjs` sets `process.exitCode` and never calls `process.exit`, so the CLI already stayed alive until the save's helper process ended (the B-6 repro logs "save finished" after the old rejection). S-14's countdown must keep waiting for a pending Save at zero. |
 | S-10 … S-19 | todo | — |
 
 ---
@@ -320,7 +322,7 @@ Pinguu is our own design: flat vector shapes, rounded, a key-shaped head tuft an
 ### S-14 — Honest receipt and a visible deadline
 
 **PR:** one.
-**Depends on:** S-12 (S-13 is optional; the receipt works without motion); B-6 fixed. Until then a deadline during a save makes "This card timed out. Nothing was saved." false.
+**Depends on:** S-12 (S-13 is optional; the receipt works without motion); B-6 fixed (S-20). Since S-20 the server waits for a save that is under way at the deadline and answers it, so at zero the page must keep waiting for a pending Save's answer instead of saying "This card timed out. Nothing was saved."
 **Blocks:** S-16.
 **Research:** none.
 **Model:** sonnet.
@@ -421,6 +423,29 @@ Pinguu is our own design: flat vector shapes, rounded, a key-shaped head tuft an
 **Acceptance:** WHEN `run A -- echo <A's value>` runs THEN keyprompt SHALL exit 2 without starting the command.
 **Verify:** a CLI test with a fake value, plus `npm test`.
 **Must not:** print the value or any part of it.
+
+---
+
+## Fixes
+
+### S-20 — Cancel and the deadline wait for a save under way (bug B-6)
+
+**PR:** one.
+**Depends on:** S-9 (its `/later` already answers 409 during a save). Abhishek queued it next on 2026-11-06.
+**Blocks:** S-14.
+**Research:** none.
+**Model:** opus — it changes how the card server ends.
+**Confidence:** 0.85 — the server change is small and each guard has a test; the page's Cancel is checked in a real browser with two tabs, not by a test.
+**Files:** `src/card-server.mjs`, `src/card-script.mjs`, `test/card-server.test.mjs`, `docs/bugs.md`.
+**Today:** `/cancel` and the deadline timer end the card at once, even while `onSubmit` is saving. The save goes on, so the agent gets exit 4 "closed the secret card without saving" or exit 5 "Nobody filled in the secret card in time" about a key that is stored (B-6). The page's Cancel ignores the server's answer and always says "Cancelled. Nothing was saved."
+**Change:**
+- The deadline timer, when a save is under way, marks the card expired and waits. That save decides: success resolves the card as saved; failure ends it with the save's own error (a non-`KeypromptError` becomes "Could not save. Try again."), and the page gets `422 { error, final: true }`.
+- `/cancel` during a save answers `409 { error: 'Already saving. Wait a moment.' }`, as `/later` does.
+- Once a body has arrived, the server checks again whether the card has ended; if it has, it answers 410 and nothing runs.
+- The page's Cancel reads the answer: 200 → "Cancelled. Nothing was saved."; an error → show it and stay ("Closed" when the answer says final); no answer at all → "Closed", "This card is no longer active. You can close this tab.", because the page cannot know whether another tab saved.
+**Acceptance:** WHEN the deadline passes or Cancel arrives while a save is under way THEN the card SHALL end only when that save ends, and SHALL report that save's real result.
+**Verify:** `node --test --test-timeout=15000 test/card-server.test.mjs` with new tests: Cancel during a save gives 409 and the save's result stands; the deadline during a save that succeeds resolves the card; the deadline during a save that fails rejects with that error and a final 422; a body still arriving at the deadline gets 410 and is never saved. Commit, then break each guard and watch its test fail. In a real browser, two tabs of one card with a slow fake save: tab 1 saves, tab 2's Cancel shows "Already saving. Wait a moment."; after the save, tab 2's Cancel shows "Closed". Then `npm test`.
+**Must not:** weaken any card guard; make the card wait on anything but a save it already accepted; change what `/later` does.
 
 ---
 

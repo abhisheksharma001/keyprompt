@@ -371,6 +371,115 @@ test('Later while a save is under way gives 409, so "Nothing was saved" is never
   assert.equal((await result).values.get('OPENAI_API_KEY'), 'sk')
 })
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+/** A save that starts, then waits until the test releases it; `outcome` runs after the release. */
+function gatedSave(outcome = async () => {}) {
+  let release
+  const gate = new Promise((r) => {
+    release = r
+  })
+  let saving
+  const started = new Promise((r) => {
+    saving = r
+  })
+  const onSubmit = async () => {
+    saving()
+    await gate
+    await outcome()
+  }
+  return { onSubmit, started, release }
+}
+
+test('Cancel while a save is under way gives 409, and the save decides the outcome', async () => {
+  const save = gatedSave()
+  const { urlReady, result } = startCard({ onSubmit: save.onSubmit })
+  const url = await urlReady
+  const submit = send(`${url}/submit`, { method: 'POST', body: one('sk') })
+  await save.started
+  const cancel = await send(`${url}/cancel`, { method: 'POST', body: {} })
+  assert.equal(cancel.status, 409)
+  assert.deepEqual(JSON.parse(cancel.text), { error: 'Already saving. Wait a moment.' })
+  save.release()
+  assert.equal((await submit).status, 200)
+  assert.equal((await result).values.get('OPENAI_API_KEY'), 'sk')
+})
+
+test('the deadline during a save waits for it, and a save that succeeds resolves the card', async () => {
+  const save = gatedSave()
+  const { urlReady, result } = startCard({ timeoutMs: 400, onSubmit: save.onSubmit })
+  let outcome = 'waiting'
+  result.then(
+    () => (outcome = 'resolved'),
+    () => (outcome = 'rejected'),
+  )
+  const url = await urlReady
+  const submit = send(`${url}/submit`, { method: 'POST', body: one('sk') })
+  await save.started
+  await sleep(600)
+  assert.equal(outcome, 'waiting')
+  save.release()
+  assert.equal((await submit).status, 200)
+  assert.equal((await result).values.get('OPENAI_API_KEY'), 'sk')
+})
+
+test('the deadline during a save that fails ends the card with that error, final on the page, never a raw error', async () => {
+  for (const [thrown, shown] of [
+    [new KeypromptError('Could not save OPENAI_API_KEY: the Keychain is locked. Nothing was changed.'), 'Could not save OPENAI_API_KEY: the Keychain is locked. Nothing was changed.'],
+    [new Error('EACCES: /secret/path'), 'Could not save. Try again.'],
+  ]) {
+    const save = gatedSave(async () => {
+      throw thrown
+    })
+    const { urlReady, result } = startCard({ timeoutMs: 400, onSubmit: save.onSubmit })
+    const url = await urlReady
+    const submit = send(`${url}/submit`, { method: 'POST', body: one('sk') })
+    await save.started
+    await sleep(600)
+    save.release()
+    const res = await submit
+    assert.equal(res.status, 422)
+    assert.deepEqual(JSON.parse(res.text), { error: shown, final: true })
+    await assert.rejects(result, (e) => {
+      assert.ok(e instanceof KeypromptError)
+      assert.equal(e.exitCode, 1)
+      assert.equal(e.message, shown)
+      return true
+    })
+    const again = await send(`${url}/submit`, { method: 'POST', body: one('sk') }).catch(() => ({ status: 'closed' }))
+    assert.ok(again.status === 410 || again.status === 'closed')
+  }
+})
+
+test('a submit whose body is still arriving at the deadline gets 410 and is never saved', async () => {
+  const { urlReady, result, stored } = startCard({ timeoutMs: 100 })
+  const u = new URL(await urlReady)
+  const body = JSON.stringify(one('sk'))
+  let req
+  const res = new Promise((resolve, reject) => {
+    req = httpRequest(
+      {
+        hostname: u.hostname,
+        port: u.port,
+        path: `${u.pathname}/submit`,
+        method: 'POST',
+        headers: { Origin: u.origin, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+      },
+      (r) => {
+        const chunks = []
+        r.on('data', (c) => chunks.push(c))
+        r.on('end', () => resolve({ status: r.statusCode, text: Buffer.concat(chunks).toString('utf8') }))
+      },
+    )
+    req.on('error', reject)
+  })
+  req.write(body.slice(0, 5))
+  await assert.rejects(result, (e) => e.exitCode === 5)
+  req.end(body.slice(5))
+  assert.equal((await res).status, 410)
+  assert.deepEqual(stored, [])
+})
+
 test('the size cap allows a large value and refuses a body over 1 MiB', async () => {
   const { urlReady, result, stored } = startCard()
   const url = await urlReady
