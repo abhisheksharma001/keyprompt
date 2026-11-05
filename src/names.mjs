@@ -18,7 +18,7 @@ export function assertName(name) {
 }
 
 /** Most values one card can ask for at once. */
-export const MAX_FIELDS = 12
+const MAX_FIELDS = 12
 
 const HINTS = ['visible', 'multiline', 'optional']
 
