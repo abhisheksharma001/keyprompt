@@ -1,0 +1,59 @@
+---
+name: keyprompt
+description: Get and use API keys, tokens and other secrets without the user pasting them into the chat. Use whenever a task needs a credential (an API key, a token, a password for a CLI, a webhook secret), whenever you are about to ask the user to paste one, or when the user pastes one anyway. keyprompt opens a secure secret card in the user's browser, saves the value in the OS password store (macOS Keychain, Windows Credential Manager, Linux keyring), and injects it into a command's environment, so the value never enters the conversation.
+---
+
+# keyprompt: secrets without the chat
+
+The value of a secret must never enter this conversation: not from the user, not from a command's output, not from a file you read. keyprompt makes that the default path.
+
+If `keyprompt` is not on PATH, use `npx -y github:abhisheksharma001/keyprompt` in its place in every command below.
+
+## Rules
+
+1. **Never ask the user to paste a secret into the chat.** Ask with the card instead (below).
+2. **Never print a secret.** No `echo $KEY`, no `cat .env`, no `printenv`, no `security find-generic-password -w`, no debug flags that dump headers (`curl -v` with an auth header).
+3. **Never write a secret to a file or pass it on your own command line.** It reaches a program only through `keyprompt run`.
+4. **If the user pastes a secret into the chat anyway, treat it as exposed.** Tell them it is now in the conversation log, recommend rotating it at the provider, and store the new value with the card. Do not reuse the pasted one.
+
+## Check before asking
+
+```
+keyprompt has OPENAI_API_KEY      # exit 0 = saved, exit 3 = not saved
+keyprompt list                    # names, reasons, dates; never values
+```
+
+## Ask for a secret
+
+Run this yourself (do not ask the user to run it). It opens a secure card in the user's browser and blocks until they save or cancel:
+
+```
+keyprompt set OPENAI_API_KEY --reason "Run the note-quality eval against gpt-4o-mini"
+```
+
+Then tell the user, in one line: "I opened a secure card in your browser for OPENAI_API_KEY. Paste the key there; it goes to your keychain, not to me." The command returns once they save it (exit 0), cancel (exit 4), or after 5 minutes (exit 5).
+
+Use an environment-variable style name that matches what the program expects (`OPENAI_API_KEY`, `STRIPE_SECRET_KEY`, `GITHUB_TOKEN`). Write `--reason` for the user: what it is for, in plain words.
+
+## Use a secret
+
+```
+keyprompt run OPENAI_API_KEY -- python eval.py
+keyprompt run OPENAI_API_KEY,ANTHROPIC_API_KEY -- npm test
+```
+
+- The program reads the secret from its environment (`$OPENAI_API_KEY`). If it is not saved yet, `run` opens the card first; the user can also choose "this run only".
+- Exact copies of the value in the command's output are replaced with `[keyprompt:NAME]`. Transformed copies (base64, partial) are not caught, so still never print secrets on purpose.
+- When a tool needs the value as an argument, let a shell inside `run` expand it, so it never appears in your own command text:
+  - macOS / Linux: `keyprompt run API_TOKEN -- sh -c 'curl -sS -H "Authorization: Bearer $API_TOKEN" https://api.example.com/me'`
+  - Windows (PowerShell): `keyprompt run API_TOKEN -- powershell -NoProfile -Command "Invoke-RestMethod https://api.example.com/me -Headers @{Authorization = 'Bearer ' + $env:API_TOKEN}"`
+- `--no-redact` passes output through untouched; only use it for full-screen terminal programs that print no secrets.
+
+## Replace or remove
+
+- Wrong value or rotated key: run `keyprompt set NAME` again; the card says "Replace secret".
+- `keyprompt delete NAME` removes it.
+
+## When it can't work
+
+keyprompt needs a desktop session to open the card. Over plain SSH or in CI it fails with a clear message: then tell the user to configure the secret in that environment's own secret store (for example GitHub Actions secrets), never to paste it to you.
