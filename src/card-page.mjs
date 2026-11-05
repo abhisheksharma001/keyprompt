@@ -61,10 +61,11 @@ function renderField(field, index) {
  *   storeLabel: string,
  *   replacing: boolean,
  *   allowSessionOnly: boolean,
+ *   demo?: boolean,
  *   nonce: string,
  * }} options
  */
-export function renderCard({ fields, reason, requester, storeLabel, replacing, allowSessionOnly, nonce }) {
+export function renderCard({ fields, reason, requester, storeLabel, replacing, allowSessionOnly, demo = false, nonce }) {
   const several = fields.length > 1
   const title = replacing
     ? several
@@ -74,6 +75,8 @@ export function renderCard({ fields, reason, requester, storeLabel, replacing, a
       ? 'Secrets requested'
       : 'Secret requested'
   const action = replacing ? (several ? 'Replace values' : 'Replace value') : several ? `Save all ${fields.length}` : 'Save securely'
+  const demoHtml = demo ? '<p class="note demo" role="note"><strong>Demo — nothing you type is saved.</strong></p>' : ''
+  const footerText = demo ? 'Demo · nothing is stored' : `Stored in your ${escapeHtml(storeLabel)} · never shown to your agent`
   const reasonHtml = reason ? `<p class="reason">${escapeHtml(reason)}</p>` : ''
   const requesterHtml = requester ? `<p class="meta">Requested by ${escapeHtml(requester)}</p>` : ''
   const replaceNote = !replacing
@@ -98,7 +101,7 @@ ${cardStyle()}
 </style>
 </head>
 <body>
-<main class="card" aria-live="polite">
+<main class="card" aria-live="polite"${demo ? ' data-demo' : ''}>
   <section id="form-view">
     <div class="head">
       <div class="icon" aria-hidden="true">
@@ -106,6 +109,7 @@ ${cardStyle()}
       </div>
       <h1>${escapeHtml(title)}</h1>
     </div>
+    ${demoHtml}
     ${reasonHtml}
     ${requesterHtml}
     ${replaceNote}
@@ -131,7 +135,7 @@ ${cardStyle()}
   </section>
   <footer>
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-    <span id="footer-text">Stored in your ${escapeHtml(storeLabel)} · never shown to your agent</span>
+    <span id="footer-text">${footerText}</span>
   </footer>
 </main>
 <script nonce="${nonce}">

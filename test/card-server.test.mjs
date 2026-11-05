@@ -84,6 +84,32 @@ test('serves the card on 127.0.0.1 with the name and an escaped reason, never ca
   await assert.rejects(result, (e) => e.exitCode === 4)
 })
 
+test('an ordinary card has no demo banner and names its store', async () => {
+  const { urlReady } = startCard()
+  const url = await urlReady
+  const page = (await send(url)).text
+  assert.ok(!page.includes('Demo — nothing you type is saved.'))
+  assert.ok(page.includes('<main class="card" aria-live="polite">'))
+  assert.ok(page.includes('Stored in your macOS Keychain · never shown to your agent'))
+  await send(`${url}/cancel`, { method: 'POST', body: {} })
+})
+
+test('a demo card says it is a demo and never claims a save or a store', async () => {
+  const { urlReady } = startCard({ demo: true, storeLabel: 'nowhere (demo)', allowSessionOnly: false })
+  const url = await urlReady
+  const page = (await send(url)).text
+  assert.ok(page.includes('Demo — nothing you type is saved.'))
+  assert.ok(page.includes('<main class="card" aria-live="polite" data-demo>'))
+  assert.ok(page.includes('Demo · nothing is stored'))
+  assert.ok(!page.includes('Stored in your'))
+  assert.ok(!page.includes('nowhere (demo)'))
+  assert.ok(!page.includes('Remember on this computer'))
+  const script = page.slice(page.indexOf('>', page.indexOf('<script nonce=')) + 1, page.lastIndexOf('</script>'))
+  assert.ok(script.includes("finish('Demo finished', 'Nothing you typed was saved. You can close this tab.')"))
+  assert.doesNotThrow(() => new Function(script))
+  await send(`${url}/cancel`, { method: 'POST', body: {} })
+})
+
 test('the page script is valid JavaScript', async () => {
   const { urlReady } = startCard({ fields: [{ name: 'A', multiline: true }, { name: 'B' }] })
   const url = await urlReady

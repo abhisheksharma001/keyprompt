@@ -4,9 +4,9 @@ import { randomBytes } from 'node:crypto'
 import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { test } from 'node:test'
-import { laterForRun, parseArgs, setReport } from '../src/cli.mjs'
+import { demoRequest, laterForRun, parseArgs, setReport } from '../src/cli.mjs'
 import { EXIT } from '../src/errors.mjs'
 import { getStore } from '../src/store/index.mjs'
 
@@ -29,7 +29,7 @@ test('splits keyprompt options from the command after --', () => {
 test('help lists the commands and says there is no getter', () => {
   const r = cli(['--help'])
   assert.equal(r.status, 0)
-  for (const word of ['set', 'run', 'has', 'list', 'delete', 'install-skill', 'no command that prints a secret']) {
+  for (const word of ['set', 'run', 'has', 'list', 'delete', 'demo', 'install-skill', 'no command that prints a secret']) {
     assert.ok(r.stdout.includes(word), word)
   }
 })
@@ -71,6 +71,8 @@ test('bad names and bad usage are usage errors (exit 2)', () => {
   assert.equal(cli(['set', 'A:bogus']).status, 2) // unknown hint
   assert.equal(cli(['run', 'A:bogus', '--', 'echo']).status, 2) // unknown hint on run
   assert.equal(cli(['run', 'A:optional']).status, 2) // hints are fine, the command is missing
+  assert.equal(cli(['demo', 'NAME']).status, 2) // demo takes no arguments
+  assert.equal(cli(['demo', '--', 'echo']).status, 2)
 })
 
 test('set reports saved, replaced and empty names, never values', () => {
@@ -112,6 +114,74 @@ test('Later on run: exit 6, names the boxes and the command, never its arguments
     laterForRun([{ name: 'A' }, { name: 'B' }], 'npm').message,
     'The person chose Later for A and B. Nothing was saved and npm did not run. Carry on with work that does not need these; ask again only when you are about to use them.',
   )
+})
+
+test('the demo card has three sample boxes, says it saves nothing, and its submit touches nothing', async () => {
+  const request = demoRequest()
+  assert.deepEqual(
+    request.fields.map((f) => [f.name, f.visible, f.multiline, f.optional]),
+    [
+      ['DEMO_API_KEY', false, false, false],
+      ['DEMO_ACCOUNT_ID', true, false, false],
+      ['DEMO_PRIVATE_KEY', false, true, true],
+    ],
+  )
+  assert.equal(request.reason, 'A demo of the keyprompt card. Nothing you type here is saved.')
+  assert.equal(request.requester, 'keyprompt demo')
+  assert.equal(request.storeLabel, 'nowhere (demo)')
+  assert.equal(request.demo, true)
+  assert.equal(request.allowSessionOnly, false)
+  // Anything onSubmit did with what it was given would throw.
+  const poisoned = new Proxy({}, { get: () => { throw new Error('onSubmit touched the values') }, has: () => { throw new Error('touched') } })
+  assert.equal(await request.onSubmit(poisoned, true), undefined)
+})
+
+// Touches no store, so it needs no opt-in. The fake browser is a script run by
+// its #! line, which Windows cannot do.
+test('demo: submit, Later and Cancel all end with exit 0, and no store or catalog is used', { skip: process.platform === 'win32' }, () => {
+  const dir = mkdtempSync(join(tmpdir(), 'keyprompt-demo-'))
+  // The CLI under test thinks it runs on a system with no password store, so
+  // any call to getStore() would fail it.
+  const preload = join(dir, 'no-store.mjs')
+  writeFileSync(preload, "Object.defineProperty(process, 'platform', { value: 'freebsd' })\n")
+  const browser = join(dir, 'click.mjs')
+  writeFileSync(
+    browser,
+    `#!${process.execPath}
+import { writeFileSync } from 'node:fs'
+import { request } from 'node:http'
+const url = new URL(process.argv[2])
+const action = process.env.KP_DEMO_ACTION
+const body = action === 'submit' ? { values: { DEMO_API_KEY: 'sk-demo', DEMO_ACCOUNT_ID: 'acct' }, remember: true } : {}
+const headers = { Origin: url.origin, 'Content-Type': 'application/json' }
+request({ hostname: url.hostname, port: url.port, path: url.pathname + '/' + action, method: 'POST', headers }, (res) => {
+  writeFileSync(process.env.KP_DEMO_ANSWER, String(res.statusCode))
+  res.resume()
+}).end(JSON.stringify(body))
+`,
+  )
+  chmodSync(browser, 0o755)
+  const keyprompt = (args, extra = {}) =>
+    spawnSync(process.execPath, ['--import', pathToFileURL(preload).href, BIN, ...args], {
+      encoding: 'utf8',
+      env: { ...process.env, KEYPROMPT_HOME: dir, KEYPROMPT_BROWSER: browser, ...extra },
+      timeout: 15000,
+    })
+
+  // The pretend system works: asking its store for anything fails.
+  const control = keyprompt(['has', 'DEMO_API_KEY'])
+  assert.equal(control.status, 1)
+  assert.match(control.stderr, /does not support freebsd/)
+
+  for (const action of ['submit', 'later', 'cancel']) {
+    const answer = join(dir, `answer-${action}`)
+    const r = keyprompt(['demo'], { KP_DEMO_ACTION: action, KP_DEMO_ANSWER: answer })
+    assert.equal(r.status, 0, `${action}: ${r.stderr}`)
+    assert.equal(r.stdout, 'Demo finished. Nothing was saved.\n', action)
+    assert.ok(r.stderr.includes('opened the demo card'), r.stderr)
+    assert.equal(readFileSync(answer, 'utf8'), '200', action)
+  }
+  assert.equal(existsSync(join(dir, 'catalog.json')), false)
 })
 
 // Reads the real OS password store, so it is opt-in like the store tests. The
