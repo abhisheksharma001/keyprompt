@@ -23,3 +23,13 @@ A bug is written here first, then into the plan, then fixed as its own step. For
 **Files:** `SECURITY.md`.
 **Research:** none · **Model:** sonnet · **Confidence:** 0.9 — keyprompt's own prompt-free read proves any caller of the same binary gets the same access; not separately run as an attack.
 **Fix step:** S-15 (one plain sentence in `SECURITY.md`).
+
+### B-3 — A failed catalog write after a successful save makes the card say "Could not save"
+
+**Seen:** in `askWithCard` (`src/cli.mjs`), `recordSavedMany` runs after `saveAll` has already written every value to the OS store. If writing `~/.keyprompt/catalog.json` then fails (disk full, a folder you cannot write to), the error is not a `KeypromptError`, so the card server shows "Could not save. Try again." (`src/card-server.mjs`, the 422 branch). That is not true: the values are saved; only the list of names is not updated, so `keyprompt list` leaves them out. It has been like this since v0.1 (`recordSaved` ran after `store.write` the same way); S-5 did not cause it. Not reproduced; found by reading the code on 2026-11-05 during the S-5 self-review.
+**Requirement:** invariant 9 in `.claude/CLAUDE.md`.
+**Needs first:** nothing.
+**Blocks:** nothing.
+**Files:** `src/cli.mjs` (only `askWithCard`); a test with a catalog folder that cannot be written.
+**Research:** none · **Model:** sonnet · **Confidence:** 0.85 that the card shows the wrong message — the code path was read, not run.
+**Fix step:** not queued yet. Proposed: a catalog failure after a successful save does not fail the submit; the CLI writes one line to stderr instead ("Saved, but could not update the list of names: …").

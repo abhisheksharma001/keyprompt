@@ -4,10 +4,11 @@ import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { openInBrowser } from './browser.mjs'
 import { requestSecretWithCard } from './card-server.mjs'
-import { readCatalog, recordRemoved, recordSaved } from './catalog.mjs'
+import { readCatalog, recordRemoved, recordSavedMany } from './catalog.mjs'
 import { EXIT, KeypromptError } from './errors.mjs'
-import { assertName, parseNames } from './names.mjs'
+import { assertName, parseFields, parseNames } from './names.mjs'
 import { runWithSecrets } from './run.mjs'
+import { assertFits, joinNames, saveAll } from './save.mjs'
 import { getStore } from './store/index.mjs'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -77,33 +78,57 @@ function requesterLabel(/** @type {string | undefined} */ by) {
 }
 
 /**
- * Get one secret through the card. `remember: false` hands it to this run only.
+ * Ask for these fields on one card. With Remember (always, for `set`) the
+ * filled-in values are saved all or none before the card reports success, so
+ * a failed save shows on the card. `remember: false` hands them to this run only.
  * @param {import('./store/index.mjs').SecretStore} store
- * @param {string} name
+ * @param {import('./card-server.mjs').CardField[]} fields
  * @param {{ reason?: string, by?: string, replacing: boolean, allowSessionOnly: boolean }} options
  */
-async function askWithCard(store, name, options) {
-  process.stderr.write(`keyprompt: opened a secure card in the browser for ${name}. Waiting for it to be filled in...\n`)
-  const { remembered, values } = await requestSecretWithCard({
-    fields: [{ name }],
+async function askWithCard(store, fields, options) {
+  process.stderr.write(
+    `keyprompt: opened a secure card in the browser for ${joinNames(fields.map((f) => f.name))}. Waiting for it to be filled in...\n`,
+  )
+  return requestSecretWithCard({
+    fields,
     reason: options.reason,
     requester: requesterLabel(options.by),
     storeLabel: store.label,
     replacing: options.replacing,
     allowSessionOnly: options.allowSessionOnly,
     open: openInBrowser,
-    onSubmit: async (submitted, remember) => {
-      // One required field, so the card only submits when it is filled in.
-      const value = /** @type {string} */ (submitted.get(name))
-      if (value.length > store.maxValueLength) {
-        throw new KeypromptError(`That value is ${value.length} characters; the ${store.label} holds at most ${store.maxValueLength}.`)
+    onSubmit: async (values, remember) => {
+      if (!remember) {
+        assertFits(store, values)
+        return
       }
-      if (!remember) return
-      await store.write(name, value)
-      await recordSaved(name, { reason: options.reason, store: store.id })
+      await saveAll(store, values)
+      await recordSavedMany([...values.keys()], { reason: options.reason, store: store.id })
     },
   })
-  return { remembered, value: /** @type {string} */ (values.get(name)) }
+}
+
+/**
+ * What `set` tells the agent: names only, never values.
+ * @param {import('./card-server.mjs').CardField[]} fields
+ * @param {Map<string, string>} values The filled-in values, all saved.
+ * @param {string} storeLabel
+ */
+export function setReport(fields, values, storeLabel) {
+  const saved = fields.filter((f) => values.has(f.name)).map((f) => f.name)
+  const replaced = fields.filter((f) => f.saved && values.has(f.name)).map((f) => f.name)
+  const empty = fields.filter((f) => !values.has(f.name)).map((f) => f.name)
+  const one = saved.length === 1
+  const what =
+    replaced.length === saved.length
+      ? `Replaced ${joinNames(saved)} in the ${storeLabel}.`
+      : `Saved ${joinNames(saved)} in the ${storeLabel}${replaced.length > 0 ? ` (replaced ${joinNames(replaced)})` : ''}.`
+  const lines = [`${what} ${one ? 'The value was' : 'The values were'} not shown here.`]
+  if (empty.length > 0) {
+    lines.push(`Left empty: ${joinNames(empty)}. Nothing was changed for ${empty.length === 1 ? 'it' : 'them'}.`)
+  }
+  lines.push(`Use ${one ? 'it' : 'them'} with: keyprompt run ${saved.join(',')} -- <command>`)
+  return `${lines.join('\n')}\n`
 }
 
 /**
@@ -125,14 +150,19 @@ export async function main(argv) {
   }
 
   if (verb === 'set') {
-    if (rest.length !== 1) throw new KeypromptError('Usage: keyprompt set NAME [--reason TEXT]', { exitCode: EXIT.USAGE })
-    const name = assertName(rest[0])
+    const parsed = parseFields(rest)
+    if (parsed.length === 0) throw new KeypromptError('Usage: keyprompt set NAME [NAME...] [--reason TEXT]', { exitCode: EXIT.USAGE })
     const store = getStore()
-    const replacing = (await store.read(name)) !== null
-    await askWithCard(store, name, { reason: args.reason, by: args.by, replacing, allowSessionOnly: false })
-    process.stdout.write(
-      `${replacing ? 'Replaced' : 'Saved'} ${name} in the ${store.label}. The value was not shown here.\nUse it with: keyprompt run ${name} -- <command>\n`,
-    )
+    /** @type {import('./card-server.mjs').CardField[]} */
+    const fields = []
+    for (const field of parsed) fields.push({ ...field, saved: (await store.read(field.name)) !== null })
+    const { values } = await askWithCard(store, fields, {
+      reason: args.reason,
+      by: args.by,
+      replacing: fields.every((f) => f.saved),
+      allowSessionOnly: false,
+    })
+    process.stdout.write(setReport(fields, values, store.label))
     return EXIT.OK
   }
 
@@ -150,14 +180,15 @@ export async function main(argv) {
         secrets.set(name, saved)
         continue
       }
-      const { value, remembered } = await askWithCard(store, name, {
+      const { values, remembered } = await askWithCard(store, [{ name }], {
         reason: args.reason,
         by: args.by,
         replacing: false,
         allowSessionOnly: true,
       })
       process.stderr.write(`keyprompt: ${name} ${remembered ? `saved in the ${store.label}` : 'received for this run only'}.\n`)
-      secrets.set(name, value)
+      // One required field, so the card only submits when it is filled in.
+      secrets.set(name, /** @type {string} */ (values.get(name)))
     }
     const [command, ...commandArgs] = args.command
     return runWithSecrets(command, commandArgs, secrets, { redact: args.redact })
