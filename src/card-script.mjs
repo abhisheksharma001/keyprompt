@@ -135,9 +135,22 @@ export function cardScript() {
   })
 
   cancel.addEventListener('click', async () => {
+    error.textContent = ''
     lock(true)
-    try { await post('/cancel', {}) } catch {}
-    finish('Cancelled', 'Nothing was saved. You can close this tab.')
+    try {
+      const { ok, data } = await post('/cancel', {})
+      if (ok) {
+        finish('Cancelled', 'Nothing was saved. You can close this tab.')
+        return
+      }
+      error.textContent = data.error || 'That did not work. Try again.'
+      if (data.final) { finish('Closed', data.error || 'This card is no longer active.') }
+    } catch {
+      // No answer means the card already ended, maybe with a save from another tab.
+      finish('Closed', 'This card is no longer active. You can close this tab.')
+      return
+    }
+    lock(false)
   })
 
   later.addEventListener('click', async () => {

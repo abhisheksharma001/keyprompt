@@ -75,4 +75,4 @@ The deadline is the real-world path. Someone presses Save near the end of the 5 
 **Blocks:** S-14, which shows "This card timed out. Nothing was saved." at the deadline.
 **Files:** `src/card-server.mjs`, `test/card-server.test.mjs`.
 **Research:** none · **Model:** opus — it changes how the card server ends · **Confidence:** 0.95 that the gap is real (reproduced). The likely fix: a deadline or Cancel that lands during a save waits for that save, then reports what really happened. Confidence in that fix is 0.8.
-**Fix step:** not queued yet.
+**Fix step:** S-20 (PR #?), queued next by Abhishek on 2026-11-06. The deadline waits for the save; Cancel answers 409, as Later does. It also closes a gap of the same kind: a submit whose body was still arriving when the card ended was saved anyway.

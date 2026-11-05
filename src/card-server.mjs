@@ -89,6 +89,8 @@ export function requestSecretWithCard(request) {
   return new Promise((resolve, reject) => {
     let settled = false
     let busy = false
+    // The deadline passed while a save was under way, so that save's result ends the card.
+    let expired = false
     /** @type {string} */
     let origin = ''
 
@@ -162,7 +164,17 @@ export function requestSecretWithCard(request) {
         else chunks.push(chunk)
       })
       req.on('end', async () => {
+        // The card may have ended while this body was still arriving.
+        if (settled) {
+          send(410, { error: 'This card was already used. Close this tab.', final: true })
+          return
+        }
         if (action === 'cancel') {
+          // A save already under way may still succeed, and then "without saving" would be false.
+          if (busy) {
+            send(409, { error: 'Already saving. Wait a moment.' })
+            return
+          }
           send(200, { cancelled: true })
           finish(() => reject(new KeypromptError('The person closed the secret card without saving.', { exitCode: EXIT.CANCELLED })))
           return
@@ -202,7 +214,14 @@ export function requestSecretWithCard(request) {
           await request.onSubmit(values, remember)
         } catch (error) {
           busy = false
-          send(422, { error: error instanceof KeypromptError ? error.message : 'Could not save. Try again.' })
+          const shown = error instanceof KeypromptError ? error.message : 'Could not save. Try again.'
+          if (expired) {
+            // Past the deadline there is no second try: the card ends with this save's own error.
+            send(422, { error: shown, final: true })
+            finish(() => reject(error instanceof KeypromptError ? error : new KeypromptError(shown)))
+            return
+          }
+          send(422, { error: shown })
           return
         }
         send(200, { remembered: remember })
@@ -211,6 +230,11 @@ export function requestSecretWithCard(request) {
     })
 
     const timer = setTimeout(() => {
+      // A save under way may still succeed, and then "Nobody filled in" would be false: wait for it.
+      if (busy) {
+        expired = true
+        return
+      }
       finish(() =>
         reject(new KeypromptError('Nobody filled in the secret card in time (5 minutes). Run the command again to reopen it.', { exitCode: EXIT.TIMED_OUT })),
       )
