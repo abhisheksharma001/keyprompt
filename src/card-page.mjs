@@ -1,3 +1,4 @@
+import { BUDDY_NAME, buddyStyle, buddySvg, CAPTION_VARIANTS, CAPTIONS, MOODS } from './buddy.mjs'
 import { cardScript } from './card-script.mjs'
 import { cardStyle } from './card-style.mjs'
 
@@ -84,6 +85,15 @@ export function renderCard({ fields, reason, requester, storeLabel, replacing, a
     : several
       ? '<p class="note">These values are already saved and can\'t be shown. Paste a new value to replace one; an empty box keeps its saved value.</p>'
       : '<p class="note">A value is already saved. It can\'t be shown; paste the new one to replace it.</p>'
+  // A demo has no store, so its caption must not name one (invariant 9).
+  const caption = demo ? CAPTION_VARIANTS.demo.listening : CAPTIONS.listening.split('{store}').join(storeLabel)
+  const storeAttr = demo ? '' : ` data-store="${escapeHtml(storeLabel)}"`
+  const previewHtml = demo
+    ? `<div class="preview" role="group" aria-label="Preview ${escapeHtml(BUDDY_NAME)}'s poses">
+    <span>${escapeHtml(BUDDY_NAME)}'s poses:</span>
+    ${MOODS.map(({ id }) => `<button type="button" data-preview="${id}">${id}</button>`).join('')}
+  </div>`
+    : ''
   const rememberHtml = allowSessionOnly
     ? `<label class="check"><input type="checkbox" id="remember" checked> Remember on this computer</label>
        <p class="hint" id="remember-hint">Unchecked: used for this one command, then forgotten.</p>`
@@ -98,17 +108,20 @@ export function renderCard({ fields, reason, requester, storeLabel, replacing, a
 <title>${escapeHtml(title)}: ${fields.map((f) => escapeHtml(f.name)).join(', ')}</title>
 <style>
 ${cardStyle()}
+${buddyStyle()}
 </style>
 </head>
 <body>
 <main class="card" aria-live="polite"${demo ? ' data-demo' : ''}>
-  <section id="form-view">
-    <div class="head">
-      <div class="icon" aria-hidden="true">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
-      </div>
+  <div class="head">
+    ${buddySvg()}
+    <div class="head-text">
       <h1>${escapeHtml(title)}</h1>
+      <p class="caption" id="caption" aria-live="polite"${storeAttr}>${escapeHtml(caption)}</p>
     </div>
+  </div>
+  ${previewHtml}
+  <section id="form-view">
     ${demoHtml}
     ${reasonHtml}
     ${requesterHtml}
@@ -127,11 +140,7 @@ ${cardStyle()}
     </form>
   </section>
   <section id="done-view" class="done" hidden>
-    <div class="tick" aria-hidden="true">
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
-    </div>
-    <h2 id="done-title">Saved</h2>
-    <p id="done-text">Saved securely and kept private. You can close this tab.</p>
+    <p>You can close this tab.</p>
   </section>
   <footer>
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
