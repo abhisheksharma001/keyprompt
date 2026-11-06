@@ -96,3 +96,13 @@ The deadline is the real-world path. Someone presses Save near the end of the 5 
 **Files:** src/buddy.mjs (the pose and its motion), src/card-script.mjs (the mood set on Save), the two PRD tables, test/buddy.test.mjs.
 **Research:** none · **Model:** sonnet · **Confidence:** 0.9 that the picture misleads (seen in the S-13 frames); whether it matters is Abhishek's call.
 **Fix step:** not queued yet. Proposed: with Remember unticked, Save waits with the envelope in hand and the vault shut (a `handing` pose), so the vault opens only for a save.
+
+### B-9 — The footer says "Stored in your {store}" on a card that stored nothing
+
+**Seen:** `footerText` in `src/card-page.mjs` is "Stored in your {store} · never shown to your agent" on every real card. Only a demo, or the "Remember on this computer" box being unticked (`src/card-script.mjs`), changes it. When a card ends without a save (Cancelled, Later, Timed out, Closed), `finish()` leaves the footer alone, so under the caption "Cancelled. Nothing was saved." the footer still reads "Stored in your macOS Keychain". "Stored in" names where a Save would go; under an ended card that saved nothing it reads as a fact about that card. Found 2026-11-06 in S-21, looking at the `closed` card in Chrome (light and dark); S-14's timed-out card has the same footer and it was not noticed there. Not fixed in S-21: a bug is not fixed inside another step's PR.
+**Requirement:** invariant 9 in `.claude/CLAUDE.md`. The PRD does not cover the footer's wording after a card ends.
+**Needs first:** Abhishek's choice of wording for the footer once the card ended without a save (for example hide it, or "Nothing was stored").
+**Blocks:** nothing.
+**Files:** `src/card-script.mjs` (`finish`), `src/card-page.mjs` if the wording moves, `docs/prd/card-v2.md`, `test/card-script.test.mjs`.
+**Research:** none · **Model:** sonnet · **Confidence:** 0.8 that the words mislead (seen in the frames); the wording is Abhishek's call.
+**Fix step:** not queued yet. Proposed: `finish` changes the footer for the endings that saved nothing, with a test per ending.
