@@ -1,4 +1,4 @@
-import { BUDDY_NAME, buddyStyle, buddySvg, CAPTION_VARIANTS, CAPTIONS, MOODS } from './buddy.mjs'
+import { buddyStyle, buddySvg, CAPTION_VARIANTS, CAPTIONS, MOODS } from './buddy.mjs'
 import { cardScript } from './card-script.mjs'
 import { cardStyle } from './card-style.mjs'
 import { MASKING_NOTE } from './receipt.mjs'
@@ -93,8 +93,8 @@ export function renderCard({ fields, reason, requester, storeLabel, replacing, a
   const caption = demo ? CAPTION_VARIANTS.demo.listening : CAPTIONS.listening.split('{store}').join(storeLabel)
   const storeAttr = demo ? '' : ` data-store="${escapeHtml(storeLabel)}"`
   const previewHtml = demo
-    ? `<div class="preview" role="group" aria-label="Preview ${escapeHtml(BUDDY_NAME)}'s poses">
-    <span>${escapeHtml(BUDDY_NAME)}'s poses:</span>
+    ? `<div class="preview" role="group" aria-label="Preview the penguin's poses">
+    <span>The penguin's poses:</span>
     ${MOODS.map(({ id }) => `<button type="button" data-preview="${id}">${id}</button>`).join('')}
   </div>`
     : ''

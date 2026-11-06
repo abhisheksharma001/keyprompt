@@ -5,9 +5,6 @@
  * hide it (`data-hide`), and buddyStyle() turns that into CSS.
  */
 
-/** The one place the shown name is spelled, so a rename is this line (R-4). */
-export const BUDDY_NAME = 'Pinguu'
-
 /**
  * Every mood with its caption, word for word from the buddy table in
  * docs/prd/card-v2.md. `{store}` is the store label. `oops` has no caption of
