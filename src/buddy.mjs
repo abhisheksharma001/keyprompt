@@ -26,7 +26,7 @@ export const MOODS = [
   { id: 'bye', caption: 'Cancelled. Nothing was saved.' },
   { id: 'asleep', caption: 'This card timed out. Nothing was saved.' },
   { id: 'oops', caption: null },
-  { id: 'closed', caption: 'This card was already used. You can close this tab.' },
+  { id: 'closed', caption: 'This card is no longer active. You can close this tab.' },
 ]
 
 /** Caption by mood id. */

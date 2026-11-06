@@ -46,7 +46,8 @@ function send(url, { method = 'GET', host, origin, contentType = 'application/js
     const headers = { Host: host ?? u.host }
     if (origin !== null) headers.Origin = origin ?? u.origin
     if (body !== undefined) headers['Content-Type'] = contentType
-    const req = httpRequest({ hostname: u.hostname, port: u.port, path: u.pathname, method, headers }, (res) => {
+    // A fresh connection each time: the server closes idle ones when a card ends, and a reused one would hang up.
+    const req = httpRequest({ hostname: u.hostname, port: u.port, path: u.pathname, method, headers, agent: false }, (res) => {
       const chunks = []
       res.on('data', (c) => chunks.push(c))
       res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, text: Buffer.concat(chunks).toString('utf8') }))
@@ -580,7 +581,27 @@ test('a submit whose body is still arriving at the deadline gets 410 and is neve
   await assert.rejects(result, (e) => e.exitCode === 5)
   req.end(body.slice(5))
   assert.equal((await res).status, 410)
+  assert.deepEqual(JSON.parse((await res).text), { error: 'This card is no longer active. Close this tab.', final: true })
   assert.deepEqual(stored, [])
+})
+
+test('a card that has ended answers with one sentence that is true however it ended', async () => {
+  const ended = { error: 'This card is no longer active. Close this tab.', final: true }
+  const endings = {
+    saved: { end: (url) => send(`${url}/submit`, { method: 'POST', body: one('sk') }) },
+    cancelled: { end: (url) => send(`${url}/cancel`, { method: 'POST', body: {} }) },
+    later: { end: (url) => send(`${url}/later`, { method: 'POST', body: {} }) },
+    'timed out': { options: { timeoutMs: 100 } },
+  }
+  for (const [how, { end, options }] of Object.entries(endings)) {
+    const { urlReady, result } = startCard(options)
+    const url = await urlReady
+    if (end) await end(url)
+    await result.catch(() => {})
+    const again = await send(`${url}/submit`, { method: 'POST', body: one('sk') })
+    assert.equal(again.status, 410, how)
+    assert.deepEqual(JSON.parse(again.text), ended, how)
+  }
 })
 
 test('the size cap allows a large value and refuses a body over 1 MiB', async () => {

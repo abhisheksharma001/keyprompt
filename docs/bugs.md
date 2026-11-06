@@ -85,7 +85,7 @@ The deadline is the real-world path. Someone presses Save near the end of the 5 
 **Blocks:** nothing.
 **Files:** `src/card-server.mjs`, `test/card-server.test.mjs`; the `closed` caption in src/buddy.mjs, the PRD table row and the 410 branch (`finishFinal`) in src/card-script.mjs.
 **Research:** none · **Model:** sonnet · **Confidence:** 0.95 — reproduced.
-**Fix step:** not queued yet. Proposed: one sentence true for every ending, for example "This card is no longer active. Close this tab."
+**Fix step:** S-21 (PR #18), queued next by Abhishek ("next") on 2026-11-06. The server's 410 now says "This card is no longer active. Close this tab." and the `closed` caption "This card is no longer active. You can close this tab.", which is true however the card ended (saved, cancelled, Later, timed out, or saved from another tab). The page's Cancel with no answer uses the same caption.
 
 ### B-8 — With "Remember" unticked, the buddy still puts the key in the vault
 

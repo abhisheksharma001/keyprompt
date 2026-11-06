@@ -30,7 +30,7 @@ Abhishek first: a developer on macOS doing agency and client automation work, ru
 - **A2** WHEN the agent runs `keyprompt run A,B -- <command>` and neither A nor B is saved THEN exactly one card SHALL open, asking for both.
 - **A3** WHEN a PEM key is pasted into a `:multiline` box on macOS and saved THEN `keyprompt run` SHALL give the program exactly those bytes, line breaks included.
 - **A4** WHEN the person clicks **Later** THEN keyprompt SHALL exit with code 6, save nothing, and (for `run`) not start the command.
-- **A5** WHEN the card ends in any outcome (saved, used for one run, later, cancelled, timed out, failed, already used) THEN the buddy SHALL show that outcome's own pose and its caption from the table below, word for word.
+- **A5** WHEN the card ends in any outcome (saved, used for one run, later, cancelled, timed out, failed, no longer active) THEN the buddy SHALL show that outcome's own pose and its caption from the table below, word for word.
 - **A6** WHEN the agent marked a box `:visible` THEN that value SHALL still be masked in `keyprompt run` output.
 - **A7** WHEN the computer is set to reduce motion THEN the buddy SHALL not animate; poses switch instantly.
 - **A8** WHEN someone runs `keyprompt demo` THEN the card SHALL open with sample boxes, say it is a demo, and write nothing to the keychain or the catalog.
@@ -142,7 +142,7 @@ The creature is **Pinguu**, a penguin who keeps keys in an ice vault (decision D
 | Cancelled | `bye` | Waves | "Cancelled. Nothing was saved." |
 | Timed out | `asleep` | Falls asleep, zzz | "This card timed out. Nothing was saved." |
 | Save failed | `oops` | Shakes its head | The error message from the server, as is. |
-| Card already used | `closed` | Sign on the vault | "This card was already used. You can close this tab." |
+| Card no longer active | `closed` | Sign on the vault | "This card is no longer active. You can close this tab." |
 
 `{store}` is the store label: "macOS Keychain", "Windows Credential Manager", "Linux keyring (Secret Service)", or "nowhere (demo)".
 
@@ -156,7 +156,7 @@ The creature is **Pinguu**, a penguin who keeps keys in an ice vault (decision D
 | Demo | `stashing` | "Pretending to put it away…" |
 | Demo, after Save | `locked` | "Nothing was saved. This is how a real save looks." |
 
-A demo also has a row of buttons that preview every mood; a previewed caption starts with "Preview:", and `{store}` reads "password store" there. When Cancel gets no answer at all, the card shows the `closed` pose with "This card is no longer active. You can close this tab.", because it cannot know the card was used.
+A demo also has a row of buttons that preview every mood; a previewed caption starts with "Preview:", and `{store}` reads "password store" there. The `closed` caption says nothing about how the card ended, because the page often cannot know: the deadline may have passed, or another tab may have saved. It shows when the server answers that the card has ended (410), and when Cancel gets no answer at all.
 
 **Caption rules (invariant 9):** captions describe what happened, never what is impossible. Banned: "your agent can never see this", "100% secure", "encrypted by …", "safe forever". The buddy reacts only to focus, field type and outcome — never to what was typed or its length.
 

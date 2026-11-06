@@ -458,6 +458,26 @@ Pinguu is our own design: flat vector shapes, rounded, a key-shaped head tuft an
 
 ---
 
+### S-21 — An ended card says one sentence that is true for every ending (bug B-7)
+
+**PR:** one.
+**Depends on:** nothing. B-7 is logged, and S-14 shrank its window but did not close it. Abhishek said "next" on 2026-11-06 with S-14 merged.
+**Blocks:** nothing.
+**Research:** none.
+**Model:** sonnet.
+**Confidence:** 0.95 — B-7 was reproduced; the change is one sentence in four places, and each place gets a test.
+**Files:** `src/card-server.mjs`, `src/buddy.mjs`, `src/card-script.mjs`, `docs/prd/card-v2.md`, `docs/bugs.md`, `test/card-server.test.mjs`, `test/card-script.test.mjs`.
+**Today:** once a card has ended (saved, Cancel, Later or the deadline), any later request gets `410 { error: 'This card was already used. Close this tab.', final: true }`, and the page shows the buddy's `closed` pose with "This card was already used. You can close this tab." After a timeout, or when another tab saved, that is false or unknown: the page cannot tell why the card ended (invariant 9).
+**Change:**
+- The server's 410 text (both places: a request that arrives after the card ended, and a body that finished arriving after it ended) becomes "This card is no longer active. Close this tab." `final: true` and the status stay.
+- The `closed` caption becomes "This card is no longer active. You can close this tab." in `src/buddy.mjs` and in the PRD buddy table, whose row is renamed "Card no longer active" (and A5's list says "no longer active" instead of "already used"). The PRD's note about Cancel getting no answer now explains why the caption claims nothing about how the card ended.
+- The page's Cancel, when it gets no answer, no longer carries its own copy of the sentence: it uses the `closed` caption, so the words live in one place.
+**Acceptance:** WHEN a card has ended (saved, cancelled, Later or timed out) and a request reaches it THEN the server SHALL answer 410 "This card is no longer active. Close this tab." and the page SHALL show the `closed` pose with "This card is no longer active. You can close this tab."
+**Verify:** `node --test --test-timeout=15000 test/card-server.test.mjs test/card-script.test.mjs test/buddy.test.mjs` with new tests: the 410 text after each of the four endings, and for a body still arriving at the deadline; the page shows the `closed` caption for a final 410 and for a Cancel that gets no answer. Commit, then break each place (server site 1, server site 2, caption, the page's own copy) and watch a test fail. Then `npm test`; `git grep -n "already used" -- src test` prints nothing.
+**Must not:** change when a card ends, the status codes, `final: true`, or any other message; touch B-8; add a dependency.
+
+---
+
 ## Next release (v0.3) — ranked candidates, not frozen
 
 1. **`keyprompt mcp` — become the page an MCP agent opens.** Claude Code 2.1.287 added "URL prompts from MCP servers" on the 2025-11-25 protocol: it asks you, then opens the URL in your browser (live CHANGELOG via `gh`, 2026-11-05). VS Code declares URL mode support. A small stdio MCP server with a `request_secret` tool answering with URL elicitation would make the card native in those agents, with the shell command still there for everything else. Needs R-6 closed and a yes on how to build it (hand-written JSON-RPC vs the MCP SDK dependency, invariant 7).
