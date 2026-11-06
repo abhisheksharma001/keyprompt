@@ -589,7 +589,7 @@ Pinguu is our own design: flat vector shapes, rounded, a key-shaped head tuft an
 **Research:** none.
 **Model:** sonnet.
 **Confidence:** 0.9 — the bug was reproduced before the fix (the card said "Could not save" for a value that was in the Keychain); the fix has tests on every OS and a real-store test on the CLI; the end-to-end run by hand is macOS only.
-**Files:** `src/cli.mjs`, `test/cli.test.mjs`, `CHANGELOG.md`, `docs/prd/card-v2.md`, `docs/bugs.md`, `docs/steps.md`.
+**Files:** `src/cli.mjs`, `src/catalog.mjs` (only `catalogPath` is exported, so the line names the file from one place), `test/cli.test.mjs`, `CHANGELOG.md`, `docs/prd/card-v2.md`, `docs/bugs.md`, `docs/steps.md`.
 **Today:** the card's Save runs `saveAll` (every value to the OS store) and then `recordSavedMany` (the names to `~/.keyprompt/catalog.json`). If the second fails with anything that is not a `KeypromptError` (a full disk, a folder that cannot be written, a `catalog.json` that is not JSON), the card server answers 422 "Could not save. Try again." for values that are saved, and the agent ends up told "without saving" (B-3).
 **Change:**
 - `saveAndRecord(store, values, reason)` in `src/cli.mjs`: `saveAll`, then `recordSavedMany` in a `try`. On a failure of the list it returns one line from `catalogNotUpdated(names, storeLabel, error)` and does not throw. A failure of `saveAll` still throws as before.

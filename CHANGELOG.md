@@ -12,7 +12,7 @@ What changed in each version of keyprompt. Everything listed under a version is 
 
 ### Fixed
 
-- **A save no longer fails because the list of names could not be updated.** `keyprompt list` reads a small file, `~/.keyprompt/catalog.json`, that `set` and `run` update after a save. If that file could not be written or read (a full disk, a folder you cannot write to, a file that is not JSON), the card said "Could not save. Try again." although the key was already in your password store, and the agent was later told nothing was saved. Now the card says Saved, `set` and `run` carry on, and one line on stderr says the list of names was not updated. A corrupt `catalog.json` is not repaired.
+- **A save no longer fails because the list of names could not be updated.** `keyprompt list` reads a small file, `~/.keyprompt/catalog.json`, that `set` and `run` update after a save. If that file could not be written or read (a full disk, a folder you cannot write to, a file that is not JSON), the card said "Could not save. Try again." although the key was already in your password store, and once you closed the card the agent was told nothing was saved. Now the card says Saved, `set` and `run` carry on, and one line on stderr says the list of names was not updated. A corrupt `catalog.json` is not repaired.
 
 ## 0.2.0 — 2026-11-06
 

@@ -4,7 +4,7 @@ import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { openInBrowser } from './browser.mjs'
 import { requestSecretWithCard } from './card-server.mjs'
-import { catalogDir, readCatalog, recordRemoved, recordSavedMany } from './catalog.mjs'
+import { catalogPath, readCatalog, recordRemoved, recordSavedMany } from './catalog.mjs'
 import { collectSecrets } from './collect.mjs'
 import { EXIT, KeypromptError } from './errors.mjs'
 import { assertName, parseFields } from './names.mjs'
@@ -221,7 +221,7 @@ export function catalogNotUpdated(names, storeLabel, error) {
   const them = names.length === 1 ? 'it' : 'them'
   return (
     `keyprompt: Saved ${joinNames(names)} in the ${storeLabel}, but could not update the list of names${code}, so "keyprompt list" may not show ${them}. ` +
-    `The save itself worked. The list is ${join(catalogDir(), 'catalog.json')}.\n`
+    `The save itself worked. The list is ${catalogPath()}.\n`
   )
 }
 
