@@ -295,7 +295,9 @@ test('one card, several fields: a shown box, a hidden box and an optional box sa
   const url = await urlReady
   const page = await send(url)
   assert.ok(page.text.includes('<h1>Secrets requested</h1>'))
-  assert.ok(page.text.includes('>Save all 3</button>'))
+  // C is optional, so the card may save fewer than three: the button must not say "all 3" (B-14).
+  assert.ok(page.text.includes('>Save</button>'))
+  assert.ok(!page.text.includes('Save all'))
   const rows = rowsOf(page.text)
   assert.deepEqual(Object.keys(rows), ['A', 'B', 'C'])
   assert.match(rows.A, /<input [^>]*type="text" aria-label="Value for A"/)
@@ -312,6 +314,22 @@ test('one card, several fields: a shown box, a hidden box and an optional box sa
   ])
   assert.deepEqual(await result, { remembered: true, values: expected })
   assert.deepEqual(stored, [{ values: { A: 'id', B: 'tok' }, remember: true }])
+})
+
+test('the Save button says "Save all N" only when every box must be filled, and plain "Save" when any box is optional (B-14)', async () => {
+  const cases = [
+    { fields: [{ name: 'A' }, { name: 'B' }], label: 'Save all 2' },
+    { fields: [{ name: 'A' }, { name: 'B', optional: true }], label: 'Save' },
+    { fields: [{ name: 'A', optional: true }], label: 'Save' },
+  ]
+  for (const { fields, label } of cases) {
+    const { urlReady, result } = startCard({ fields })
+    const url = await urlReady
+    const page = (await send(url)).text
+    assert.ok(page.includes(`>${label}</button>`), `${JSON.stringify(fields)} should say ${label}`)
+    await send(`${url}/cancel`, { method: 'POST', body: {} })
+    await assert.rejects(result, (e) => e.exitCode === 4)
+  }
 })
 
 test('a name that was not asked for, a non-string value, or the old { value } body gives 400 and saves nothing', async () => {

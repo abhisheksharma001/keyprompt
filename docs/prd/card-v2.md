@@ -76,11 +76,13 @@ $0 in services. Nothing in this plan calls a paid API or needs an account.
 │  [ Paste here ]  → "27 lines pasted" [Show]  │
 │                                              │
 │  [x] Remember on this computer   (run only)  │
-│  [Later]  [Cancel]              [Save all 3] │
+│  [Later]  [Cancel]                    [Save] │
 │  ──────────────────────────────────────────  │
 │  macOS Keychain · card closes in 4:51        │
 └────────────────────────────────────────────┘
 ```
+
+The Save button says "Save all N" only when every box must be filled, "Save securely" for one required box, and plain "Save" when any box is optional, because an optional box can stay empty and then saves nothing (D-8, bug B-14). The sketch has an optional box, so it says "Save". A card that replaces saved values says "Replace value" or "Replace values".
 
 ## How it works
 
@@ -272,3 +274,4 @@ Honest view, from reports 8–10 plus the code:
 - **D-5** (2026-11-05): no animation libraries (invariants 5 and 7).
 - **D-6** (2026-11-06, Abhishek: "Terminal only"): `run --no-redact` works only when the output goes straight to a terminal; otherwise it stops with exit 2 (S-24, bug B-11). Chosen over a card that asks each time, removing the flag, and keeping it as it was. It stops an agent's shell tool from turning masking off by accident. It does not stop an agent on purpose: one whose commands run in a real terminal, or one that wraps keyprompt in `script`, still can (`SECURITY.md`).
 - **D-7** (2026-11-07, Abhishek: "Run without it"): on a `run` card whose boxes are all optional, Save with every box empty is allowed (S-28, bug B-4). Nothing is saved, the card ends with the `skipped` pose, the agent gets one line on stderr, and `run` carries on to the command. Before this, the only way off such a card was Cancel, which stopped the command, so an optional name the person did not have blocked every run that asked for it. Chosen over keeping the refusal and changing the docs. `set` still refuses an empty Save, because saving nothing is not a save.
+- **D-8** (2026-11-07, Abhishek: "Plain 'Save' if any box optional"): the Save button says plain "Save" whenever any box on the card is optional, and keeps "Save all N" (several boxes) and "Save securely" (one box) for cards where every box must be filled (S-30, bug B-14). The count was false on a card with an optional box: "Save all 3" saved one when the other two were left empty. Chosen over a live count of the filled boxes ("Save 1 of 3", more code in the card script) and over a plain "Save" on every card (loses the "all will be saved" hint where it is true).
