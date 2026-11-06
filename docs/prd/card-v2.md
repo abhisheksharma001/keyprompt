@@ -100,6 +100,7 @@ HINT  = visible | multiline | optional
 - `run` asks only for names that are not saved yet; hints on saved names are ignored.
 - `set` on a name that is already saved shows "Saved — leave empty to keep"; an empty box keeps the old value.
 - An empty `optional` box is not saved, and the variable is simply absent from the command's environment.
+- `--no-redact` hands COMMAND keyprompt's own output untouched, so it works only when keyprompt's stdout and stderr are both a terminal. Otherwise `run` stops with exit 2 before reading a key or opening a card (decision D-6, bug B-11).
 
 ### Exit codes
 
@@ -267,3 +268,4 @@ Honest view, from reports 8–10 plus the code:
 - **D-3** (2026-11-05, Abhishek: "me"): the card is for Abhishek first, a developer. Copy may be technical; provider presets are parked.
 - **D-4** (2026-11-05, Abhishek: "ok"): this release = multi-field card, Later, buddy with truthful poses, headline fix. **Approved 2026-11-05 (Abhishek: "yes"):** `keyprompt demo` (S-11), the card countdown (part of S-14), and the two lite wins from the teardowns: masking encoded copies (S-18) and refusing a key pasted into a command (S-19).
 - **D-5** (2026-11-05): no animation libraries (invariants 5 and 7).
+- **D-6** (2026-11-06, Abhishek: "Terminal only"): `run --no-redact` works only when the output goes straight to a terminal; otherwise it stops with exit 2 (S-24, bug B-11). Chosen over a card that asks each time, removing the flag, and keeping it as it was. It stops an agent's shell tool from turning masking off by accident. It does not stop an agent on purpose: one whose commands run in a real terminal, or one that wraps keyprompt in `script`, still can (`SECURITY.md`).

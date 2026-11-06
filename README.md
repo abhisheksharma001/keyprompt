@@ -73,7 +73,7 @@ A **FIELD** is a name plus optional hints after a colon, for example `keyprompt 
 
 The agent picks the hints, and they only change how a box looks on the card: every value is still saved the same way and masked in `run`'s output. A `:visible` box shows what you type, so only put an ID there.
 
-Options: `--reason TEXT` (shown on the card: why it's needed), `--by TEXT` (shown on the card: who's asking), `--no-redact` (pass output through untouched, for full-screen terminal programs).
+Options: `--reason TEXT` (shown on the card: why it's needed), `--by TEXT` (shown on the card: who's asking), `--no-redact` (pass output through untouched, for a full-screen program in your own terminal; refused when the output is not a terminal).
 
 Exit codes:
 
@@ -81,7 +81,7 @@ Exit codes:
 |---|---|
 | `0` | OK. |
 | `1` | Something failed; the message says what. |
-| `2` | Bad usage: an unknown option, a bad name or a bad hint. |
+| `2` | Bad usage: an unknown option, a bad name, a bad hint, or `--no-redact` when the output is not a terminal. |
 | `3` | Not saved (`keyprompt has`, or `keyprompt delete` of a name that wasn't saved). |
 | `4` | You cancelled the card. |
 | `5` | Nobody filled in the card within 5 minutes. |

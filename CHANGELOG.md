@@ -19,6 +19,7 @@ Not published to npm yet: install it from GitHub, as the README says.
 ### Changed
 
 - `keyprompt run` opens one card for every missing value. In 0.1.0 it opened one card per name.
+- `run --no-redact` works only when keyprompt's output goes straight to a terminal. When it does not (a pipe or a file, as in Claude Code's shell tool), `run` stops with exit code 2 before reading a key, so an agent's shell tool can no longer turn masking off by accident. `SECURITY.md` says what this does not stop.
 - The README, the `package.json` description and `SECURITY.md` no longer say the agent "never sees" a key. They say what is true: the key goes to one command, exact copies are masked in its output (not with `--no-redact`), and a command can still transform or send it. `SECURITY.md` now also says plainly that the agent itself can read a saved key from your operating system's password store, because it runs as you.
 - The card footer reads "Stored in your {store}", or "Held for this one command only" when you untick Remember. A card that ended without saving has no footer.
 - A card that has ended says one sentence, "This card is no longer active", however it ended.
