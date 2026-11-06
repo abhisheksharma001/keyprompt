@@ -144,8 +144,9 @@ test("the done screen waits only for the key's trip into the vault, which is und
   assert.ok(script.includes('if (ok) await settle(started)'))
 })
 
-// The penguin has no name (decision R-4, 2026-11-06): "Pingu" is a registered toy
-// character and "Pinguu" is one letter away. Neither may come back into the code.
+// The penguin has no name (decision R-4, 2026-11-06): "Pingu" is a toy character whose
+// owner, a Mattel subsidiary, has a US trademark application pending, and "Pinguu" is
+// one letter away. Neither may come back into the code.
 test('the penguin is unnamed: no source file spells it, and the demo card does not either', () => {
   const src = fileURLToPath(new URL('../src/', import.meta.url))
   const files = readdirSync(src, { recursive: true }).filter((f) => f.endsWith('.mjs'))
