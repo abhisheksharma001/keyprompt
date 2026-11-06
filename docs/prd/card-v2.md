@@ -218,7 +218,7 @@ As of 2026-11-05. **Sources:**
 | Size | Platform | ~24k lines Go | ~53k lines TS | App | App | ~1.8k lines JS |
 
 **Where this lite version wins** (my judgment from the table):
-1. It's the only one here that asks the person at the moment the key is needed, in a browser card, with several fields and Later. Closest rival: keymask, an npm package with a multi-field local form. It's unverified (R-9).
+1. It's the only one here that asks the person at the moment the key is needed, in a browser card, with several fields and Later. Closest rival: keymask, an MCP server with a local form for one or two fields per request, no Later button, a source repository that is not public, and its last publish on 2026-05-28 (R-9, read 2026-11-07).
 2. No account, daemon, certificate or telemetry. Evidence that people want this: AgentSecrets issue #5, "Local mode, no login", open since 2026-04-08.
 3. Multi-line keys paste properly (Secretless keeps only the first line; AgentSecrets has no hidden input).
 4. Only the named keys reach the command (AgentSecrets' `env` and Secretless' shell hook hand over everything).
@@ -248,7 +248,7 @@ As of 2026-11-05. **Sources:**
 
 **No longer special on its own:**
 - Exact-copy masking: `op run` has it, and Codex 0.164.0 masks credentials in its remote shell.
-- Multi-field forms: keymask and the Infisical dashboard have them.
+- Multi-field forms: keymask (one or two fields per request, R-9) and the Infisical dashboard have them.
 
 The edge is how good the moment of asking feels, how honest the card is, and needing zero setup.
 
