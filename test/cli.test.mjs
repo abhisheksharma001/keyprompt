@@ -71,6 +71,20 @@ test('the headline claims nothing the code does not do (B-1, B-2)', () => {
   assert.match(security, /no keyprompt command that outputs a saved value/)
 })
 
+test('the README shows pictures that exist and documents demo, and the CHANGELOG has the package version (S-16)', () => {
+  const root = new URL('../', import.meta.url)
+  const readme = readFileSync(new URL('README.md', root), 'utf8')
+  const pictures = [...readme.matchAll(/<img [^>]*src="([^"]+)"/g)].map((m) => m[1])
+  assert.ok(pictures.length >= 2)
+  for (const src of pictures) assert.ok(existsSync(new URL(src, root)), `README picture ${src}`)
+  // B-10: the old screenshot's alt text said it, and the card no longer does.
+  assert.doesNotMatch(readme, /never shown to your agent/)
+  assert.match(readme, /^\| `keyprompt demo` \|/m)
+  const { version } = JSON.parse(readFileSync(new URL('package.json', root), 'utf8'))
+  const changelog = readFileSync(new URL('CHANGELOG.md', root), 'utf8')
+  assert.match(changelog, new RegExp(`^## ${version.replaceAll('.', '\\.')} `, 'm'), `CHANGELOG has no section for ${version}`)
+})
+
 test('there is no get command', () => {
   const r = cli(['get', 'OPENAI_API_KEY'])
   assert.equal(r.status, 2)
