@@ -2,7 +2,9 @@
 
 What changed in each version of keyprompt. Everything listed under a version is merged to `main`.
 
-## Unreleased
+## 0.2.2 — 2026-11-07
+
+Two things on the card now say what happens: the Save button on a card with an optional box, and the penguin when "Remember on this computer" is unticked.
 
 ### Fixed
 
