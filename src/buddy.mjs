@@ -17,6 +17,7 @@ export const MOODS = [
   { id: 'peek-proof', caption: 'Not looking.' },
   { id: 'watching', caption: 'This box is shown on screen.' },
   { id: 'stashing', caption: 'Putting it away…' },
+  { id: 'handing', caption: 'Handing it over…' },
   { id: 'locked', caption: 'Locked in your {store}.' },
   { id: 'one-run', caption: 'Handed to this one command. Not saved.' },
   { id: 'skipped', caption: 'Nothing was saved. The command gets no value from this card.' },
@@ -39,7 +40,6 @@ export const CAPTIONS = Object.fromEntries(MOODS.map((mood) => [mood.id, mood.ca
 export const CAPTION_VARIANTS = {
   oneRun: {
     listening: 'Paste it here. It goes to this one command, not into the chat.',
-    stashing: 'Handing it over…',
   },
   demo: {
     listening: 'Try it: type anything. Nothing is saved.',
@@ -109,17 +109,17 @@ export function buddySvg(mood = 'listening') {
 <g class="sweat" data-show="oops"><path class="f-edge" d="M84 32q4 6.5 0 9.5-4-3 0-9.5z"/></g>
 <g class="arms">
 <path class="f-wing" data-hide="peek-proof" d="M30 60C20 68 17 82 22 90c5-5 9-14 10-22z"/>
-<path class="f-wing" data-hide="peek-proof stashing one-run bye" d="M82 60c10 8 13 22 8 30-5-5-9-14-10-22z"/>
+<path class="f-wing" data-hide="peek-proof stashing handing one-run bye" d="M82 60c10 8 13 22 8 30-5-5-9-14-10-22z"/>
 <path class="f-wing" data-show="peek-proof" d="M29 66C30 54 40 45 50 46c5 .5 6 6 2 8-7 3-15 8-19 16z"/>
 <path class="f-wing" data-show="peek-proof" d="M83 66C82 54 72 45 62 46c-5 .5-6 6-2 8 7 3 15 8 19 16z"/>
-<path class="f-wing" data-show="stashing one-run" d="M82 61c10-2 19-1 23 3 2 3-1 6-6 6-7 1-13 2-17 2z"/>
+<path class="f-wing" data-show="stashing handing one-run" d="M82 61c10-2 19-1 23 3 2 3-1 6-6 6-7 1-13 2-17 2z"/>
 <path class="f-wing" data-show="bye" d="M80 68c2-10 8-22 15-28 4-3 8 0 5 5-4 8-9 17-14 25z"/>
 </g>
 <g class="key" data-show="stashing">
 <circle class="s-gold" cx="108.5" cy="66" r="3.6" stroke-width="2.2"/>
 <path class="s-gold" d="M112 66h11M119 66v3.5M122 66v3" stroke-width="2.2"/>
 </g>
-<g class="envelope" data-show="one-run">
+<g class="envelope" data-show="handing one-run">
 <rect class="f-paper s-ink" x="101" y="60" width="18" height="12.5" rx="1.6" stroke-width="1.4"/>
 <path class="s-ink" d="M101.6 61l8.4 6.4 8.4-6.4" stroke-width="1.4"/>
 </g>
@@ -232,6 +232,7 @@ export function buddyStyle() {
   .buddy[data-mood="listening"] .eyes { transform: translate(1px, 1.5px); }
   .buddy[data-mood="watching"] .eyes { transform: translate(0, 2.6px); }
   .buddy[data-mood="stashing"] .eyes, .buddy[data-mood="one-run"] .eyes { transform: translate(2.2px, 0); }
+  .buddy[data-mood="handing"] .eyes { transform: translate(2.2px, 1px); }
   .buddy[data-mood="later"] .eyes, .buddy[data-mood="closed"] .eyes { transform: translate(2px, -0.8px); }
   .buddy[data-mood="oops"] .eyes { transform: translate(-1.6px, 0.4px); }
   .buddy[data-mood="oops"] .pg { transform: rotate(-5deg); }

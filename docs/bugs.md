@@ -92,11 +92,11 @@ The deadline is the real-world path. Someone presses Save near the end of the 5 
 
 **Seen:** pressing Save with "Remember on this computer" unticked shows the `stashing` pose: the vault door open and the key carried towards it. Since S-13 the key also travels into the vault and disappears (600 ms). The caption says "Handing it over…" and the end says "Handed to this one command. Not saved.", so the words are true but the picture shows a save that does not happen. The PRD's replacement table changes only the caption for this case, not the pose. Found 2026-11-06 in S-13 while checking the motion frame by frame; the still pose has been like this since S-12.
 **Requirement:** invariant 9 in `.claude/CLAUDE.md` in spirit (its letter covers words; this is the picture); the `stashing` row of the buddy table and the "Remember unticked" row of the replacement table in `docs/prd/card-v2.md`.
-**Needs first:** Abhishek's choice of picture for waiting on a one-run Save.
-**Blocks:** nothing.
+**Needs first:** Abhishek's choice of picture for waiting on a one-run Save. **Answered 2026-11-07:** a new `handing` pose.
+**Blocks:** B-15 (the README's demo pictures are retaken once, after this).
 **Files:** src/buddy.mjs (the pose and its motion), src/card-script.mjs (the mood set on Save), the two PRD tables, test/buddy.test.mjs.
 **Research:** none · **Model:** sonnet · **Confidence:** 0.9 that the picture misleads (seen in the S-13 frames); whether it matters is Abhishek's call.
-**Fix step:** not queued yet. Proposed: with Remember unticked, Save waits with the envelope in hand and the vault shut (a `handing` pose), so the vault opens only for a save.
+**Fix step:** S-31 (PR #34), as Abhishek chose ("New 'handing' pose", D-9). With Remember unticked, Save shows a new pose, `handing`: the penguin holds out an envelope and the vault stays shut, so the vault opens only for a real save. No new drawing: it reuses the envelope and the extended wing of `one-run`. The page also skips the wait for the key's trip into the vault, because none happens. The replacement table's `stashing` row for this case is gone, since the pose has its own caption.
 
 ### B-9 — The footer says "Stored in your {store}" on a card that stored nothing
 

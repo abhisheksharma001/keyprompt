@@ -139,7 +139,8 @@ The creature is a penguin who keeps keys in an ice vault. It has no name, by dec
 | Card opens | `listening` | Sits up, looking at the boxes, gentle bob | "Paste it here. It goes to your {store}, not into the chat." |
 | Typing in a hidden box | `peek-proof` | Covers its eyes | "Not looking." |
 | Typing in a shown box | `watching` | Looks at the box | "This box is shown on screen." |
-| Save pressed, waiting | `stashing` | Carries the key towards the vault | "Putting it away…" |
+| Save pressed, waiting (Remember ticked or not offered) | `stashing` | Carries the key towards the vault | "Putting it away…" |
+| Save pressed, waiting ("Remember on this computer" unticked) | `handing` | Holds out an envelope; the vault stays shut | "Handing it over…" |
 | Saved | `locked` | Vault door shut, dial spins | "Locked in your {store}." |
 | Used for one run only | `one-run` | Hands over an envelope, which disappears | "Handed to this one command. Not saved." |
 | Every box left empty (`run` only) | `skipped` | Stands by the shut vault, holding nothing | "Nothing was saved. The command gets no value from this card." |
@@ -156,10 +157,11 @@ The creature is a penguin who keeps keys in an ice vault. It has no name, by dec
 | Card | Mood | Caption instead |
 |---|---|---|
 | "Remember on this computer" unticked | `listening` | "Paste it here. It goes to this one command, not into the chat." |
-| "Remember on this computer" unticked | `stashing` | "Handing it over…" |
 | Demo (no store, nothing saved) | `listening` | "Try it: type anything. Nothing is saved." |
 | Demo | `stashing` | "Pretending to put it away…" |
 | Demo, after Save | `locked` | "Nothing was saved. This is how a real save looks." |
+
+With Remember unticked, the picture is replaced too, not only the words (D-9, bug B-8): the key goes to one command and never into the store, so the penguin does not carry it to the vault. It holds the envelope with the vault shut (`handing`), and the vault opens only for a real save (`stashing`). The page does not wait for a trip into the vault in that case, because none happens.
 
 A demo also has a row of buttons that preview every mood; a previewed caption starts with "Preview:", and `{store}` reads "password store" there. The `closed` caption says nothing about how the card ended, because the page often cannot know: the deadline may have passed, or another tab may have saved. It shows when the server answers that the card has ended (410), and when Cancel gets no answer at all.
 
@@ -275,3 +277,4 @@ Honest view, from reports 8–10 plus the code:
 - **D-6** (2026-11-06, Abhishek: "Terminal only"): `run --no-redact` works only when the output goes straight to a terminal; otherwise it stops with exit 2 (S-24, bug B-11). Chosen over a card that asks each time, removing the flag, and keeping it as it was. It stops an agent's shell tool from turning masking off by accident. It does not stop an agent on purpose: one whose commands run in a real terminal, or one that wraps keyprompt in `script`, still can (`SECURITY.md`).
 - **D-7** (2026-11-07, Abhishek: "Run without it"): on a `run` card whose boxes are all optional, Save with every box empty is allowed (S-28, bug B-4). Nothing is saved, the card ends with the `skipped` pose, the agent gets one line on stderr, and `run` carries on to the command. Before this, the only way off such a card was Cancel, which stopped the command, so an optional name the person did not have blocked every run that asked for it. Chosen over keeping the refusal and changing the docs. `set` still refuses an empty Save, because saving nothing is not a save.
 - **D-8** (2026-11-07, Abhishek: "Plain 'Save' if any box optional"): the Save button says plain "Save" whenever any box on the card is optional, and keeps "Save all N" (several boxes) and "Save securely" (one box) for cards where every box must be filled (S-30, bug B-14). The count was false on a card with an optional box: "Save all 3" saved one when the other two were left empty. Chosen over a live count of the filled boxes ("Save 1 of 3", more code in the card script) and over a plain "Save" on every card (loses the "all will be saved" hint where it is true).
+- **D-9** (2026-11-07, Abhishek: "New 'handing' pose"): with "Remember on this computer" unticked, pressing Save shows a new pose, `handing`: the penguin holds out an envelope and the vault stays shut, with the caption "Handing it over…" (S-31, bug B-8). Before this the penguin carried the key into an open vault, so the picture showed a save that does not happen while the words said so correctly. The vault now opens only for a real save. Chosen over leaving the picture as it was and closing the bug as accepted, because the words were already true.

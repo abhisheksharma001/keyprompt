@@ -7,6 +7,7 @@ What changed in each version of keyprompt. Everything listed under a version is 
 ### Fixed
 
 - **The Save button no longer says "Save all 3" when a box may be left empty.** On a card with an optional box (`keyprompt set A B:optional`, or the card `keyprompt demo` opens), the button counted every box, so pressing it with the optional box empty saved fewer keys than the button said. Now a card with any optional box says plain "Save". A card where every box must be filled still says "Save all 2", and one required box still says "Save securely".
+- **The penguin no longer puts the key in the vault when "Remember on this computer" is unticked.** With the box unticked, the key goes to the one command and is not stored, but pressing Save showed the penguin carrying a key into an open vault. Now it holds out an envelope and the vault stays shut while it waits; the vault opens only for a real save. The words on the card were already true. This adds one penguin pose, `handing`, to the 12 before it.
 
 ## 0.2.1 — 2026-11-07
 
