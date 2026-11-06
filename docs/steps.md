@@ -397,6 +397,7 @@ Pinguu is our own design: flat vector shapes, rounded, a key-shaped head tuft an
 **Research:** lookup · R-7 (re-check the name right before).
 **Model:** sonnet.
 **Confidence:** 0.85.
+**Files:** `package.json` (`files`), `README.md`, `skill/SKILL.md`, `CHANGELOG.md`, `test/cli.test.mjs`, `docs/research.md` (R-7), `docs/steps.md`.
 **Change:** Abhishek logs in (`! npm login`). Run `npm publish --dry-run`, review the file list, then `npm publish`. Tag `v0.2.0` and create a GitHub release. The README (both install blocks: the quick start at the top and "Install") and `skill/SKILL.md` switch from `npx -y github:abhisheksharma001/keyprompt` to `npx -y keyprompt`. Put the date on the 0.2.0 heading in `CHANGELOG.md` (it says "unreleased" until then). Found in S-16: `files` in `package.json` lists neither `docs/` nor `CHANGELOG.md`, so the package carries the README without its pictures; after the dry run, look at how the README's pictures would show on the npm page, and fix it (absolute picture links, or add the two pictures to `files`) before the publish.
 **Acceptance:** WHEN someone runs `npx -y keyprompt --version` on a clean machine THEN it SHALL print 0.2.0.
 **Verify:** that command, in a temp folder.

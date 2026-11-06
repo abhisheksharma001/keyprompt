@@ -7,7 +7,7 @@ description: Get and use API keys, tokens and other secrets without the user pas
 
 The value of a secret must never enter this conversation: not from the user, not from a command's output, not from a file you read. keyprompt makes that the default path.
 
-If `keyprompt` is not on PATH, use `npx -y github:abhisheksharma001/keyprompt` in its place in every command below.
+If `keyprompt` is not on PATH, use `npx -y keyprompt` in its place in every command below.
 
 ## Rules
 
