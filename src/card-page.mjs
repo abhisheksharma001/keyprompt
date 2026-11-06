@@ -64,12 +64,12 @@ function renderField(field, index) {
  *   replacing: boolean,
  *   allowSessionOnly: boolean,
  *   demo?: boolean,
- *   forRun?: boolean,
+ *   masked?: boolean,
  *   expiresAt: number,
  *   nonce: string,
  * }} options
  */
-export function renderCard({ fields, reason, requester, storeLabel, replacing, allowSessionOnly, demo = false, forRun = false, expiresAt, nonce }) {
+export function renderCard({ fields, reason, requester, storeLabel, replacing, allowSessionOnly, demo = false, masked = false, expiresAt, nonce }) {
   const several = fields.length > 1
   const title = replacing
     ? several
@@ -97,8 +97,8 @@ export function renderCard({ fields, reason, requester, storeLabel, replacing, a
     ${MOODS.map(({ id }) => `<button type="button" data-preview="${id}">${id}</button>`).join('')}
   </div>`
     : ''
-  // Only a run card hands its values to a command, so only it may speak about one.
-  const maskingHtml = forRun ? `<p class="note" id="masking" hidden>${escapeHtml(MASKING_NOTE)}</p>` : ''
+  // Only a card whose command output is masked may say so (not `run --no-redact`, not `set`).
+  const maskingHtml = masked ? `<p class="note" id="masking" hidden>${escapeHtml(MASKING_NOTE)}</p>` : ''
   const rememberHtml = allowSessionOnly
     ? `<label class="check"><input type="checkbox" id="remember" checked> Remember on this computer</label>
        <p class="hint" id="remember-hint">Unchecked: used for this one command, then forgotten.</p>`

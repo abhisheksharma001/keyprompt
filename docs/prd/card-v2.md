@@ -169,7 +169,7 @@ One line per value: "Saved in your macOS Keychain" / "Handed to this one command
 Where it shows (S-14):
 - After a Save, one line per box, from the server's answer: names and outcomes only, never a value. After Later, every box reads "Not saved (Later)".
 - Not after Cancel or a timeout (their caption already says nothing was saved), and not in a demo (a demo keeps nothing, so its answer has no receipt).
-- The masking sentence shows only on a `run` card after a Save, because only there do the values go to a command. A `set` card's page does not contain it.
+- The masking sentence shows only on a `run` card after a Save, and only when the output is masked: not with `--no-redact`, and never on a `set` card, whose page does not contain it. With `--no-redact` the card says nothing about masking.
 - "Kept the saved value" appears only on `set`, for a box that is already saved and was left empty.
 
 ### The deadline (footer clock)

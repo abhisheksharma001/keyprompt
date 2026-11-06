@@ -172,8 +172,8 @@ test('a demo card keeps nothing, so its answer has no receipt', async () => {
   assert.deepEqual(JSON.parse(res.text), { remembered: true })
 })
 
-test("only a run card's page speaks about a command's output", async () => {
-  const run = startCard({ forRun: true })
+test('only a card whose command output is masked says so', async () => {
+  const run = startCard({ masked: true })
   const runUrl = await run.urlReady
   const runPage = (await send(runUrl)).text
   assert.ok(runPage.includes('<p class="note" id="masking" hidden>keyprompt masks exact copies in that command&#39;s output.'))

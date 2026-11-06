@@ -223,6 +223,49 @@ request({ hostname: url.hostname, port: url.port, path: url.pathname + '/later',
   }
 })
 
+test('the masking sentence is on the card for run, and not for run --no-redact or set', { skip: !realCard }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'keyprompt-mask-'))
+  const browser = join(dir, 'look.mjs')
+  // Reads the card page, records whether it holds the masking sentence, then cancels.
+  writeFileSync(
+    browser,
+    `#!${process.execPath}
+import { writeFileSync } from 'node:fs'
+import { request } from 'node:http'
+const url = new URL(process.argv[2])
+const get = request({ hostname: url.hostname, port: url.port, path: url.pathname, headers: { Host: url.host } }, (res) => {
+  const chunks = []
+  res.on('data', (c) => chunks.push(c))
+  res.on('end', () => {
+    writeFileSync(process.env.KP_PAGE_SAYS, String(Buffer.concat(chunks).toString('utf8').includes('id="masking"')))
+    const headers = { Origin: url.origin, 'Content-Type': 'application/json' }
+    request({ hostname: url.hostname, port: url.port, path: url.pathname + '/cancel', method: 'POST', headers }).end('{}')
+  })
+})
+get.end()
+`,
+  )
+  chmodSync(browser, 0o755)
+  const name = `KEYPROMPT_TEST_${randomBytes(4).toString('hex').toUpperCase()}`
+  const says = (args) => {
+    const file = join(dir, `says-${randomBytes(3).toString('hex')}`)
+    const r = spawnSync(process.execPath, [BIN, ...args], {
+      encoding: 'utf8',
+      env: { ...process.env, KEYPROMPT_HOME: dir, KEYPROMPT_BROWSER: browser, KP_PAGE_SAYS: file },
+      timeout: 15000,
+    })
+    assert.equal(r.status, 4, r.stderr)
+    return readFileSync(file, 'utf8')
+  }
+  try {
+    assert.equal(says(['run', name, '--', process.execPath, '-e', '0']), 'true')
+    assert.equal(says(['run', name, '--no-redact', '--', process.execPath, '-e', '0']), 'false')
+    assert.equal(says(['set', name]), 'false')
+  } finally {
+    await getStore().remove(name).catch(() => {})
+  }
+})
+
 test('list on a fresh machine says nothing is saved', () => {
   const r = cli(['list'])
   assert.equal(r.status, 0)

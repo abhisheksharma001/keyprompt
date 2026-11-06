@@ -29,7 +29,7 @@ export const DEFAULT_CARD_TIMEOUT_MS = 5 * 60 * 1000
  * @property {boolean} replacing
  * @property {boolean} allowSessionOnly Show "Remember on this computer"; when false the values are always saved.
  * @property {boolean} [demo] A demo card: the page says so and never claims a save or a store. Its `onSubmit` must keep nothing.
- * @property {boolean} [forRun] The values go to a command that `run` starts, so the done screen may speak about that command's output.
+ * @property {boolean} [masked] The values go to a command whose output keyprompt masks, so the done screen may say so.
  * @property {(values: Map<string, string>, remember: boolean) => Promise<void>} onSubmit Store (or hold) the non-empty values; throw to show the error on the card.
  * @property {(url: string) => Promise<boolean>} open Open the card for the person. Resolves false if nothing could be opened.
  * @property {number} [timeoutMs]
@@ -139,7 +139,7 @@ export function requestSecretWithCard(request) {
             replacing: request.replacing,
             allowSessionOnly: request.allowSessionOnly,
             demo: request.demo === true,
-            forRun: request.forRun === true,
+            masked: request.masked === true,
             expiresAt,
             nonce,
           }),
