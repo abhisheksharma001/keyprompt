@@ -66,6 +66,45 @@ test('when one secret is a prefix of another, waits and lets the longer one win'
   assert.equal(r.flush().toString(), '[keyprompt:SHORT]')
 })
 
+// A value whose encoded forms all differ: its base64 has "+" and padding, "!" splits the two URL forms, and JSON escapes '"' and the line break (S-18).
+const VALUE = 'k3y/Of~!x"y\nz>>?'
+const BYTES = Buffer.from(VALUE, 'utf8')
+const ENCODED = {
+  'base64': BYTES.toString('base64'),
+  'base64 without padding': BYTES.toString('base64').replace(/=+$/, ''),
+  'base64url': BYTES.toString('base64url'),
+  'base64url with padding': BYTES.toString('base64').replaceAll('+', '-').replaceAll('/', '_'),
+  'hex': BYTES.toString('hex'),
+  'encodeURIComponent': encodeURIComponent(VALUE),
+  'RFC 3986 URL-encoding': encodeURIComponent(VALUE).replace(/[!'()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`),
+  'JSON-escaped': JSON.stringify(VALUE).slice(1, -1),
+}
+
+test('masks each encoded form of a value of 8 or more characters (S-18)', () => {
+  assert.equal(new Set([VALUE, ...Object.values(ENCODED)]).size, 9, 'the sample value must give nine different texts')
+  for (const [form, text] of Object.entries(ENCODED)) {
+    assert.equal(redactInChunks({ TOKEN: VALUE }, `a ${text} b`, [100]), 'a [keyprompt:TOKEN] b', form)
+  }
+})
+
+test('catches an encoded form split across chunks at every possible split point (S-18)', () => {
+  const text = `x ${ENCODED.base64} y ${ENCODED.hex} z`
+  for (let size = 1; size <= text.length; size++) {
+    assert.equal(redactInChunks({ TOKEN: VALUE }, text, [size]), 'x [keyprompt:TOKEN] y [keyprompt:TOKEN] z', `chunk size ${size}`)
+  }
+})
+
+test('a value under 8 characters is masked only as an exact copy; characters, not bytes, are counted (S-18)', () => {
+  const encoded = (value) => `${value} ${Buffer.from(value).toString('base64')} ${Buffer.from(value).toString('hex')}`
+  // 7 characters: only the exact copy goes.
+  assert.equal(redactInChunks({ K: 'sk-1234' }, encoded('sk-1234'), [100]), '[keyprompt:K] c2stMTIzNA== 736b2d31323334')
+  // 7 characters even though the emoji is 4 bytes and 2 UTF-16 units.
+  const seven = 'abcdef🙂'
+  assert.equal(redactInChunks({ K: seven }, encoded(seven), [100]), `[keyprompt:K] ${encoded(seven).split(' ').slice(1).join(' ')}`)
+  // 8 characters, 14 bytes: every form goes.
+  assert.equal(redactInChunks({ K: 'пароль12' }, encoded('пароль12'), [100]), '[keyprompt:K] [keyprompt:K] [keyprompt:K]')
+})
+
 test('with no secrets it is a pass-through', () => {
   const r = createRedactor(new Map())
   assert.equal(r.push(Buffer.from('hello')).toString(), 'hello')

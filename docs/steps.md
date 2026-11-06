@@ -416,7 +416,7 @@ Pinguu is our own design: flat vector shapes, rounded, a key-shaped head tuft an
 **Research:** lookup — AgentSecrets does this (`commands/env.go:220-329` at commit be53766, MIT). Read it for ideas only; write our own.
 **Model:** opus — this is the masking boundary.
 **Confidence:** 0.75 — easy to add; the risk is false matches on very short values.
-**Files:** `src/redact.mjs`, `test/redact.test.mjs`, `SECURITY.md`.
+**Files:** `src/redact.mjs`, `test/redact.test.mjs`, `SECURITY.md`. Added while building, because their text would otherwise become false (invariant 9) or the acceptance needed a check at the `run` level: `test/run.test.mjs`, `README.md`, `skill/SKILL.md`, `CHANGELOG.md`, `docs/prd/card-v2.md` (the comparison table), `docs/bugs.md` (B-12), `docs/steps.md`.
 **Today:** only exact copies are masked (`src/redact.mjs:10-11`).
 **Change:**
 - For each value of 8 or more characters, also mask its base64 (with and without padding), base64url, lowercase hex, and URL-encoded forms. A JSON-escaped form is added too, but only when it differs from the raw value.
