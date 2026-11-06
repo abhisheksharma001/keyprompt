@@ -67,6 +67,8 @@ test('the headline claims nothing the code does not do (B-1, B-2)', () => {
   assert.match(security, /read a saved key straight from the OS store/)
   assert.match(security, /find-generic-password/)
   assert.match(security, /--no-redact/)
+  // The protections table says "keyprompt command", not "command": a command the agent writes can print the key.
+  assert.match(security, /no keyprompt command that outputs a saved value/)
 })
 
 test('there is no get command', () => {

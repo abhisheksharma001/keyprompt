@@ -7,7 +7,7 @@ keyprompt keeps secrets out of AI agents' conversations. This page says exactly 
 | Risk | How |
 |---|---|
 | A key pasted into an AI chat ends up in the transcript, the model's context and cloud logs | The key is typed into a card in your browser, never into the chat. |
-| An agent printing a key (on purpose, by mistake, or after a prompt injection) | There is no command that outputs a saved value. `run` puts it only into the environment of the command it starts. |
+| An agent printing a key (on purpose, by mistake, or after a prompt injection) | There is no keyprompt command that outputs a saved value (see the limits below). `run` puts it only into the environment of the command it starts. |
 | A command echoing the key in its output (`curl -v`, stack traces, debug logs) | `run` replaces exact copies of the value in stdout and stderr with `[keyprompt:NAME]`, including copies split across output chunks (not with `--no-redact`, see below). |
 | The key appearing in a process list or shell history | The value never travels as a command-line argument: keyprompt hands it to the OS store over stdin (`security -i` on macOS, PowerShell on Windows, `secret-tool` on Linux) and reads it back over stdout. |
 | Another website or another local process filling or reading the card | The card server listens on 127.0.0.1 only, on a random port, behind a 256-bit one-time path token. Requests must carry `Host: 127.0.0.1:<port>` (blocks DNS-rebinding pages) and a POST must carry that exact `Origin` (blocks other sites). JSON only, size-capped. One successful submit, then the card is spent; it stops accepting anything after 5 minutes. The page sends a strict Content-Security-Policy, `no-store`, `no-referrer` and `X-Frame-Options: DENY`. |
