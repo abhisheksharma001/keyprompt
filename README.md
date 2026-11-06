@@ -4,8 +4,8 @@
 
 ```sh
 npm install -g github:abhisheksharma001/keyprompt   # 1. install it
-keyprompt install-skill                              # 2. teach Claude Code to use it
-keyprompt demo                                       # 3. see the card (nothing is saved)
+keyprompt install-skill                             # 2. teach Claude Code to use it
+keyprompt demo                                      # 3. see the card (nothing is saved)
 ```
 
 Needs Node.js 18.17 or later. On Linux, also install `secret-tool`: see [Install](#install).

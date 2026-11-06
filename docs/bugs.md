@@ -115,7 +115,7 @@ The deadline is the real-world path. Someone presses Save near the end of the 5 
 **Blocks:** nothing.
 **Files:** `src/card-page.mjs`, `src/card-script.mjs`, `test/card-server.test.mjs`, and `test/card-script.test.mjs` if the Remember-unticked footer is pinned there.
 **Research:** none · **Model:** sonnet · **Confidence:** 0.65 that people read it as a guarantee (a judgment about readers, not seen); under 0.7, so nothing is built until Abhishek decides.
-**Fix step:** S-23 (PR #20), with B-9. Abhishek chose to drop the clause on 2026-11-06. The footer reads "Stored in your {store}", and "Held for this one command only" with Remember unticked. A test fails on "never shown to your agent" anywhere under `src/` or in a card page. `README.md` line 10 still has the phrase in the alt text of the old screenshot docs/saved.png (removed in S-16); S-16 replaces that screenshot.
+**Fix step:** S-23 (PR #20), with B-9. Abhishek chose to drop the clause on 2026-11-06. The footer reads "Stored in your {store}", and "Held for this one command only" with Remember unticked. A test fails on "never shown to your agent" anywhere under `src/` or in a card page. `README.md` line 10 still has the phrase in the alt text of the old screenshot docs/saved.png (removed in S-16); S-16 replaces that screenshot. **Done in S-16 (PR #22):** the screenshot is replaced and `README.md` no longer holds the phrase; a test checks that.
 
 ### B-11 — An agent can turn masking off with `run --no-redact` and read any saved key
 
