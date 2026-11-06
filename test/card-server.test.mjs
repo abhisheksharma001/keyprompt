@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readdirSync, readFileSync } from 'node:fs'
 import { request as httpRequest } from 'node:http'
 import { test } from 'node:test'
 import { MOODS } from '../src/buddy.mjs'
@@ -92,8 +93,23 @@ test('an ordinary card has no demo banner and names its store', async () => {
   const page = (await send(url)).text
   assert.ok(!page.includes('Demo — nothing you type is saved.'))
   assert.ok(page.includes('<main class="card" aria-live="polite">'))
-  assert.ok(page.includes('Stored in your macOS Keychain · never shown to your agent'))
+  assert.ok(page.includes('<span id="footer-text">Stored in your macOS Keychain</span>'))
+  // The script finds the footer by this id when the card ends without a save (B-9).
+  assert.ok(page.includes('<footer id="footer">'))
   await send(`${url}/cancel`, { method: 'POST', body: {} })
+})
+
+test('no card text says the agent never sees a key (B-10)', async () => {
+  const claim = 'never shown to your agent'
+  for (const file of readdirSync(new URL('../src/', import.meta.url), { recursive: true }).filter((f) => f.endsWith('.mjs'))) {
+    assert.ok(!readFileSync(new URL(`../src/${file}`, import.meta.url), 'utf8').includes(claim), file)
+  }
+  for (const overrides of [{}, { demo: true, storeLabel: 'nowhere (demo)', allowSessionOnly: false }]) {
+    const { urlReady } = startCard(overrides)
+    const url = await urlReady
+    assert.ok(!(await send(url)).text.includes(claim))
+    await send(`${url}/cancel`, { method: 'POST', body: {} })
+  }
 })
 
 test('a demo card says it is a demo and never claims a save or a store', async () => {

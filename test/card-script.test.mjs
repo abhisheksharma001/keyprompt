@@ -65,12 +65,15 @@ function element(attrs = {}) {
  * `answers` hands out the fake server's replies to each POST, in order; a
  * reply is a promise the test settles when it likes.
  */
-function openCard({ names = ['A', 'B'], demo = false, run = false, expiresIn = 65_000 } = {}) {
+function openCard({ names = ['A', 'B'], demo = false, run = false, withRemember = false, expiresIn = 65_000 } = {}) {
   const time = fakeTime(1_000_000)
   const byId = {}
-  for (const id of ['form', 'save', 'cancel', 'later', 'error', 'receipt', 'form-view', 'done-view']) byId[id] = element()
+  for (const id of ['form', 'save', 'cancel', 'later', 'error', 'receipt', 'form-view', 'done-view', 'footer', 'footer-text']) byId[id] = element()
   // The real page starts with these hidden.
   byId.receipt.hidden = true
+  byId['footer-text'].textContent = demo ? 'Demo · nothing is stored' : 'Stored in your macOS Keychain'
+  // The "Remember on this computer" box, ticked as on the real page.
+  if (withRemember) byId.remember = Object.assign(element(), { checked: true })
   byId.caption = element({ 'data-store': 'macOS Keychain' })
   byId.clock = element({ 'data-expires': String(time.now() + expiresIn) })
   if (run) byId.masking = Object.assign(element(), { hidden: true })
@@ -124,6 +127,12 @@ function openCard({ names = ['A', 'B'], demo = false, run = false, expiresIn = 6
     clock: () => byId.clock.textContent,
     press: async (id) => {
       for (const fn of byId[id].listeners.click ?? []) fn({})
+      await flush()
+    },
+    footer: () => ({ shown: !byId.footer.hidden, text: byId['footer-text'].textContent }),
+    tick: async (checked) => {
+      byId.remember.checked = checked
+      for (const fn of byId.remember.listeners.change ?? []) fn({})
       await flush()
     },
     submit: async () => {
@@ -280,4 +289,76 @@ test('an ended card shows one caption that claims nothing about how it ended: af
     assert.equal(card.byId.caption.textContent, sentence, how)
     assert.equal(card.byId['form-view'].hidden, true, how)
   }
+})
+
+test('a card that ended without a save drops the footer note, so it names no store the key never reached (B-9)', async () => {
+  const endings = {
+    cancelled: async (card) => {
+      await card.press('cancel')
+      await card.reply(card.posts[0], 200, {})
+    },
+    later: async (card) => {
+      await card.press('later')
+      await card.reply(card.posts[0], 200, { later: true })
+    },
+    'timed out': async (card) => card.time.advance(65_000),
+    'closed (410)': async (card) => {
+      await card.press('cancel')
+      await card.reply(card.posts[0], 410, { error: 'This card is no longer active. Close this tab.', final: true })
+    },
+    'closed (nobody answers)': async (card) => {
+      await card.press('cancel')
+      await card.fail(card.posts[0])
+    },
+    'final error': async (card) => {
+      card.rows[0].box.value = 'sk-secret-a'
+      await card.submit()
+      await card.reply(card.posts[0], 422, { error: 'Could not save. Try again.', final: true })
+    },
+  }
+  for (const [how, end] of Object.entries(endings)) {
+    const card = openCard()
+    assert.deepEqual(card.footer(), { shown: true, text: 'Stored in your macOS Keychain' }, how)
+    await end(card)
+    await card.time.advance(0)
+    assert.ok(card.title() !== '', how)
+    assert.equal(card.footer().shown, false, how)
+  }
+})
+
+test('a card that saved keeps its footer note: "Stored in" after a Save, "Held for" after a one-run Save, the demo line after a demo', async () => {
+  const saved = openCard()
+  saved.rows[0].box.value = 'sk-secret-a'
+  await saved.submit()
+  await saved.reply(saved.posts[0], 200, { remembered: true, receipt: [{ name: 'A', outcome: 'saved' }] })
+  await saved.time.advance(700)
+  assert.equal(saved.title(), 'Saved')
+  assert.deepEqual(saved.footer(), { shown: true, text: 'Stored in your macOS Keychain' })
+
+  const ready = openCard({ withRemember: true })
+  await ready.tick(false)
+  ready.rows[0].box.value = 'sk-secret-a'
+  await ready.submit()
+  await ready.reply(ready.posts[0], 200, { remembered: false, receipt: [{ name: 'A', outcome: 'handed' }] })
+  await ready.time.advance(700)
+  assert.equal(ready.title(), 'Ready')
+  assert.deepEqual(ready.footer(), { shown: true, text: 'Held for this one command only' })
+
+  const demo = openCard({ demo: true })
+  demo.rows[0].box.value = 'anything'
+  await demo.submit()
+  await demo.reply(demo.posts[0], 200, {})
+  await demo.time.advance(700)
+  assert.equal(demo.title(), 'Demo finished')
+  assert.deepEqual(demo.footer(), { shown: true, text: 'Demo · nothing is stored' })
+})
+
+test('the Remember box swaps the footer between the store line and the one-run line, and neither claims anything about the agent', async () => {
+  const card = openCard({ withRemember: true })
+  assert.equal(card.footer().text, 'Stored in your macOS Keychain')
+  await card.tick(false)
+  assert.equal(card.footer().text, 'Held for this one command only')
+  await card.tick(true)
+  assert.equal(card.footer().text, 'Stored in your macOS Keychain')
+  assert.doesNotMatch(cardScript(), /never (shown|seen?)\b/i)
 })

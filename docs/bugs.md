@@ -101,21 +101,21 @@ The deadline is the real-world path. Someone presses Save near the end of the 5 
 
 **Seen:** `footerText` in `src/card-page.mjs` is "Stored in your {store} · never shown to your agent" on every real card. Only a demo, or the "Remember on this computer" box being unticked (`src/card-script.mjs`), changes it. When a card ends without a save (Cancelled, Later, Timed out, Closed), `finish()` leaves the footer alone, so under the caption "Cancelled. Nothing was saved." the footer still reads "Stored in your macOS Keychain". "Stored in" names where a Save would go; under an ended card that saved nothing it reads as a fact about that card. Found 2026-11-06 in S-21, looking at the `closed` card in Chrome (light and dark); S-14's timed-out card has the same footer and it was not noticed there. Not fixed in S-21: a bug is not fixed inside another step's PR.
 **Requirement:** invariant 9 in `.claude/CLAUDE.md`. The PRD does not cover the footer's wording after a card ends.
-**Needs first:** Abhishek's choice of wording for the footer once the card ended without a save (for example hide it, or "Nothing was stored").
+**Needs first:** Abhishek's choice of wording for the footer once the card ended without a save (for example hide it, or "Nothing was stored"). **Answered 2026-11-06:** hide it.
 **Blocks:** nothing.
 **Files:** `src/card-script.mjs` (`finish`), `src/card-page.mjs` if the wording moves, `docs/prd/card-v2.md`, `test/card-script.test.mjs`.
 **Research:** none · **Model:** sonnet · **Confidence:** 0.8 that the words mislead (seen in the frames); the wording is Abhishek's call.
-**Fix step:** not queued yet. Proposed: `finish` changes the footer for the endings that saved nothing, with a test per ending.
+**Fix step:** S-23 (PR #20). Abhishek chose on 2026-11-06 ("Say only what is true"): after an ending that saved nothing (Cancelled, Later, timed out, no longer active, a final error) the card shows no footer at all. The first build hid only the note, and Chrome showed a hairline and an empty strip left behind, so the whole footer goes. A Save, a one-run Save and a demo's pretend save keep it. One test per ending in `test/card-script.test.mjs`. "Stored in your {store}" still shows before anything is saved, where it names the place a Save goes.
 
 ### B-10 — The card footer says "never shown to your agent"
 
 **Seen:** every real card ends with "Stored in your {store} · never shown to your agent" (`src/card-page.mjs:83`), and a card with Remember unticked with "Held for this one command only · never shown to your agent" (`src/card-script.mjs:114`). `test/card-server.test.mjs:95` pins the first. keyprompt itself does not show the key to the agent, but a person reads this as "my agent cannot see it", and `SECURITY.md` says a command the agent writes can print a transformed copy, send the key, or (B-11) turn masking off. It is the same overclaim as B-1, on the card instead of the README. Found 2026-11-06 in S-15 while sweeping the repo for B-1's wording. Not fixed in S-15: its files are `README.md`, `package.json` and `SECURITY.md`, and a card change needs the PRD, the page and its tests.
 **Requirement:** invariant 9 in `.claude/CLAUDE.md` ("Never 'your agent can never see it'"). A grep of `docs/prd/` for the phrase found none, so the PRD's footer text does not quote it.
-**Needs first:** Abhishek's choice of wording. B-9 changes the same footer line, so ask both together and fix them in one step.
+**Needs first:** Abhishek's choice of wording. B-9 changes the same footer line, so ask both together and fix them in one step. **Answered 2026-11-06:** drop the clause.
 **Blocks:** nothing.
 **Files:** `src/card-page.mjs`, `src/card-script.mjs`, `test/card-server.test.mjs`, and `test/card-script.test.mjs` if the Remember-unticked footer is pinned there.
 **Research:** none · **Model:** sonnet · **Confidence:** 0.65 that people read it as a guarantee (a judgment about readers, not seen); under 0.7, so nothing is built until Abhishek decides.
-**Fix step:** not queued yet. Proposed: say what keyprompt does ("keyprompt does not show the key to your agent") or drop the clause, together with B-9's wording.
+**Fix step:** S-23 (PR #20), with B-9. Abhishek chose to drop the clause on 2026-11-06. The footer reads "Stored in your {store}", and "Held for this one command only" with Remember unticked. A test fails on "never shown to your agent" anywhere under `src/` or in a card page. `README.md` line 10 still has the phrase in the alt text of the old screenshot `docs/saved.png`; S-16 replaces that screenshot.
 
 ### B-11 — An agent can turn masking off with `run --no-redact` and read any saved key
 
