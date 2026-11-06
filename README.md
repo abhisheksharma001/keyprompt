@@ -10,7 +10,7 @@ keyprompt demo             # 3. see the card (nothing is saved)
 
 Needs Node.js 18.17 or later. On Linux, also install `secret-tool`: see [Install](#install).
 
-<!-- The pictures use full links pinned to one commit, so they also show on the npm page, which does not resolve paths inside the repo. After changing a picture, point both links at the commit that has the new one. -->
+<!-- The pictures use full links pinned to one commit, so they also show on the npm page, which does not reliably resolve paths inside the repo. After changing a picture, point both links at the commit that has the new one. -->
 <p align="center">
   <img src="https://raw.githubusercontent.com/abhisheksharma001/keyprompt/e24f5eab0411ceb7c204ace26130acf3ba99f3c4/docs/demo-card.png" width="380" align="middle" alt="The keyprompt demo card: a penguin beside a vault, three boxes for sample secrets, and the buttons Later, Cancel and Save all 3. A banner says nothing you type is saved.">
   &nbsp;

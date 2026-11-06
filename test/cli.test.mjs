@@ -76,7 +76,7 @@ test('the README shows pictures that exist and documents demo, and the CHANGELOG
   const readme = readFileSync(new URL('README.md', root), 'utf8')
   const pictures = [...readme.matchAll(/<img [^>]*src="([^"]+)"/g)].map((m) => m[1])
   assert.ok(pictures.length >= 2)
-  // The npm page does not resolve paths inside the repo, so each picture is a full link pinned to a commit (S-17).
+  // The npm page does not reliably resolve paths inside the repo, so each picture is a full link pinned to a commit (S-17).
   const pinned = /^https:\/\/raw\.githubusercontent\.com\/abhisheksharma001\/keyprompt\/[0-9a-f]{40}\/(docs\/[\w.-]+)$/
   for (const src of pictures) {
     const m = pinned.exec(src)
