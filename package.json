@@ -1,6 +1,6 @@
 {
   "name": "keyprompt",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Give API keys to AI coding agents without pasting them into the chat. A card opens in your browser, the key goes into your OS keychain, and keyprompt has no command that prints it back.",
   "type": "module",
   "bin": {
