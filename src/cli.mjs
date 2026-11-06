@@ -393,7 +393,7 @@ export async function main(argv) {
     const store = getStore()
     const [command, ...commandArgs] = args.command
     const secrets = await collectSecrets(store, fields, async ({ fields: missing, allowSessionOnly }) => {
-      // allowEmpty: when every missing name is optional, Save with every box empty starts the command without them (B-4).
+      // allowEmpty: when every missing name is optional, Save with every box empty carries on to the command without them (B-4).
       const options = { reason: args.reason, by: args.by, replacing: false, allowSessionOnly, masked: args.redact, allowEmpty: true }
       const asked = await askWithCard(store, missing, options).catch((error) => {
         if (error instanceof KeypromptError && error.exitCode === EXIT.DEFERRED) throw laterForRun(missing, command)

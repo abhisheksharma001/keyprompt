@@ -205,7 +205,8 @@ export function cardScript() {
   // The footer's note says where a Save puts the key. After an ending that saved
   // nothing (Cancel, Later, timed out, closed, a final error, every box left
   // empty) it would name a place the key never reached, so the whole footer
-  // goes (B-9); its clock is already gone. A demo's pretend save keeps its note: it says "nothing is stored".
+  // goes (B-9); its clock is already gone. A demo's pretend save keeps its
+  // note: it says "nothing is stored".
   const NOTE_ENDINGS = ['locked', 'one-run']
 
   // The card has ended: the title and the buddy say how. Its caption already
