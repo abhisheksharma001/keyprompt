@@ -114,7 +114,7 @@ const MIN_PASTED_LENGTH = 8
  * The names whose value is spelled out inside one of the command's own words.
  * A command written that way has put the value in the agent's transcript and
  * on the process list, which is what `run` is for avoiding (S-19). Only the
- * exact value is looked for, as in masking before S-18.
+ * exact value is looked for; an encoded copy of it is not.
  * @param {Map<string, string>} secrets
  * @param {string[]} command The program and its arguments, as given after `--`.
  * @returns {string[]} Names only, in the order `run` was given them.
@@ -138,7 +138,7 @@ export function secretsInCommand(secrets, command) {
 export function valueInCommandError(names) {
   const one = names.length === 1
   const what = one ? `The value of ${names[0]} appears` : `The values of ${joinNames(names)} appear`
-  const how = one ? 'the command gets it in its environment as $' + names[0] : 'the command gets each one in its environment under its own name'
+  const how = one ? `the command gets it in its environment as $${names[0]}` : 'the command gets each one in its environment under its own name'
   return new KeypromptError(`${what} in the command itself, so keyprompt did not start it. Leave ${one ? 'it' : 'them'} out: ${how} (see keyprompt --help).`, {
     exitCode: EXIT.USAGE,
   })
