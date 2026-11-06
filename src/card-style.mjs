@@ -67,7 +67,11 @@ export function cardStyle() {
   .hint { margin: 4px 0 0 24px; }
   .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
   .error { color: var(--err); font-size: 13px; margin: 10px 0 0; min-height: 1em; }
-  footer { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); display: flex; gap: 6px; align-items: center; }
+  footer { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; }
+  .clock { margin-left: auto; white-space: nowrap; font-variant-numeric: tabular-nums; }
   .done p { margin: 0; color: var(--muted); font-size: 14px; }
+  .done p + p { margin-top: 10px; }
+  .receipt { list-style: none; margin: 0 0 12px; padding: 0; display: grid; gap: 8px; }
+  .receipt li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: 14px; }
   [hidden] { display: none !important; }`
 }

@@ -102,7 +102,7 @@ function requesterLabel(/** @type {string | undefined} */ by) {
  * a failed save shows on the card. `remember: false` hands them to this run only.
  * @param {import('./store/index.mjs').SecretStore} store
  * @param {import('./card-server.mjs').CardField[]} fields
- * @param {{ reason?: string, by?: string, replacing: boolean, allowSessionOnly: boolean }} options
+ * @param {{ reason?: string, by?: string, replacing: boolean, allowSessionOnly: boolean, forRun?: boolean }} options
  */
 async function askWithCard(store, fields, options) {
   process.stderr.write(
@@ -115,6 +115,7 @@ async function askWithCard(store, fields, options) {
     storeLabel: store.label,
     replacing: options.replacing,
     allowSessionOnly: options.allowSessionOnly,
+    forRun: options.forRun,
     open: openInBrowser,
     onSubmit: async (values, remember) => {
       if (!remember) {
@@ -228,7 +229,7 @@ export async function main(argv) {
     const store = getStore()
     const [command, ...commandArgs] = args.command
     const secrets = await collectSecrets(store, fields, async ({ fields: missing, allowSessionOnly }) => {
-      const asked = await askWithCard(store, missing, { reason: args.reason, by: args.by, replacing: false, allowSessionOnly }).catch(
+      const asked = await askWithCard(store, missing, { reason: args.reason, by: args.by, replacing: false, allowSessionOnly, forRun: true }).catch(
         (error) => {
           if (error instanceof KeypromptError && error.exitCode === EXIT.DEFERRED) throw laterForRun(missing, command)
           throw error
