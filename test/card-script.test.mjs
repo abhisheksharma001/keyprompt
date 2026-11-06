@@ -251,6 +251,41 @@ test('a run card shows the masking sentence after a save; Later shows "Not saved
   assert.equal(later.byId.masking.hidden, true)
 })
 
+test('a run card saved with every box empty: no key goes into the vault, no wait for one, and the card says nothing was saved (B-4, S-28)', async () => {
+  for (const ticked of [true, false]) {
+    const card = openCard({ run: true, withRemember: true })
+    if (!ticked) await card.tick(false)
+    card.rows[0].box.value = '  '
+    await card.submit()
+    assert.deepEqual(card.posts[0].body, { values: { A: '  ', B: '' }, remember: ticked })
+    assert.notEqual(card.mood(), 'stashing')
+    await card.reply(card.posts[0], 200, { remembered: false, receipt: [{ name: 'A', outcome: 'empty' }, { name: 'B', outcome: 'empty' }] })
+    // Ended at once: the page waits only for a key's trip into the vault, and there was no key.
+    assert.equal(card.title(), 'Left empty')
+    assert.equal(card.mood(), 'skipped')
+    assert.equal(card.byId.caption.textContent, CAPTIONS.skipped)
+    assert.deepEqual(
+      card.byId.receipt.children.map((li) => li.children.map((part) => part.textContent)),
+      [
+        ['A', '— Left empty'],
+        ['B', '— Left empty'],
+      ],
+    )
+    assert.equal(card.byId.masking.hidden, true)
+    assert.equal(card.footer().shown, false)
+    assert.equal(card.byId['form-view'].hidden, true)
+  }
+
+  // A card that does not allow it (set) answers 400: the buddy says so, and the form stays.
+  const set = openCard()
+  await set.submit()
+  assert.notEqual(set.mood(), 'stashing')
+  await set.reply(set.posts[0], 400, { error: 'Paste at least one value.' })
+  assert.equal(set.mood(), 'oops')
+  assert.equal(set.byId.caption.textContent, 'Paste at least one value.')
+  assert.equal(set.byId['form-view'].hidden, false)
+})
+
 test('a demo card shows no receipt, even after Later', async () => {
   const card = openCard({ demo: true })
   await card.press('later')

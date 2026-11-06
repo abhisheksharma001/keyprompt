@@ -355,7 +355,7 @@ test('a required box left empty gives 400 naming it; empty optional and saved bo
   assert.deepEqual((await result).values, new Map([['A', 'a']]))
 })
 
-test('every box empty gives 400 asking for at least one value', async () => {
+test('without allowEmpty (set), every box empty gives 400 asking for at least one value', async () => {
   const { urlReady, stored } = startCard({
     fields: [{ name: 'A', optional: true }, { name: 'B', saved: true }],
   })
@@ -367,6 +367,41 @@ test('every box empty gives 400 asking for at least one value', async () => {
   }
   assert.deepEqual(stored, [])
   await send(`${url}/cancel`, { method: 'POST', body: {} })
+})
+
+test('with allowEmpty (run), every box empty and none required ends the card with no values, and the store is never called (B-4, S-28)', async () => {
+  const { urlReady, result, stored } = startCard({
+    fields: [{ name: 'A', optional: true }, { name: 'B', optional: true, multiline: true }],
+    allowEmpty: true,
+  })
+  const url = await urlReady
+  const res = await send(`${url}/submit`, { method: 'POST', body: { values: { A: '', B: ' \n ' }, remember: true } })
+  assert.equal(res.status, 200)
+  assert.deepEqual(JSON.parse(res.text), {
+    remembered: false,
+    receipt: [
+      { name: 'A', outcome: 'empty' },
+      { name: 'B', outcome: 'empty' },
+    ],
+  })
+  assert.deepEqual(await result, { remembered: false, values: new Map() })
+  assert.deepEqual(stored, [])
+  // One successful submit, then the card is spent.
+  assert.equal((await send(`${url}/submit`, { method: 'POST', body: { values: { A: 'a' } } })).status, 410)
+})
+
+test('allowEmpty never lets a required box stay empty, and a filled box still goes to the store', async () => {
+  const { urlReady, result, stored } = startCard({ fields: [{ name: 'A' }, { name: 'B', optional: true }], allowEmpty: true })
+  const url = await urlReady
+  for (const values of [{}, { A: ' ', B: '' }]) {
+    const res = await send(`${url}/submit`, { method: 'POST', body: { values } })
+    assert.equal(res.status, 400)
+    assert.deepEqual(JSON.parse(res.text), { error: 'Fill in A.', field: 'A' })
+  }
+  assert.deepEqual(stored, [])
+  assert.equal((await send(`${url}/submit`, { method: 'POST', body: { values: { A: 'a', B: '' }, remember: true } })).status, 200)
+  assert.deepEqual(stored, [{ values: { A: 'a' }, remember: true }])
+  assert.deepEqual(await result, { remembered: true, values: new Map([['A', 'a']]) })
 })
 
 test('several saved fields: the card says Replace secrets and that empty boxes keep their values', async () => {

@@ -203,9 +203,10 @@ export function cardScript() {
   }
 
   // The footer's note says where a Save puts the key. After an ending that saved
-  // nothing (Cancel, Later, timed out, closed, a final error) it would name a
-  // place the key never reached, so the whole footer goes (B-9); its clock is
-  // already gone. A demo's pretend save keeps its note: it says "nothing is stored".
+  // nothing (Cancel, Later, timed out, closed, a final error, every box left
+  // empty) it would name a place the key never reached, so the whole footer
+  // goes (B-9); its clock is already gone. A demo's pretend save keeps its
+  // note: it says "nothing is stored".
   const NOTE_ENDINGS = ['locked', 'one-run']
 
   // The card has ended: the title and the buddy say how. Its caption already
@@ -259,19 +260,28 @@ export function cardScript() {
       box.removeAttribute('aria-invalid')
       values[row.dataset.name] = box.value
     }
+    // Every box empty: the server trims the same way, and accepts it only on a
+    // run card whose boxes are all optional (B-4). No key goes to the vault then,
+    // so the buddy does not carry one there.
+    const blank = Object.keys(values).every((name) => values[name].trim() === '')
     lock(true)
     still = true
-    setMood('stashing')
+    if (!blank) setMood('stashing')
     const started = Date.now()
     try {
       const { ok, status, data } = await post('/submit', { values, remember: remember ? remember.checked : true })
-      if (ok) await settle(started)
+      if (ok && !blank) await settle(started)
       if (ok && demo) {
         finish('Demo finished', 'locked')
         return
       }
       if (ok) {
         showReceipt(data.receipt || [])
+        // Nothing from this card goes to the command, so the masking sentence has nothing to speak of.
+        if (blank) {
+          finish('Left empty', 'skipped')
+          return
+        }
         // Only a run card's page has this note.
         const masking = document.getElementById('masking')
         if (masking) masking.hidden = false

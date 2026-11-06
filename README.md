@@ -70,7 +70,7 @@ A **FIELD** is a name plus optional hints after a colon, for example `keyprompt 
 |---|---|
 | `:visible` | Shows what you type. For an ID that isn't secret. |
 | `:multiline` | A paste box that keeps line breaks (a PEM key, a JSON key file). |
-| `:optional` | May stay empty while at least one box on the card is filled in. A card can't be saved with every box empty. |
+| `:optional` | May stay empty. On `run`, when every box on the card is optional, Save works with all of them empty: nothing is saved, and keyprompt gives the command no value for them. `set` needs at least one value. |
 
 The agent picks the hints, and they only change how a box looks on the card: every value is still saved the same way and masked in `run`'s output. A `:visible` box shows what you type, so only put an ID there.
 

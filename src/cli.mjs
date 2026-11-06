@@ -40,7 +40,9 @@ Names look like environment variables: OPENAI_API_KEY, STRIPE_SECRET_KEY.
 A FIELD is a NAME, then any hints, each after a colon:
   :visible     Show what is typed, for an ID that is not secret.
   :multiline   A paste box that keeps line breaks (a PEM key, a JSON key file).
-  :optional    May stay empty while at least one box on the card is filled in.
+  :optional    May stay empty. With run, every box may stay empty when all are
+               optional; the command then gets no value for them from keyprompt.
+               set still needs at least one value.
 Hints only change how a box looks on the card. Every value is still saved the
 same way and masked in COMMAND's output. At most 12 FIELDs per card.
 Example: keyprompt set TWILIO_ACCOUNT_SID:visible TWILIO_AUTH_TOKEN
@@ -157,7 +159,7 @@ function requesterLabel(/** @type {string | undefined} */ by) {
  * a failed save shows on the card. `remember: false` hands them to this run only.
  * @param {import('./store/index.mjs').SecretStore} store
  * @param {import('./card-server.mjs').CardField[]} fields
- * @param {{ reason?: string, by?: string, replacing: boolean, allowSessionOnly: boolean, masked?: boolean }} options
+ * @param {{ reason?: string, by?: string, replacing: boolean, allowSessionOnly: boolean, masked?: boolean, allowEmpty?: boolean }} options
  */
 async function askWithCard(store, fields, options) {
   process.stderr.write(
@@ -171,6 +173,7 @@ async function askWithCard(store, fields, options) {
     replacing: options.replacing,
     allowSessionOnly: options.allowSessionOnly,
     masked: options.masked,
+    allowEmpty: options.allowEmpty,
     open: openInBrowser,
     onSubmit: async (values, remember) => {
       if (!remember) {
@@ -304,6 +307,24 @@ export function laterForRun(fields, command) {
 }
 
 /**
+ * What `run` tells the agent once its card was saved: the names that came from
+ * it and where they went, or, when every box was left empty, that the command
+ * gets no value for them from keyprompt (B-4). Names only, never values. It
+ * does not say "not set": the command still gets the agent's own environment.
+ * @param {import('./card-server.mjs').CardField[]} fields The names on the card.
+ * @param {{ remembered: boolean, values: Map<string, string> }} answer
+ * @param {string} storeLabel
+ */
+export function runCardLine(fields, answer, storeLabel) {
+  const given = fields.filter((f) => answer.values.has(f.name)).map((f) => f.name)
+  if (given.length === 0) {
+    const one = fields.length === 1
+    return `keyprompt: ${joinNames(fields.map((f) => f.name))} ${one ? 'was' : 'were'} left empty on the card, so keyprompt gives the command no value for ${one ? 'it' : 'them'}.\n`
+  }
+  return `keyprompt: ${joinNames(given)} ${answer.remembered ? `saved in the ${storeLabel}` : 'received for this run only'}.\n`
+}
+
+/**
  * The card `keyprompt demo` opens: sample boxes and no store. Its submit keeps
  * nothing, and the page says it is a demo. The `demo` command never calls
  * `getStore()` or the catalog.
@@ -372,15 +393,13 @@ export async function main(argv) {
     const store = getStore()
     const [command, ...commandArgs] = args.command
     const secrets = await collectSecrets(store, fields, async ({ fields: missing, allowSessionOnly }) => {
-      const asked = await askWithCard(store, missing, { reason: args.reason, by: args.by, replacing: false, allowSessionOnly, masked: args.redact }).catch(
-        (error) => {
-          if (error instanceof KeypromptError && error.exitCode === EXIT.DEFERRED) throw laterForRun(missing, command)
-          throw error
-        },
-      )
-      // The card needs at least one value, so this names at least one.
-      const given = missing.filter((f) => asked.values.has(f.name)).map((f) => f.name)
-      process.stderr.write(`keyprompt: ${joinNames(given)} ${asked.remembered ? `saved in the ${store.label}` : 'received for this run only'}.\n`)
+      // allowEmpty: when every missing name is optional, Save with every box empty carries on to the command without them (B-4).
+      const options = { reason: args.reason, by: args.by, replacing: false, allowSessionOnly, masked: args.redact, allowEmpty: true }
+      const asked = await askWithCard(store, missing, options).catch((error) => {
+        if (error instanceof KeypromptError && error.exitCode === EXIT.DEFERRED) throw laterForRun(missing, command)
+        throw error
+      })
+      process.stderr.write(runCardLine(missing, asked, store.label))
       return asked
     })
     // After the values are known and before the command starts, so a refused run starts nothing.

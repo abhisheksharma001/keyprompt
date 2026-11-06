@@ -30,7 +30,7 @@ Abhishek first: a developer on macOS doing agency and client automation work, ru
 - **A2** WHEN the agent runs `keyprompt run A,B -- <command>` and neither A nor B is saved THEN exactly one card SHALL open, asking for both.
 - **A3** WHEN a PEM key is pasted into a `:multiline` box on macOS and saved THEN `keyprompt run` SHALL give the program exactly those bytes, line breaks included.
 - **A4** WHEN the person clicks **Later** THEN keyprompt SHALL exit with code 6, save nothing, and (for `run`) not start the command.
-- **A5** WHEN the card ends in any outcome (saved, used for one run, later, cancelled, timed out, failed, no longer active) THEN the buddy SHALL show that outcome's own pose and its caption from the table below, word for word.
+- **A5** WHEN the card ends in any outcome (saved, used for one run, left empty, later, cancelled, timed out, failed, no longer active) THEN the buddy SHALL show that outcome's own pose and its caption from the table below, word for word.
 - **A6** WHEN the agent marked a box `:visible` THEN that value SHALL still be masked in `keyprompt run` output.
 - **A7** WHEN the computer is set to reduce motion THEN the buddy SHALL not animate; poses switch instantly.
 - **A8** WHEN someone runs `keyprompt demo` THEN the card SHALL open with sample boxes, say it is a demo, and write nothing to the keychain or the catalog.
@@ -99,7 +99,8 @@ HINT  = visible | multiline | optional
 - A hint only shapes the card. It never changes masking (decision D-1).
 - `run` asks only for names that are not saved yet; hints on saved names are ignored.
 - `set` on a name that is already saved shows "Saved — leave empty to keep"; an empty box keeps the old value.
-- An empty `optional` box is not saved, and the variable is simply absent from the command's environment.
+- An empty `optional` box is not saved, and keyprompt gives the command no value for it. The command still gets the agent's own environment, so a variable already set there stays set. (Until 2026-11-07 this line said the variable is "simply absent from the command's environment", which is not true in that case.)
+- On `run`, Save works with every box empty when every box on the card is optional: nothing is saved, and `run` carries on to the command (D-7, B-4). `set` still needs at least one value.
 - `--no-redact` hands COMMAND keyprompt's own output untouched, so it works only when keyprompt's stdout and stderr are both a terminal. Otherwise `run` stops with exit 2 before reading a key or opening a card (decision D-6, bug B-11).
 
 ### Exit codes
@@ -119,7 +120,7 @@ HINT  = visible | multiline | optional
 ### Card protocol (internal, between the page and `src/card-server.mjs`)
 
 - `GET /card/<token>` serves the page.
-- `POST /card/<token>/submit` with `{ "values": { "NAME": "…" }, "remember": true }` returns `200 { remembered }`, or `400 { error, field? }`, `409`, `410`, `422 { error }`.
+- `POST /card/<token>/submit` with `{ "values": { "NAME": "…" }, "remember": true }` returns `200 { remembered }`, or `400 { error, field? }`, `409`, `410`, `422 { error }`. On a `run` card whose boxes are all optional, a submit with every box empty also returns 200, with `remembered: false`, and nothing is stored or held.
 - `POST /card/<token>/cancel` → exit 4. `POST /card/<token>/later` → exit 6.
 - All of today's guards stay: loopback only, one-time token, Host and Origin checks, JSON only, size cap (raised to 1 MiB for multi-line values), one successful submit, a deadline.
 
@@ -139,6 +140,7 @@ The creature is a penguin who keeps keys in an ice vault. It has no name, by dec
 | Save pressed, waiting | `stashing` | Carries the key towards the vault | "Putting it away…" |
 | Saved | `locked` | Vault door shut, dial spins | "Locked in your {store}." |
 | Used for one run only | `one-run` | Hands over an envelope, which disappears | "Handed to this one command. Not saved." |
+| Every box left empty (`run` only) | `skipped` | Stands by the shut vault, holding nothing | "Nothing was saved. The command gets no value from this card." |
 | Later | `later` | Sticks a "later" note on the vault | "Okay, later. Nothing was saved." |
 | Cancelled | `bye` | Waves | "Cancelled. Nothing was saved." |
 | Timed out | `asleep` | Falls asleep, zzz | "This card timed out. Nothing was saved." |
@@ -170,7 +172,7 @@ One line per value: "Saved in your macOS Keychain" / "Handed to this one command
 Where it shows (S-14):
 - After a Save, one line per box, from the server's answer: names and outcomes only, never a value. After Later, every box reads "Not saved (Later)".
 - Not after Cancel or a timeout (their caption already says nothing was saved), and not in a demo (a demo keeps nothing, so its answer has no receipt).
-- The masking sentence shows only on a `run` card after a Save, and only when the output is masked: not with `--no-redact`, and never on a `set` card, whose page does not contain it. With `--no-redact` the card says nothing about masking.
+- The masking sentence shows only on a `run` card after a Save that gave at least one value, and only when the output is masked: not with `--no-redact`, and never on a `set` card, whose page does not contain it. With `--no-redact` the card says nothing about masking.
 - "Kept the saved value" appears only on `set`, for a box that is already saved and was left empty.
 
 ### The footer (S-23, B-9 and B-10)
@@ -182,7 +184,7 @@ The footer's note says where a Save puts the key, and nothing about what the age
 | Ordinary, "Remember on this computer" ticked or not offered | "Stored in your {store}" |
 | "Remember on this computer" unticked | "Held for this one command only" |
 | Demo | "Demo · nothing is stored" |
-| Ended with nothing saved (Cancelled, Later, timed out, no longer active, a final error) | no footer at all (its line goes too): the note would name a store the key never reached |
+| Ended with nothing saved (Cancelled, Later, timed out, no longer active, a final error, every box left empty) | no footer at all (its line goes too): the note would name a store the key never reached |
 
 After a Save or a one-run Save the note stays as it was. "Stored in your {store}" is also on the card before anything is saved, where it names the place a Save goes.
 
@@ -269,3 +271,4 @@ Honest view, from reports 8–10 plus the code:
 - **D-4** (2026-11-05, Abhishek: "ok"): this release = multi-field card, Later, buddy with truthful poses, headline fix. **Approved 2026-11-05 (Abhishek: "yes"):** `keyprompt demo` (S-11), the card countdown (part of S-14), and the two lite wins from the teardowns: masking encoded copies (S-18) and refusing a key pasted into a command (S-19).
 - **D-5** (2026-11-05): no animation libraries (invariants 5 and 7).
 - **D-6** (2026-11-06, Abhishek: "Terminal only"): `run --no-redact` works only when the output goes straight to a terminal; otherwise it stops with exit 2 (S-24, bug B-11). Chosen over a card that asks each time, removing the flag, and keeping it as it was. It stops an agent's shell tool from turning masking off by accident. It does not stop an agent on purpose: one whose commands run in a real terminal, or one that wraps keyprompt in `script`, still can (`SECURITY.md`).
+- **D-7** (2026-11-07, Abhishek: "Run without it"): on a `run` card whose boxes are all optional, Save with every box empty is allowed (S-28, bug B-4). Nothing is saved, the card ends with the `skipped` pose, the agent gets one line on stderr, and `run` carries on to the command. Before this, the only way off such a card was Cancel, which stopped the command, so an optional name the person did not have blocked every run that asked for it. Chosen over keeping the refusal and changing the docs. `set` still refuses an empty Save, because saving nothing is not a save.

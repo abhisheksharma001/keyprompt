@@ -49,7 +49,7 @@ Each item is a FIELD: a NAME, then optional hints after a colon. Separate fields
 |---|---|
 | `:visible` | Shows what is typed. For an ID that is not secret, like the Twilio account SID above. |
 | `:multiline` | A paste box that keeps line breaks. For a PEM private key or a JSON key file. |
-| `:optional` | May stay empty while at least one box on the card is filled in. A card can't be saved with every box empty, so never mark every name `:optional`. |
+| `:optional` | May stay empty. With `run`, the user may leave every optional box empty and press Save: nothing is saved, keyprompt gives the command no value for those names, and `run` carries on to the command, which must cope without them. `set` needs at least one value. |
 
 Hints only change how a box looks on the card. Every value is still saved the same way and masked in `run` output, whatever the hint; a hint never makes a value safe to print.
 

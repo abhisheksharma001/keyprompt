@@ -33,7 +33,7 @@ test('MOODS is the buddy table in the PRD, caption for caption', () => {
     id,
     caption: cell.startsWith('"') ? cell.slice(1, -1) : null,
   }))
-  assert.equal(rows.length, 11)
+  assert.equal(rows.length, 12)
   assert.deepEqual(MOODS, rows)
 })
 
@@ -97,7 +97,7 @@ test('a caption that names the store has a demo caption that does not', () => {
   assert.ok(CAPTION_VARIANTS.oneRun.listening)
 })
 
-test('motion: every mood but watching and closed moves, only transform and opacity, and only listening and asleep loop', () => {
+test('motion: every mood but watching, skipped and closed moves, only transform and opacity, and only listening and asleep loop', () => {
   const frames = keyframes()
   const runs = animations()
   const moved = [...new Set(runs.map((r) => r.mood))].sort()
@@ -141,7 +141,7 @@ test("the done screen waits only for the key's trip into the vault, which is und
   assert.ok(style.includes(`.key { animation: b-key-in ${STASH_MS}ms `))
   const script = cardScript()
   assert.ok(script.includes(`const STASH_MS = ${STASH_MS}`))
-  assert.ok(script.includes('if (ok) await settle(started)'))
+  assert.ok(script.includes('if (ok && !blank) await settle(started)'))
 })
 
 // The penguin has no name (decision R-4, 2026-11-06): "Pingu" is a toy character whose
