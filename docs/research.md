@@ -51,13 +51,20 @@ One entry per open question. A guess never goes into code: it goes here first. F
 **Find out:** Abhishek picks an original name and look.
 **Confidence:** 0.9 that "Pingu" cannot be used in a public repo. PINGU is a trademark of Joker, Inc. (owned by Mattel), US application 99410827 filed 2025-09-24, status "notice of allowance issued" (trademarkia.com/pingu-99410827, read 2026-11-05). Joker, Inc. opposed another applicant's mark in May 2026 (TTAB case 91307372, trademarkia.com, read 2026-11-05). Wikipedia: Pingu's IP is held by Joker, Inc./Mattel (en.wikipedia.org/wiki/Pingu, read 2026-11-05). A penguin as an animal is not anyone's property; the Pingu name and character design are. Not legal advice.
 **Review:** none.
-**Status:** decided 2026-11-05 — Abhishek chose **Pinguu** after the evidence below. Re-check before S-16 and S-17.
+**Status:** decided 2026-11-06: **no name**. On 2026-11-05 Abhishek chose "Pinguu" after the evidence below; the re-check before S-16 and S-17 (2026-11-06, last block of the Answer) led him to choose "Drop the name". Done in S-22.
 **Answer:** "Pinguu" is risky, not blocked. Evidence (search 2026-11-05, cached copies):
 - **Mattel opposes look-alikes.** Joker, Inc. (a Mattel subsidiary) filed a US opposition against the mark **PINU**, one letter off, describing Pingu as "a playful, curious, and occasionally mischievous little boy penguin" (USPTO TTAB 91303787, notice dated December 2025, ttabvue.uspto.gov, indexed 2026-05-26).
 - **Not every opposition wins.** Japan's patent office dismissed Joker, Inc.'s opposition to "pingu・pongu" on 2026-05-22: it was treated as one made-up term, and Joker had not proved current fame (marks-iplaw.jp, indexed 2026-08-02). That is a Japanese ruling on a compound word, so it says little about "Pinguu".
 - **"Pinguu" is already in use:** a crypto trading bot (pinguu.tech, github.com/ffischer42/Pinguu_App), a UK care-home staff-location product, and a UK company PINGUU STORE LTD (dissolved 2021).
 
 Judgment (not legal advice): low risk while keyprompt is small and free; the risk rises with popularity, and with a penguin that looks like Pingu. Guards are in decision D-2.
+
+**Re-check, 2026-11-06 (not legal advice).** Done before S-16 and S-17, as D-2 required:
+- PINGU, US application 99410827, owner Joker, Inc. (Mattel's attorney), toys and games (class 28). Notice of allowance 12 May 2026; statement-of-use deadline **12 Nov 2026**. trademarkia.com/pingu-99410827, read 2026-11-06, live.
+- Mattel opposes look-alike marks: it filed against HIJARBIE (Barbie) on 2026-09-01. ttabvue.uspto.gov/ttabvue/ttabvue-91310048-OPP-1.pdf, cached 2026-10-11.
+- Japan's patent office dismissed Joker's opposition to "pingu・pongu" on 2026-05-22, a compound word, so it says little about "Pinguu". blog.marks-iplaw.jp/2026/06/05/pingu-vs-pingu-pongu, cached 2026-08-02.
+- Keenable searches for "Pinguu" trademark and Mattel action on 2026-11-06 found nothing new. Weak evidence: the USPTO's own search cannot be queried with the tools used here.
+- Judgment: the name appeared in one visible place and cost one line to drop, and the risk rises with popularity and with publication on npm. **Abhishek chose "Drop the name" (2026-11-06).** S-22 removed it. The look must still be clearly our own.
 
 ### R-5 — What do competing tools actually do, and where can a lite tool do better?
 

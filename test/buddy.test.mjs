@@ -3,7 +3,8 @@ import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { test } from 'node:test'
-import { BUDDY_NAME, buddyStyle, buddySvg, CAPTION_VARIANTS, MOODS, STASH_MS } from '../src/buddy.mjs'
+import { buddyStyle, buddySvg, CAPTION_VARIANTS, MOODS, STASH_MS } from '../src/buddy.mjs'
+import { renderCard } from '../src/card-page.mjs'
 import { cardScript } from '../src/card-script.mjs'
 
 const svg = buddySvg()
@@ -143,12 +144,26 @@ test("the done screen waits only for the key's trip into the vault, which is und
   assert.ok(script.includes('if (ok) await settle(started)'))
 })
 
-test("only src/buddy.mjs spells the buddy's name", () => {
+// The penguin has no name (decision R-4, 2026-11-06): "Pingu" is a toy character whose
+// owner, a Mattel subsidiary, has a US trademark application pending, and "Pinguu" is
+// one letter away. Neither may come back into the code.
+test('the penguin is unnamed: no source file spells it, and the demo card does not either', () => {
   const src = fileURLToPath(new URL('../src/', import.meta.url))
   const files = readdirSync(src, { recursive: true }).filter((f) => f.endsWith('.mjs'))
   assert.ok(files.length > 10)
   for (const file of files) {
-    if (file === 'buddy.mjs') continue
-    assert.ok(!readFileSync(join(src, file), 'utf8').includes(BUDDY_NAME), file)
+    assert.ok(!/pingu/i.test(readFileSync(join(src, file), 'utf8')), file)
   }
+  const page = renderCard({
+    fields: [{ name: 'API_KEY' }],
+    storeLabel: 'nowhere (demo)',
+    replacing: false,
+    allowSessionOnly: false,
+    demo: true,
+    expiresAt: Date.now() + 60_000,
+    nonce: 'n',
+  })
+  assert.ok(!/pingu/i.test(page))
+  assert.ok(page.includes("<span>The penguin's poses:</span>"))
+  assert.ok(page.includes(`aria-label="Preview the penguin's poses"`))
 })

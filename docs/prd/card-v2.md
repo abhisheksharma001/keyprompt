@@ -10,7 +10,7 @@
 3. The agent can mark a box as `visible` (IDs), `multiline` (PEM/JSON) or `optional`. That only changes how the card looks; **every value stays masked in output**.
 4. All values save together or none do.
 5. A **Later** button lets you put it off; the agent gets a clear "deferred" answer (exit 6) and carries on with other work.
-6. **Pinguu**, a friendly penguin, sits on the card. **Every pose shows what really happened**: saved, used once, later, cancelled, timed out, failed.
+6. A friendly penguin (it has no name, see D-2) sits on the card. **Every pose shows what really happened**: saved, used once, later, cancelled, timed out, failed.
 7. The headline stops promising more than the code does.
 8. A `keyprompt demo` command shows the card without saving anything — for you, for screenshots, for new users.
 9. Built for you first (a developer on macOS), but public and tidy enough that others can pick it up.
@@ -128,7 +128,7 @@ For each value in order: read what was there before, then write. If any write fa
 
 ### The buddy
 
-The creature is **Pinguu**, a penguin who keeps keys in an ice vault (decision D-2; name risk in R-4). It lives in its own file. In code it is called `buddy`, so renaming it later means changing one string.
+The creature is a penguin who keeps keys in an ice vault. It has no name, by decision (D-2, R-4, 2026-11-06). It lives in its own file, and in code it is called `buddy`. The demo card's preview row calls it "the penguin".
 
 | Moment | Mood id | Pose | Caption (exact) |
 |---|---|---|---|
@@ -263,12 +263,7 @@ Honest view, from reports 8–10 plus the code:
 ## Decisions
 
 - **D-1** (2026-11-05, Abhishek: "ok"): agent hints change the look only; masking stays on for every value.
-- **D-2** (2026-11-05, Abhishek: "pinguu (lets use this)"): the mascot is **Pinguu**, a penguin. The risk is noted in R-4: Mattel opposes look-alike marks, including one-letter-off "PINU" in December 2025. Three guards:
-  1. The display name lives in one constant (`BUDDY_NAME` in src/buddy.mjs), so a rename is one line.
-  2. The look must be clearly our own, not Pingu's (see S-12 "Must not").
-  3. The name is decided again before the README launch (S-16) and the npm publish (S-17).
-
-  The code's working name stays `buddy`.
+- **D-2** (2026-11-05, Abhishek: "pinguu (lets use this)"; **changed 2026-11-06, Abhishek: "Drop the name"**): the mascot is a penguin. On 2026-11-05 it was named **Pinguu**, with three guards: the name in one constant, a look clearly our own, and the name decided again before the README launch (S-16) and the npm publish (S-17). The re-check came on 2026-11-06 (R-4): PINGU is a pending US toy trademark owned by Mattel's subsidiary, Mattel opposes look-alike marks (one-letter-off "PINU" in December 2025, "HIJARBIE" in September 2026), and the name showed in one visible place. So the penguin now has **no name** (S-22): the constant is gone and a test fails if "Pingu" is spelled in `src/`. Guard 2 stays: the look must be clearly our own, not Pingu's (see S-12 "Must not"). The code's working name stays `buddy`.
 - **D-3** (2026-11-05, Abhishek: "me"): the card is for Abhishek first, a developer. Copy may be technical; provider presets are parked.
 - **D-4** (2026-11-05, Abhishek: "ok"): this release = multi-field card, Later, buddy with truthful poses, headline fix. **Approved 2026-11-05 (Abhishek: "yes"):** `keyprompt demo` (S-11), the card countdown (part of S-14), and the two lite wins from the teardowns: masking encoded copies (S-18) and refusing a key pasted into a command (S-19).
 - **D-5** (2026-11-05): no animation libraries (invariants 5 and 7).
