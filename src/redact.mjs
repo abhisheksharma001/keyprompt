@@ -20,11 +20,41 @@ function percentEncode(bytes, keep) {
 }
 
 /**
+ * The base64 and base64url characters that `bytes` decide on their own, for
+ * each of the three places the bytes can start in base64's 3-byte groups.
+ *
+ * Base64 writes every 3 bytes as 4 characters, so text before the value (the
+ * `user:` in the base64 of `user:KEY` that `curl -v -u user:KEY` prints)
+ * changes every character of the value's base64 unless that text is a multiple
+ * of 3 bytes long. The character at each end of the value usually mixes in
+ * bits of the text around it, so it is left out: what is masked holds only the
+ * value's own bits, and the 1 or 2 characters beside the label still show up
+ * to 4 bits of the value's first byte and 4 bits of its last. GitHub Actions
+ * masks the same shifts (`Base64StringEscapeShift1` and `Shift2` in
+ * actions/runner); this keeps fewer of the value's bits visible.
+ * @param {Buffer} bytes
+ * @returns {string[]}
+ */
+function base64Pieces(bytes) {
+  const pieces = []
+  for (const offset of [0, 1, 2]) {
+    const shifted = Buffer.concat([Buffer.alloc(offset), bytes])
+    // Characters are 6 bits wide; keep those that begin at or after the value's first bit and end at or before its last.
+    const first = Math.ceil((8 * offset) / 6)
+    const end = Math.floor((8 * (offset + bytes.length)) / 6)
+    for (const encoding of /** @type {const} */ (['base64', 'base64url'])) pieces.push(shifted.toString(encoding).slice(first, end))
+  }
+  return pieces
+}
+
+/**
  * Every text that counts as a copy of `value`: the value itself and, when it
  * has at least MIN_ENCODED_LENGTH characters, its base64 (with and without
- * padding), base64url (with and without padding), lowercase hex, URL-encoded
- * (RFC 3986 and `encodeURIComponent`) and JSON-escaped forms. SECURITY.md
- * lists the same forms; keep the two in step.
+ * padding), base64url (with and without padding), the base64 and base64url
+ * characters it decides on its own wherever it starts inside longer base64
+ * text (`base64Pieces`), lowercase hex, URL-encoded (RFC 3986 and
+ * `encodeURIComponent`) and JSON-escaped forms. SECURITY.md lists the same
+ * forms; keep the two in step.
  * @param {string} value
  * @returns {string[]}
  */
@@ -39,6 +69,7 @@ export function copiesOf(value) {
     base64.replace(/=+$/, ''),
     base64url,
     base64url.padEnd(base64.length, '='),
+    ...base64Pieces(bytes),
     bytes.toString('hex'),
     percentEncode(bytes, RFC3986_KEEP),
     percentEncode(bytes, URI_COMPONENT_KEEP),
