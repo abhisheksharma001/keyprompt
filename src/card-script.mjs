@@ -49,8 +49,6 @@ export function cardScript() {
   let still = false
   // A request or the wait after a save is under way, so the deadline must not end the card.
   let busy = false
-  // The card is over: the countdown stops.
-  let ended = false
   let clockTimer = 0
   // The first box has focus on load, so focus alone would skip the opening
   // caption. The buddy follows focus from the person's first click, key or
@@ -68,7 +66,6 @@ export function cardScript() {
   // unless a request is still under way: that request's answer ends the card.
   function tick() {
     clearTimeout(clockTimer)
-    if (ended) return
     const step = clockStep(expiresAt - Date.now(), busy)
     if (step.timeout) { finish('Timed out', 'asleep'); return }
     clock.textContent = step.text
@@ -209,7 +206,7 @@ export function cardScript() {
   // says "You can close this tab." when the mood is closed.
   function finish(title, id, text) {
     still = true
-    ended = true
+    // The card is over: the countdown stops and its clock goes.
     clearTimeout(clockTimer)
     clock.hidden = true
     for (const row of rows) row.querySelector('.value').value = ''
