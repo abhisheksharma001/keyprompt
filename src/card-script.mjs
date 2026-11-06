@@ -111,7 +111,7 @@ export function cardScript() {
     const savedAction = save.textContent
     remember.addEventListener('change', () => {
       save.textContent = remember.checked ? savedAction : 'Use for this run'
-      footer.textContent = remember.checked ? savedFooter : 'Held for this one command only · never shown to your agent'
+      footer.textContent = remember.checked ? savedFooter : 'Held for this one command only'
       if (!still) setMood(moodFor(document.activeElement))
     })
   }
@@ -202,6 +202,12 @@ export function cardScript() {
     list.hidden = list.children.length === 0
   }
 
+  // The footer's note says where a Save puts the key. After an ending that saved
+  // nothing (Cancel, Later, timed out, closed, a final error) it would name a
+  // place the key never reached, so the whole footer goes (B-9); its clock is
+  // already gone. A demo's pretend save keeps its note: it says "nothing is stored".
+  const NOTE_ENDINGS = ['locked', 'one-run']
+
   // The card has ended: the title and the buddy say how. Its caption already
   // says "You can close this tab." when the mood is closed.
   function finish(title, id, text) {
@@ -209,6 +215,7 @@ export function cardScript() {
     // The card is over: the countdown stops and its clock goes.
     clearTimeout(clockTimer)
     clock.hidden = true
+    document.getElementById('footer').hidden = !NOTE_ENDINGS.includes(id)
     for (const row of rows) row.querySelector('.value').value = ''
     heading.textContent = title
     setMood(id, text)

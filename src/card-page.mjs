@@ -80,7 +80,8 @@ export function renderCard({ fields, reason, requester, storeLabel, replacing, a
       : 'Secret requested'
   const action = replacing ? (several ? 'Replace values' : 'Replace value') : several ? `Save all ${fields.length}` : 'Save securely'
   const demoHtml = demo ? '<p class="note" role="note"><strong>Demo — nothing you type is saved.</strong></p>' : ''
-  const footerText = demo ? 'Demo · nothing is stored' : `Stored in your ${escapeHtml(storeLabel)} · never shown to your agent`
+  // The footer says where a Save goes and nothing about what the agent can see (B-10, invariant 9).
+  const footerText = demo ? 'Demo · nothing is stored' : `Stored in your ${escapeHtml(storeLabel)}`
   const reasonHtml = reason ? `<p class="reason">${escapeHtml(reason)}</p>` : ''
   const requesterHtml = requester ? `<p class="meta">Requested by ${escapeHtml(requester)}</p>` : ''
   const replaceNote = !replacing
@@ -149,7 +150,7 @@ ${buddyStyle()}
     ${maskingHtml}
     <p>You can close this tab.</p>
   </section>
-  <footer>
+  <footer id="footer">
     <div class="foot-note">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
       <span id="footer-text">${footerText}</span>

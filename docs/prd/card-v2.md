@@ -172,6 +172,19 @@ Where it shows (S-14):
 - The masking sentence shows only on a `run` card after a Save, and only when the output is masked: not with `--no-redact`, and never on a `set` card, whose page does not contain it. With `--no-redact` the card says nothing about masking.
 - "Kept the saved value" appears only on `set`, for a box that is already saved and was left empty.
 
+### The footer (S-23, B-9 and B-10)
+
+The footer's note says where a Save puts the key, and nothing about what the agent can see: a command the agent writes can print or send a key (SECURITY.md), so "never shown to your agent" was not true (invariant 9). Abhishek chose this wording on 2026-11-06.
+
+| Card | Footer note (exact) |
+|---|---|
+| Ordinary, "Remember on this computer" ticked or not offered | "Stored in your {store}" |
+| "Remember on this computer" unticked | "Held for this one command only" |
+| Demo | "Demo · nothing is stored" |
+| Ended with nothing saved (Cancelled, Later, timed out, no longer active, a final error) | no footer at all (its line goes too): the note would name a store the key never reached |
+
+After a Save or a one-run Save the note stays as it was. "Stored in your {store}" is also on the card before anything is saved, where it names the place a Save goes.
+
 ### The deadline (footer clock)
 
 The footer shows "Card closes in m:ss", counting down to the server's deadline (`expiresAt`, passed to the page; the page and the server run on the same computer). At zero the form is replaced by the `asleep` pose, the title "Timed out" and the caption from the buddy table. The clock is a `role="timer"`, so a screen reader does not read it every second. If a request is still under way at zero (a Save, Later or Cancel), the page waits for its answer instead of announcing a timeout. For a Save the server waits too (B-6, fixed in S-20), so the card ends with what that save really did. The clock disappears once the card has ended.
