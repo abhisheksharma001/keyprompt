@@ -14,7 +14,7 @@ export function catalogDir() {
   return process.env.KEYPROMPT_HOME || join(homedir(), '.keyprompt')
 }
 
-function catalogPath() {
+export function catalogPath() {
   return join(catalogDir(), 'catalog.json')
 }
 

@@ -1,13 +1,24 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { test } from 'node:test'
-import { demoRequest, laterForRun, outputIsTerminal, parseArgs, secretsInCommand, setReport, valueInCommandError } from '../src/cli.mjs'
-import { EXIT } from '../src/errors.mjs'
+import { readCatalog } from '../src/catalog.mjs'
+import {
+  catalogNotUpdated,
+  demoRequest,
+  laterForRun,
+  outputIsTerminal,
+  parseArgs,
+  saveAndRecord,
+  secretsInCommand,
+  setReport,
+  valueInCommandError,
+} from '../src/cli.mjs'
+import { EXIT, KeypromptError } from '../src/errors.mjs'
 import { getStore } from '../src/store/index.mjs'
 
 const BIN = fileURLToPath(new URL('../bin/keyprompt.mjs', import.meta.url))
@@ -243,6 +254,106 @@ test('set reports saved, replaced and empty names, never values', () => {
   assert.ok(!report.includes('sk-'))
 })
 
+/** A store that keeps values in a Map. `failWrite` makes every write throw. */
+function mapStore({ failWrite = false } = {}) {
+  const items = new Map()
+  return {
+    items,
+    id: 'fake',
+    label: 'test store',
+    maxValueLength: 100,
+    async read(name) {
+      return items.has(name) ? items.get(name) : null
+    },
+    async write(name, value) {
+      if (failWrite) throw new KeypromptError(`Could not save ${name} to the test store.`)
+      items.set(name, value)
+    },
+    async remove(name) {
+      return items.delete(name)
+    },
+  }
+}
+
+/** Runs `body` with KEYPROMPT_HOME set to `home`, then puts the old value back. */
+async function withHome(home, body) {
+  const before = process.env.KEYPROMPT_HOME
+  process.env.KEYPROMPT_HOME = home
+  try {
+    return await body()
+  } finally {
+    if (before === undefined) delete process.env.KEYPROMPT_HOME
+    else process.env.KEYPROMPT_HOME = before
+  }
+}
+
+test('a list of names that cannot be updated does not fail a save that worked, and the agent is told (B-3, S-26)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'keyprompt-b3-'))
+  // A file where the folder should be: the catalog can be neither read nor written.
+  const notAFolder = join(dir, 'not-a-folder')
+  writeFileSync(notAFolder, 'x')
+  const store = mapStore()
+  const values = new Map([
+    ['A', 'sk-aaaaaaaa'],
+    ['B', 'sk-bbbbbbbb'],
+  ])
+  const note = await withHome(notAFolder, () => saveAndRecord(store, values, 'send a test SMS'))
+  assert.deepEqual([...store.items], [...values], 'every value is saved')
+  assert.match(
+    note,
+    /^keyprompt: Saved A and B in the test store, but could not update the list of names \([A-Z]+\), so "keyprompt list" may not show them\. The save itself worked\. The list is /,
+  )
+  assert.ok(note.endsWith(`${join(notAFolder, 'catalog.json')}.\n`), note)
+  assert.ok(!note.includes('sk-'), 'no value in the line')
+})
+
+test('a catalog.json that is not JSON is the same case, and is left as it was (B-3, S-26)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'keyprompt-b3-'))
+  writeFileSync(join(dir, 'catalog.json'), '{not json')
+  const store = mapStore()
+  const note = await withHome(dir, () => saveAndRecord(store, new Map([['A', 'sk-aaaaaaaa']]), undefined))
+  assert.deepEqual([...store.items], [['A', 'sk-aaaaaaaa']])
+  // A parse error has no code, so the line has none.
+  assert.equal(
+    note,
+    `keyprompt: Saved A in the test store, but could not update the list of names, so "keyprompt list" may not show it. The save itself worked. The list is ${join(dir, 'catalog.json')}.\n`,
+  )
+  assert.equal(readFileSync(join(dir, 'catalog.json'), 'utf8'), '{not json')
+})
+
+test('when the list is fine a save says nothing extra; when the store fails the save still fails and the list is not touched (S-26)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'keyprompt-b3-'))
+  await withHome(dir, async () => {
+    assert.equal(await saveAndRecord(mapStore(), new Map([['A', 'sk-aaaaaaaa']]), 'send a test SMS'), undefined)
+    assert.equal((await readCatalog()).A.reason, 'send a test SMS')
+  })
+  const other = mkdtempSync(join(tmpdir(), 'keyprompt-b3-'))
+  await withHome(other, async () => {
+    await assert.rejects(saveAndRecord(mapStore({ failWrite: true }), new Map([['A', 'sk-aaaaaaaa']]), undefined), (error) => {
+      assert.ok(error instanceof KeypromptError)
+      assert.match(error.message, /Nothing was changed\.$/)
+      return true
+    })
+    assert.equal(existsSync(join(other, 'catalog.json')), false)
+  })
+})
+
+test('the line repeats an error code only when it is a plain one, never an error text (S-26)', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'keyprompt-b3-'))
+  const line = (error, names = ['A']) => withHome(home, () => catalogNotUpdated(names, 'test store', error))
+  const withCode = (code) => Object.assign(new Error('the text of the error'), { code })
+  const where = join(home, 'catalog.json')
+  assert.ok((await line(withCode('ENOSPC'))).includes('update the list of names (ENOSPC), so'))
+  for (const odd of [withCode('no space left sk-12345678'), withCode(28), withCode(undefined), new Error('x'), 'a string', null]) {
+    const text = await line(odd)
+    assert.equal(
+      text,
+      `keyprompt: Saved A in the test store, but could not update the list of names, so "keyprompt list" may not show it. The save itself worked. The list is ${where}.\n`,
+    )
+  }
+  assert.ok(!(await line(withCode('ENOSPC'))).includes('the text of the error'))
+})
+
 test('Later on run: exit 6, names the boxes and the command, never its arguments', () => {
   const one = laterForRun([{ name: 'A' }], 'npm')
   assert.equal(one.exitCode, 6)
@@ -358,6 +469,57 @@ request({ hostname: url.hostname, port: url.port, path: url.pathname + '/later',
 
     assert.equal(keyprompt(['has', name]).status, 3)
     assert.equal(existsSync(join(dir, 'catalog.json')), false)
+  } finally {
+    await getStore().remove(name).catch(() => {})
+  }
+})
+
+test('set with a list of names that cannot be updated: the card says Saved, set exits 0 and tells the agent, and the value is saved (B-3, S-26)', { skip: !realCard }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'keyprompt-b3-'))
+  const name = `KEYPROMPT_TEST_${randomBytes(4).toString('hex').toUpperCase()}`
+  const value = `dummy-${randomBytes(8).toString('hex')}`
+  const answer = join(dir, 'answer')
+  const browser = join(dir, 'save.mjs')
+  // Presses Save, records the status the card answered, and cancels if it was not a 200 (a person would give up).
+  writeFileSync(
+    browser,
+    `#!${process.execPath}
+import { writeFileSync } from 'node:fs'
+import { request } from 'node:http'
+const url = new URL(process.argv[2])
+const headers = { Origin: url.origin, 'Content-Type': 'application/json' }
+const post = (action, body, done) =>
+  request({ hostname: url.hostname, port: url.port, path: url.pathname + '/' + action, method: 'POST', headers }, (res) => {
+    res.resume()
+    res.on('end', () => done(res.statusCode))
+  }).end(JSON.stringify(body))
+post('submit', { values: { ${name}: ${JSON.stringify(value)} }, remember: true }, (status) => {
+  writeFileSync(${JSON.stringify(answer)}, String(status))
+  if (status !== 200) post('cancel', {}, () => {})
+})
+`,
+  )
+  chmodSync(browser, 0o755)
+  // A file where the folder should be, and a catalog.json that is not JSON.
+  const notAFolder = join(dir, 'not-a-folder')
+  writeFileSync(notAFolder, 'x')
+  const corrupt = join(dir, 'corrupt')
+  mkdirSync(corrupt)
+  writeFileSync(join(corrupt, 'catalog.json'), '{not json')
+  try {
+    for (const home of [notAFolder, corrupt]) {
+      const env = { ...process.env, KEYPROMPT_HOME: home, KEYPROMPT_BROWSER: browser }
+      const keyprompt = (args) => spawnSync(process.execPath, [BIN, ...args], { encoding: 'utf8', env, timeout: 15000 })
+      const set = keyprompt(['set', name])
+      assert.equal(set.status, 0, set.stderr)
+      assert.equal(readFileSync(answer, 'utf8'), '200', 'the card answered Saved')
+      assert.equal(set.stdout, setReport([{ name }], new Map([[name, value]]), getStore().label))
+      assert.ok(set.stderr.includes(`keyprompt: Saved ${name} in the ${getStore().label}, but could not update the list of names`), set.stderr)
+      assert.ok(set.stderr.includes(`The list is ${join(home, 'catalog.json')}.\n`), set.stderr)
+      assert.ok(!set.stdout.includes(value) && !set.stderr.includes(value), 'no value is printed')
+      assert.equal(keyprompt(['has', name]).status, 0, 'the value is saved')
+      await getStore().remove(name)
+    }
   } finally {
     await getStore().remove(name).catch(() => {})
   }

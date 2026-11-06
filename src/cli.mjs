@@ -4,7 +4,7 @@ import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { openInBrowser } from './browser.mjs'
 import { requestSecretWithCard } from './card-server.mjs'
-import { readCatalog, recordRemoved, recordSavedMany } from './catalog.mjs'
+import { catalogPath, readCatalog, recordRemoved, recordSavedMany } from './catalog.mjs'
 import { collectSecrets } from './collect.mjs'
 import { EXIT, KeypromptError } from './errors.mjs'
 import { assertName, parseFields } from './names.mjs'
@@ -177,10 +177,52 @@ async function askWithCard(store, fields, options) {
         assertFits(store, values)
         return
       }
-      await saveAll(store, values)
-      await recordSavedMany([...values.keys()], { reason: options.reason, store: store.id })
+      const note = await saveAndRecord(store, values, options.reason)
+      if (note) process.stderr.write(note)
     },
   })
+}
+
+/**
+ * What the card's Save does with Remember on: every value goes to the store
+ * (all or none), then the names go on the list `keyprompt list` shows. Once the
+ * store write is done the values are saved, so a failure of the list (a full
+ * disk, a folder that cannot be written, a catalog.json that is not JSON) must
+ * not fail the save: the card would say "Could not save" about values that are
+ * saved, and the agent would be told they were not (B-3). It returns a line
+ * for the agent instead.
+ * @param {import('./store/index.mjs').SecretStore} store
+ * @param {Map<string, string>} values
+ * @param {string | undefined} reason
+ * @returns {Promise<string | undefined>} A line for stderr when the list could not be updated.
+ */
+export async function saveAndRecord(store, values, reason) {
+  await saveAll(store, values)
+  const names = [...values.keys()]
+  try {
+    await recordSavedMany(names, { reason, store: store.id })
+  } catch (error) {
+    return catalogNotUpdated(names, store.label, error)
+  }
+  return undefined
+}
+
+/**
+ * The stderr line for values that are saved while the list of names is not
+ * updated. Only the error's code (ENOSPC, EACCES) is repeated, never its text,
+ * which could carry anything.
+ * @param {string[]} names
+ * @param {string} storeLabel
+ * @param {unknown} error
+ */
+export function catalogNotUpdated(names, storeLabel, error) {
+  const found = error instanceof Error ? /** @type {NodeJS.ErrnoException} */ (error).code : undefined
+  const code = typeof found === 'string' && /^[A-Z0-9_]{1,20}$/.test(found) ? ` (${found})` : ''
+  const them = names.length === 1 ? 'it' : 'them'
+  return (
+    `keyprompt: Saved ${joinNames(names)} in the ${storeLabel}, but could not update the list of names${code}, so "keyprompt list" may not show ${them}. ` +
+    `The save itself worked. The list is ${catalogPath()}.\n`
+  )
 }
 
 /**

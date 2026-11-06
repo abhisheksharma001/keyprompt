@@ -26,13 +26,14 @@ A bug is written here first, then into the plan, then fixed as its own step. For
 
 ### B-3 — A failed catalog write after a successful save makes the card say "Could not save"
 
-**Seen:** in `askWithCard` (`src/cli.mjs`), `recordSavedMany` runs after `saveAll` has already written every value to the OS store. If writing `~/.keyprompt/catalog.json` then fails (disk full, a folder you cannot write to), the error is not a `KeypromptError`, so the card server shows "Could not save. Try again." (`src/card-server.mjs`, the 422 branch). That is not true: the values are saved; only the list of names is not updated, so `keyprompt list` leaves them out. It has been like this since v0.1 (`recordSaved` ran after `store.write` the same way); S-5 did not cause it. Not reproduced; found by reading the code on 2026-11-05 during the S-5 self-review.
+**Seen:** in `askWithCard` (`src/cli.mjs`), `recordSavedMany` runs after `saveAll` has already written every value to the OS store. If writing `~/.keyprompt/catalog.json` then fails (disk full, a folder you cannot write to), the error is not a `KeypromptError`, so the card server shows "Could not save. Try again." (`src/card-server.mjs`, the 422 branch). That is not true: the values are saved; only the list of names is not updated, so `keyprompt list` leaves them out. It has been like this since v0.1 (`recordSaved` ran after `store.write` the same way); S-5 did not cause it. Found by reading the code on 2026-11-05 during the S-5 self-review; reproduced on macOS on 2026-11-07 in S-26 (below).
+**Also found 2026-11-07, when it was reproduced** (`keyprompt set NAME` with a fake browser and a throwaway Keychain item, on main): (1) a `catalog.json` that is not JSON does the same as an unwritable folder, because `readCatalog` throws first, so the cause is any catalog failure, not only a write. (2) The agent was told something false too. The person gave up on the card that said "Could not save" and pressed Cancel, and `set` ended with exit 4 and "The person closed the secret card without saving", while `has NAME` exited 0. (3) A person who presses Save again gets the same answer every time, so the only way out is Cancel.
 **Requirement:** invariant 9 in `.claude/CLAUDE.md`.
 **Needs first:** nothing.
 **Blocks:** nothing.
-**Files:** `src/cli.mjs` (only `askWithCard`); a test with a catalog folder that cannot be written.
-**Research:** none · **Model:** sonnet · **Confidence:** 0.85 that the card shows the wrong message — the code path was read, not run.
-**Fix step:** not queued yet. Proposed: a catalog failure after a successful save does not fail the submit; the CLI writes one line to stderr instead ("Saved, but could not update the list of names: …").
+**Files:** `src/cli.mjs` (`askWithCard`, and the new `saveAndRecord`); tests with a catalog that cannot be written and one that is not JSON.
+**Research:** none · **Model:** sonnet · **Confidence:** 0.95 that the card shows the wrong message — reproduced on 2026-11-07 (was 0.85 when only the code had been read).
+**Fix step:** S-26 (PR #29). A catalog failure after a successful save no longer fails the submit: the card answers Saved, `set` and `run` carry on, and one line on stderr says "Saved X in the …, but could not update the list of names (CODE), so "keyprompt list" may not show it. The save itself worked. The list is …/catalog.json." A corrupt catalog is not repaired (every later save says the same until the file is fixed or removed). The sibling in `delete` is logged apart as B-13.
 
 ### B-4 — `run` cannot go on when every missing name is optional and the person leaves them all empty
 
@@ -137,3 +138,13 @@ The deadline is the real-world path. Someone presses Save near the end of the 5 
 **Files:** `src/redact.mjs` (`copiesOf`), `test/redact.test.mjs`, `SECURITY.md`, `README.md`, `skill/SKILL.md`.
 **Research:** lookup · **Model:** opus (the masking boundary) · **Confidence:** 0.95 that it happens (seen); 0.6 on the right fix until the partial-masking question is answered.
 **Fix step:** S-25 (PR #28). For each of the three places a value can start in base64's 3-byte groups, `copiesOf` also masks the base64 and base64url characters made only of the value's bits. The character at each end that mixes in the text around it stays visible: at most 4 bits of the value's first byte and 4 of its last. Run on macOS with curl 8.7.1: main left the Basic line unmasked for keys of 19, 20 and 21 characters; S-25 masks all three.
+
+### B-13 — `delete` removes the value, then fails and exits 1 if the list of names cannot be updated
+
+**Seen:** 2026-11-07 while fixing B-3 (S-26), on macOS with a throwaway Keychain item and `KEYPROMPT_HOME` pointing at a plain file. `keyprompt delete NAME` removed the item from the Keychain (`has NAME` then exited 3), but printed `keyprompt: unexpected error: ENOTDIR: not a directory, open '…/catalog.json'` and exited 1, because `recordRemoved` (`src/catalog.mjs`) threw after `store.remove` had succeeded (`delete` in `src/cli.mjs`). The agent is told the delete failed when it worked. The same cause as B-3, in the other direction: the list of names is only a convenience, and its failure must not undo what the store already did. The message also repeats the raw error text, which `saveAndRecord` deliberately does not.
+**Requirement:** invariant 9 in `.claude/CLAUDE.md`.
+**Needs first:** nothing.
+**Blocks:** nothing.
+**Files:** `src/cli.mjs` (`delete`), `test/cli.test.mjs`.
+**Research:** none · **Model:** sonnet · **Confidence:** 0.95 that it happens (reproduced 2026-11-07).
+**Fix step:** not queued yet. Proposed: the same shape as S-26: after `store.remove` succeeds, a failed `recordRemoved` does not change the exit code (0 or 3 as before); one stderr line says the list of names was not updated.
