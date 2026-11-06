@@ -1,4 +1,25 @@
 import { CAPTION_VARIANTS, CAPTIONS, STASH_MS } from './buddy.mjs'
+import { RECEIPT_WORDS } from './receipt.mjs'
+
+/**
+ * What the footer countdown does next. `left` is the milliseconds to the
+ * deadline; `busy` is true while a request or the finish wait is under way.
+ * The card's script embeds this function's source, so it may use nothing
+ * outside itself.
+ * @param {number} left
+ * @param {boolean} busy
+ * @returns {{ text: string, wait: number } | { timeout: true }}
+ */
+export function clockStep(left, busy) {
+  if (left > 0) {
+    const seconds = Math.ceil(left / 1000)
+    const text = 'Card closes in ' + Math.floor(seconds / 60) + ':' + String(seconds % 60).padStart(2, '0')
+    return { text, wait: left % 1000 || 1000 }
+  }
+  // At zero a save that is under way decides how the card ends: the server waits for it too.
+  if (busy) return { text: 'Time is up. Waiting for the answer…', wait: 250 }
+  return { timeout: true }
+}
 
 /** The card's browser script text. renderCard places it inside the page's nonce'd <script> element. */
 export function cardScript() {
@@ -16,19 +37,39 @@ export function cardScript() {
   const buddy = document.querySelector('.buddy')
   const caption = document.getElementById('caption')
   const heading = document.querySelector('h1')
+  const clock = document.getElementById('clock')
+  const expiresAt = Number(clock.getAttribute('data-expires'))
   const store = caption.getAttribute('data-store') || ''
   const CAPTIONS = ${JSON.stringify(CAPTIONS)}
   const VARIANTS = ${JSON.stringify(CAPTION_VARIANTS)}
+  const RECEIPT = ${JSON.stringify(RECEIPT_WORDS)}
   const STASH_MS = ${STASH_MS}
+  const clockStep = ${clockStep}
   // Saving or ended: focus no longer changes the buddy's mood.
   let still = false
+  // A request or the wait after a save is under way, so the deadline must not end the card.
+  let busy = false
+  let clockTimer = 0
   // The first box has focus on load, so focus alone would skip the opening
   // caption. The buddy follows focus from the person's first click, key or
   // paste in the form; it never looks at what was typed.
   let engaged = false
 
   function lock(locked) {
+    busy = locked
     save.disabled = locked; cancel.disabled = locked; later.disabled = locked
+    // Unlocked after the deadline: the card is over, so the form must not stay open.
+    if (!locked) tick()
+  }
+
+  // The footer counts down to the server's deadline. At zero the card sleeps,
+  // unless a request is still under way: that request's answer ends the card.
+  function tick() {
+    clearTimeout(clockTimer)
+    const step = clockStep(expiresAt - Date.now(), busy)
+    if (step.timeout) { finish('Timed out', 'asleep'); return }
+    clock.textContent = step.text
+    clockTimer = setTimeout(tick, step.wait)
   }
 
   // A caption must stay true: a demo saves nothing, and with "Remember"
@@ -143,10 +184,31 @@ export function cardScript() {
     if (box.hasAttribute('data-paste')) pasteBox(box, row)
   }
 
+  // One line per box on the done screen. The names are text, never markup.
+  function showReceipt(lines) {
+    const list = document.getElementById('receipt')
+    list.replaceChildren()
+    for (const { name, outcome } of lines) {
+      if (!RECEIPT[outcome]) continue
+      const item = document.createElement('li')
+      const chip = document.createElement('span')
+      chip.className = 'chip'
+      chip.textContent = name
+      const what = document.createElement('span')
+      what.textContent = '— ' + RECEIPT[outcome].split('{store}').join(store)
+      item.append(chip, what)
+      list.append(item)
+    }
+    list.hidden = list.children.length === 0
+  }
+
   // The card has ended: the title and the buddy say how. Its caption already
   // says "You can close this tab." when the mood is closed.
   function finish(title, id, text) {
     still = true
+    // The card is over: the countdown stops and its clock goes.
+    clearTimeout(clockTimer)
+    clock.hidden = true
     for (const row of rows) row.querySelector('.value').value = ''
     heading.textContent = title
     setMood(id, text)
@@ -202,6 +264,10 @@ export function cardScript() {
         return
       }
       if (ok) {
+        showReceipt(data.receipt || [])
+        // Only a run card's page has this note.
+        const masking = document.getElementById('masking')
+        if (masking) masking.hidden = false
         finish(data.remembered ? 'Saved' : 'Ready', data.remembered ? 'locked' : 'one-run')
         return
       }
@@ -257,6 +323,8 @@ export function cardScript() {
     try {
       const { ok, status, data } = await post('/later', {})
       if (ok) {
+        // Later keeps nothing, so every box reads the same. A demo has no receipt.
+        if (!demo) showReceipt(rows.map((row) => ({ name: row.dataset.name, outcome: 'later' })))
         finish('Later', 'later')
         return
       }
@@ -270,5 +338,7 @@ export function cardScript() {
     }
     lock(false)
   })
+
+  tick()
 })()`
 }

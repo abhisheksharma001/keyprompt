@@ -166,6 +166,16 @@ A demo also has a row of buttons that preview every mood; a previewed caption st
 
 One line per value: "Saved in your macOS Keychain" / "Handed to this one command, not saved" / "Kept the saved value" / "Left empty" / "Not saved (Later)". Under it: "keyprompt masks exact copies in that command's output. It cannot stop a command from sending the key elsewhere — see SECURITY.md."
 
+Where it shows (S-14):
+- After a Save, one line per box, from the server's answer: names and outcomes only, never a value. After Later, every box reads "Not saved (Later)".
+- Not after Cancel or a timeout (their caption already says nothing was saved), and not in a demo (a demo keeps nothing, so its answer has no receipt).
+- The masking sentence shows only on a `run` card after a Save, and only when the output is masked: not with `--no-redact`, and never on a `set` card, whose page does not contain it. With `--no-redact` the card says nothing about masking.
+- "Kept the saved value" appears only on `set`, for a box that is already saved and was left empty.
+
+### The deadline (footer clock)
+
+The footer shows "Card closes in m:ss", counting down to the server's deadline (`expiresAt`, passed to the page; the page and the server run on the same computer). At zero the form is replaced by the `asleep` pose, the title "Timed out" and the caption from the buddy table. The clock is a `role="timer"`, so a screen reader does not read it every second. If a request is still under way at zero (a Save, Later or Cancel), the page waits for its answer instead of announcing a timeout. For a Save the server waits too (B-6, fixed in S-20), so the card ends with what that save really did. The clock disappears once the card has ended.
+
 ---
 
 ## What others do — and where this lite version does better

@@ -2,6 +2,7 @@ import { randomBytes, timingSafeEqual } from 'node:crypto'
 import { createServer } from 'node:http'
 import { renderCard } from './card-page.mjs'
 import { EXIT, KeypromptError } from './errors.mjs'
+import { receiptFor } from './receipt.mjs'
 import { joinNames } from './save.mjs'
 
 /** 12 fields of up to 64 KiB each, with room for JSON escaping. */
@@ -28,6 +29,7 @@ export const DEFAULT_CARD_TIMEOUT_MS = 5 * 60 * 1000
  * @property {boolean} replacing
  * @property {boolean} allowSessionOnly Show "Remember on this computer"; when false the values are always saved.
  * @property {boolean} [demo] A demo card: the page says so and never claims a save or a store. Its `onSubmit` must keep nothing.
+ * @property {boolean} [masked] The values go to a command whose output keyprompt masks, so the done screen may say so.
  * @property {(values: Map<string, string>, remember: boolean) => Promise<void>} onSubmit Store (or hold) the non-empty values; throw to show the error on the card.
  * @property {(url: string) => Promise<boolean>} open Open the card for the person. Resolves false if nothing could be opened.
  * @property {number} [timeoutMs]
@@ -86,6 +88,8 @@ function sameString(a, b) {
 export function requestSecretWithCard(request) {
   const token = randomBytes(32).toString('base64url')
   const timeoutMs = request.timeoutMs ?? DEFAULT_CARD_TIMEOUT_MS
+  // The page counts down to this moment. Both run on this computer, so they share a clock.
+  const expiresAt = Date.now() + timeoutMs
 
   return new Promise((resolve, reject) => {
     let settled = false
@@ -135,6 +139,8 @@ export function requestSecretWithCard(request) {
             replacing: request.replacing,
             allowSessionOnly: request.allowSessionOnly,
             demo: request.demo === true,
+            masked: request.masked === true,
+            expiresAt,
             nonce,
           }),
         )
@@ -226,7 +232,8 @@ export function requestSecretWithCard(request) {
           send(422, { error: shown })
           return
         }
-        send(200, { remembered: remember })
+        // A demo keeps nothing, so it has no receipt to tell.
+        send(200, request.demo ? { remembered: remember } : { remembered: remember, receipt: receiptFor(request.fields, values, remember) })
         finish(() => resolve({ remembered: remember, values }))
       })
     })

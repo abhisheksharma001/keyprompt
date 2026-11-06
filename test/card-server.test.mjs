@@ -132,6 +132,61 @@ test('a demo buddy names no store and has a button for every mood', async () => 
   await send(`${url}/cancel`, { method: 'POST', body: {} })
 })
 
+test('the page carries the deadline for the footer clock, and the clock is not read out every second', async () => {
+  const before = Date.now()
+  const { urlReady } = startCard({ timeoutMs: 120_000 })
+  const url = await urlReady
+  const page = (await send(url)).text
+  const after = Date.now()
+  const [, expires] = page.match(/<span class="clock" id="clock" role="timer" aria-live="off" data-expires="(\d+)"><\/span>/)
+  assert.ok(Number(expires) >= before + 120_000 && Number(expires) <= after + 120_000, expires)
+  await send(`${url}/cancel`, { method: 'POST', body: {} })
+})
+
+test('the answer to a save is a receipt of names and outcomes: saved, handed over, kept or left empty', async () => {
+  const fields = [{ name: 'A' }, { name: 'B', optional: true }, { name: 'C', saved: true }, { name: 'D', optional: true }]
+  const saved = startCard({ fields })
+  const res = await send(`${await saved.urlReady}/submit`, { method: 'POST', body: { values: { A: 'sk-secret-a', B: '', C: '  ', D: '' }, remember: true } })
+  assert.equal(res.status, 200)
+  assert.deepEqual(JSON.parse(res.text), {
+    remembered: true,
+    receipt: [
+      { name: 'A', outcome: 'saved' },
+      { name: 'B', outcome: 'empty' },
+      { name: 'C', outcome: 'kept' },
+      { name: 'D', outcome: 'empty' },
+    ],
+  })
+  assert.ok(!res.text.includes('sk-secret'))
+
+  const once = startCard({ fields })
+  const handed = await send(`${await once.urlReady}/submit`, { method: 'POST', body: { values: { A: 'sk-secret-a', D: 'sk-secret-d' }, remember: false } })
+  assert.deepEqual(JSON.parse(handed.text).receipt.map((r) => r.outcome), ['handed', 'empty', 'kept', 'handed'])
+  assert.ok(!handed.text.includes('sk-secret'))
+})
+
+test('a demo card keeps nothing, so its answer has no receipt', async () => {
+  const demo = startCard({ demo: true, storeLabel: 'nowhere (demo)', allowSessionOnly: false })
+  const res = await send(`${await demo.urlReady}/submit`, { method: 'POST', body: one('anything') })
+  assert.equal(res.status, 200)
+  assert.deepEqual(JSON.parse(res.text), { remembered: true })
+})
+
+test('only a card whose command output is masked says so', async () => {
+  const run = startCard({ masked: true })
+  const runUrl = await run.urlReady
+  const runPage = (await send(runUrl)).text
+  assert.ok(runPage.includes('<p class="note" id="masking" hidden>keyprompt masks exact copies in that command&#39;s output.'))
+  await send(`${runUrl}/cancel`, { method: 'POST', body: {} })
+
+  const set = startCard()
+  const setUrl = await set.urlReady
+  const setPage = (await send(setUrl)).text
+  assert.ok(!setPage.includes('masks exact copies'))
+  assert.ok(!setPage.includes('id="masking"'))
+  await send(`${setUrl}/cancel`, { method: 'POST', body: {} })
+})
+
 test('the page script is valid JavaScript', async () => {
   const { urlReady } = startCard({ fields: [{ name: 'A', multiline: true }, { name: 'B' }] })
   const url = await urlReady
@@ -147,7 +202,7 @@ test('a submitted value is trimmed, stored and resolved; the card then refuses f
   const url = await urlReady
   const res = await send(`${url}/submit`, { method: 'POST', body: one('  sk-test-123\n', { remember: true }) })
   assert.equal(res.status, 200)
-  assert.deepEqual(JSON.parse(res.text), { remembered: true })
+  assert.deepEqual(JSON.parse(res.text), { remembered: true, receipt: [{ name: 'OPENAI_API_KEY', outcome: 'saved' }] })
   assert.deepEqual(await result, { remembered: true, values: new Map([['OPENAI_API_KEY', 'sk-test-123']]) })
   assert.deepEqual(stored, [{ values: { OPENAI_API_KEY: 'sk-test-123' }, remember: true }])
   const again = await send(`${url}/submit`, { method: 'POST', body: one('other') }).catch(() => ({ status: 'closed' }))
