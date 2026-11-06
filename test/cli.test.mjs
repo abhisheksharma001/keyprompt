@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { test } from 'node:test'
+import { renderCard } from '../src/card-page.mjs'
 import { readCatalog, recordSavedMany } from '../src/catalog.mjs'
 import {
   catalogNotUpdated,
@@ -109,6 +110,19 @@ test('the README shows pictures that exist and documents demo, and the CHANGELOG
   const { version } = JSON.parse(readFileSync(new URL('package.json', root), 'utf8'))
   const changelog = readFileSync(new URL('CHANGELOG.md', root), 'utf8')
   assert.match(changelog, new RegExp(`^## ${version.replaceAll('.', '\\.')} `, 'm'), `CHANGELOG has no section for ${version}`)
+})
+
+// B-15: after S-30 the demo card's button said "Save" while the README's descriptions still said "Save all 3".
+// A test cannot see a picture, but it can hold its description to the buttons the demo card really renders.
+test("the README's picture descriptions name the buttons the demo card really has (B-15, S-32)", () => {
+  const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8')
+  const alts = [...readme.matchAll(/<img [^>]*alt="([^"]+)"/g)].map((m) => m[1])
+  assert.equal(alts.length, 2)
+  const page = renderCard({ ...demoRequest(), expiresAt: Date.now() + 60_000, nonce: 'n' })
+  const label = (id) => page.match(new RegExp(`id="${id}"[^>]*>([^<]+)<`))[1]
+  const [later, cancel, save] = [label('later'), label('cancel'), label('save')]
+  assert.ok(alts[0].includes(`the buttons ${later}, ${cancel} and ${save}.`), alts[0])
+  assert.ok(alts[1].includes(`after pressing ${save}:`), alts[1])
 })
 
 test('there is no get command', () => {

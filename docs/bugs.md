@@ -167,4 +167,4 @@ The deadline is the real-world path. Someone presses Save near the end of the 5 
 **Blocks:** nothing hard; best done before the next release.
 **Files:** `docs/demo-card.png`, `docs/demo-finished.png`, `README.md` (two links, two alt texts).
 **Research:** none · **Model:** sonnet · **Confidence:** 0.9 that the pictures no longer match the demo card (seen in S-30); how much it matters before the next release is Abhishek's call.
-**Fix step:** not queued yet.
+**Fix step:** S-32 (PR #35). Both pictures retaken once, after S-30 and S-31, from the real `keyprompt demo` (button "Save", 13 poses in the pose row; the old ones showed "Save all 3" and 11). The README links pin the commit that adds them, which is a commit on the PR's branch and not on main (the repo squash-merges), and the descriptions say "Save" and "pressing Save". A new test in `test/cli.test.mjs` holds the descriptions to the buttons the demo card renders, so the words cannot drift again; the pictures themselves still can, because no test can read a picture.
