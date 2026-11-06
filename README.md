@@ -10,11 +10,11 @@ keyprompt demo             # 3. see the card (nothing is saved)
 
 Needs Node.js 18.17 or later. On Linux, also install `secret-tool`: see [Install](#install).
 
-<!-- The pictures use full links pinned to one commit, so they also show on the npm page, which does not reliably resolve paths inside the repo. After changing a picture, point both links at the commit that has the new one. -->
+<!-- The pictures use full links pinned to one commit, so they also show on the npm page, which does not reliably resolve paths inside the repo. After changing a picture, merge it first, then point both links at a commit on main that has the new one (this repo squash-merges, so a commit on the picture's own branch is not on main). -->
 <p align="center">
-  <img src="https://raw.githubusercontent.com/abhisheksharma001/keyprompt/5ae0db8edeee0d506ff8426d2721412243091a13/docs/demo-card.png" width="380" align="middle" alt="The keyprompt demo card: a penguin beside a vault, three boxes for sample secrets, and the buttons Later, Cancel and Save. A banner says nothing you type is saved.">
+  <img src="https://raw.githubusercontent.com/abhisheksharma001/keyprompt/82deb12c4d200defcbcd864e826aa9e6bebf5e58/docs/demo-card.png" width="380" align="middle" alt="The keyprompt demo card: a penguin beside a vault, three boxes for sample secrets, and the buttons Later, Cancel and Save. A banner says nothing you type is saved.">
   &nbsp;
-  <img src="https://raw.githubusercontent.com/abhisheksharma001/keyprompt/5ae0db8edeee0d506ff8426d2721412243091a13/docs/demo-finished.png" width="380" align="middle" alt="The demo after pressing Save: the penguin has shut the vault, the title reads Demo finished, and the card says nothing was saved.">
+  <img src="https://raw.githubusercontent.com/abhisheksharma001/keyprompt/82deb12c4d200defcbcd864e826aa9e6bebf5e58/docs/demo-finished.png" width="380" align="middle" alt="The demo after pressing Save: the penguin has shut the vault, the title reads Demo finished, and the card says nothing was saved.">
 </p>
 
 <p align="center"><sub><code>keyprompt demo</code> opens this card. Nothing you type in it is saved.</sub></p>
