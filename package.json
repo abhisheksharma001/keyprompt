@@ -1,7 +1,7 @@
 {
   "name": "keyprompt",
   "version": "0.1.0",
-  "description": "Give API keys to AI coding agents without pasting them into the chat: a secure secret card pops up, the key goes into your OS password store, and agents use it without ever seeing it.",
+  "description": "Give API keys to AI coding agents without pasting them into the chat. A card opens in your browser, the key goes into your OS keychain, and keyprompt has no command that prints it back.",
   "type": "module",
   "bin": {
     "keyprompt": "bin/keyprompt.mjs"
