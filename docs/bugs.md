@@ -145,6 +145,6 @@ The deadline is the real-world path. Someone presses Save near the end of the 5 
 **Requirement:** invariant 9 in `.claude/CLAUDE.md`.
 **Needs first:** nothing.
 **Blocks:** nothing.
-**Files:** `src/cli.mjs` (`delete`), `test/cli.test.mjs`.
-**Research:** none · **Model:** sonnet · **Confidence:** 0.95 that it happens (reproduced 2026-11-07).
-**Fix step:** not queued yet. Proposed: the same shape as S-26: after `store.remove` succeeds, a failed `recordRemoved` does not change the exit code (0 or 3 as before); one stderr line says the list of names was not updated.
+**Files:** `src/cli.mjs` (`delete`, and the new `removeAndRecord`), `test/cli.test.mjs`.
+**Research:** none · **Model:** sonnet · **Confidence:** 0.95 that it happens (reproduced 2026-11-07, again before the fix in S-27).
+**Fix step:** S-27 (PR #30). After `store.remove` has answered, a failed `recordRemoved` no longer changes the result: `delete` exits 0 (value deleted) or 3 (never saved) as before, prints its usual line, and one line on stderr says "Could not update the list of names (CODE), so "keyprompt list" may still show NAME. The list is …/catalog.json." The line says nothing about the value, because the name may never have been saved. A failing store still fails the delete and leaves the list alone. A corrupt catalog is not repaired. **Also changed:** a list that cannot be read used to end `delete` of a name that was never saved with exit 1 and a raw error; it now ends with exit 3 and "NAME was not saved." plus the line.
