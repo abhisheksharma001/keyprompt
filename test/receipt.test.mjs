@@ -4,7 +4,8 @@ import { test } from 'node:test'
 import { MASKING_NOTE, RECEIPT_WORDS, receiptFor } from '../src/receipt.mjs'
 
 test('the receipt says what the PRD says, word for word', () => {
-  const prd = readFileSync(new URL('../docs/prd/card-v2.md', import.meta.url), 'utf8')
+  // Windows checks the file out with CRLF line endings.
+  const prd = readFileSync(new URL('../docs/prd/card-v2.md', import.meta.url), 'utf8').replace(/\r\n/g, '\n')
   // The paragraph under "### The receipt" quotes the five lines and the masking sentence, in that order.
   const paragraph = prd.slice(prd.indexOf('### The receipt')).split('\n\n')[1]
   const quoted = [...paragraph.matchAll(/"([^"]+)"/g)].map((m) => m[1])
