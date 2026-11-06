@@ -18,6 +18,7 @@ function fakeTime(start) {
       return last
     },
     clearTimeout: (id) => timers.delete(id),
+    running: () => timers.size,
     async advance(ms) {
       const end = now + ms
       for (;;) {
@@ -107,6 +108,7 @@ function openCard({ names = ['A', 'B'], demo = false, run = false, expiresIn = 6
   }
   return {
     time,
+    timers: time.running,
     byId,
     rows,
     posts,
@@ -190,16 +192,23 @@ test('a save that fails after zero ends the card asleep; the form does not open 
   assert.equal(card.byId['form-view'].hidden, true)
 })
 
-test('once the card has ended, the clock stops and never turns it into "Timed out"', async () => {
+test('once the card has ended, no timer is left running and it never turns into "Timed out"', async () => {
   const card = openCard({ expiresIn: 60_000 })
+  assert.equal(card.timers(), 1)
   card.rows[0].box.value = 'sk-secret-a'
   await card.submit()
   await card.reply(card.posts[0], 200, { remembered: true, receipt: [{ name: 'A', outcome: 'saved' }] })
   await card.time.advance(700)
   assert.equal(card.title(), 'Saved')
+  assert.equal(card.timers(), 0)
   await card.time.advance(600_000)
   assert.equal(card.title(), 'Saved')
   assert.equal(card.mood(), 'locked')
+
+  const asleep = openCard({ expiresIn: 5_000 })
+  await asleep.time.advance(5_000)
+  assert.equal(asleep.title(), 'Timed out')
+  assert.equal(asleep.timers(), 0)
 })
 
 test('a run card shows the masking sentence after a save; Later shows "Not saved (Later)" for every box and not that sentence', async () => {
