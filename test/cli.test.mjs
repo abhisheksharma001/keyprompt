@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { test } from 'node:test'
-import { demoRequest, laterForRun, outputIsTerminal, parseArgs, setReport } from '../src/cli.mjs'
+import { demoRequest, laterForRun, outputIsTerminal, parseArgs, secretsInCommand, setReport, valueInCommandError } from '../src/cli.mjs'
 import { EXIT } from '../src/errors.mjs'
 import { getStore } from '../src/store/index.mjs'
 
@@ -138,6 +138,81 @@ test('--no-redact needs a terminal: from a pipe, run exits 2 before reading a ke
   )
   assert.equal(r.stdout, '')
   assert.equal(existsSync(marker), false)
+})
+
+test('a value spelled out in the command is found, in any word, once it is 8 or more characters (S-19)', () => {
+  const secrets = new Map([
+    ['TOKEN', 'sk-live-0123456789'],
+    ['OTHER', 'zzz-another-value'],
+  ])
+  assert.deepEqual(secretsInCommand(secrets, ['echo', 'sk-live-0123456789']), ['TOKEN'])
+  // Inside a longer word, as a header or a URL would hold it.
+  assert.deepEqual(secretsInCommand(secrets, ['curl', '-H', 'Authorization: Bearer sk-live-0123456789']), ['TOKEN'])
+  assert.deepEqual(secretsInCommand(secrets, ['curl', 'https://x.test/?k=zzz-another-value&a=1']), ['OTHER'])
+  // The program itself is a word too.
+  assert.deepEqual(secretsInCommand(secrets, ['sk-live-0123456789']), ['TOKEN'])
+  // Names come back in the order `run` was given them, each once.
+  assert.deepEqual(secretsInCommand(secrets, ['echo', 'zzz-another-value', 'sk-live-0123456789', 'sk-live-0123456789']), ['TOKEN', 'OTHER'])
+  // A different value, or only part of one, is not a copy.
+  assert.deepEqual(secretsInCommand(secrets, ['echo', 'sk-live-012345678', '$TOKEN', 'TOKEN']), [])
+  assert.deepEqual(secretsInCommand(secrets, []), [])
+  assert.deepEqual(secretsInCommand(new Map(), ['echo', 'anything']), [])
+
+  // Eight characters count, seven do not; characters, not bytes or UTF-16 units.
+  assert.deepEqual(secretsInCommand(new Map([['K', 'abcdefgh']]), ['echo', 'abcdefgh']), ['K'])
+  assert.deepEqual(secretsInCommand(new Map([['K', 'abcdefg']]), ['echo', 'abcdefg']), [])
+  assert.deepEqual(secretsInCommand(new Map([['K', 'abcdef🙂']]), ['echo', 'abcdef🙂']), []) // 7 characters, 4-byte emoji
+  assert.deepEqual(secretsInCommand(new Map([['K', 'пароль12']]), ['echo', 'пароль12']), ['K']) // 8 characters, 14 bytes
+  // A line break inside a value (a PEM key) is part of the value.
+  const pem = '-----BEGIN KEY-----\nabc\n-----END KEY-----'
+  assert.deepEqual(secretsInCommand(new Map([['PEM', pem]]), ['echo', pem]), ['PEM'])
+})
+
+test('the refusal names the boxes and never the value, with exit 2 (S-19)', () => {
+  const one = valueInCommandError(['TOKEN'])
+  assert.equal(one.exitCode, 2)
+  assert.equal(
+    one.message,
+    'The value of TOKEN appears in the command itself, so keyprompt did not start it. Leave it out: the command gets it in its environment as $TOKEN (see keyprompt --help).',
+  )
+  const two = valueInCommandError(['A', 'B'])
+  assert.equal(two.exitCode, 2)
+  assert.equal(
+    two.message,
+    'The values of A and B appear in the command itself, so keyprompt did not start it. Leave them out: the command gets each one in its environment under its own name (see keyprompt --help).',
+  )
+})
+
+// Writes a random value to the real OS store, so it is opt-in like the store tests.
+test('run exits 2 without starting the command when a saved value is in it, and says nothing of the value (S-19)', { skip: process.env.KEYPROMPT_STORE_TEST !== '1' }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'keyprompt-pasted-'))
+  const name = `KEYPROMPT_TEST_${randomBytes(4).toString('hex').toUpperCase()}`
+  const value = randomBytes(12).toString('hex')
+  const marker = join(dir, 'ran')
+  const write = `require('fs').writeFileSync(${JSON.stringify(marker)}, 'ran')`
+  const keyprompt = (...command) =>
+    spawnSync(process.execPath, [BIN, 'run', name, '--', process.execPath, '-e', write, ...command], {
+      encoding: 'utf8',
+      env: { ...process.env, KEYPROMPT_HOME: dir, KEYPROMPT_BROWSER: join(dir, 'no-such-browser') },
+      timeout: 15000,
+    })
+  const store = getStore()
+  await store.write(name, value)
+  try {
+    const refused = keyprompt(`token=${value}`)
+    assert.equal(refused.status, 2, refused.stderr)
+    assert.equal(refused.stderr, `keyprompt: ${valueInCommandError([name]).message}\n`)
+    assert.equal(refused.stdout, '')
+    assert.ok(!refused.stdout.includes(value) && !refused.stderr.includes(value))
+    assert.equal(existsSync(marker), false, 'the command must not start')
+
+    // The same run without the value in it starts normally, so the refusal above is the check and nothing else.
+    const allowed = keyprompt('token=$NOT_THE_VALUE')
+    assert.equal(allowed.status, 0, allowed.stderr)
+    assert.equal(readFileSync(marker, 'utf8'), 'ran')
+  } finally {
+    await store.remove(name).catch(() => {})
+  }
 })
 
 test('set reports saved, replaced and empty names, never values', () => {
