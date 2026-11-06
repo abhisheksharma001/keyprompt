@@ -8,6 +8,7 @@ What changed in each version of keyprompt. Everything listed under a version is 
 
 - **Masking catches encoded copies too.** `run` now also replaces the base64, base64url, lowercase hex, URL-encoded and JSON-escaped forms of a value of 8 or more characters with `[keyprompt:NAME]`. Shorter values are still caught only as exact copies. Any other transformation still gets through; `SECURITY.md` has the exact list.
 - **`run` refuses a command that spells out a key.** When the value of a name you gave `run` (8 or more characters) appears inside the command itself, `run` stops with exit code 2 and does not start the command. The message names the key and never shows it. Only the exact value is looked for; an encoded copy of it in the command is not.
+- **Masking finds a key's base64 inside longer base64.** The `Authorization: Basic` line that `curl -v -u user:KEY` prints is the base64 of `user:KEY`, and masking used to miss the key there unless the text before it was a multiple of 3 bytes long. Now the key's part is replaced with `[keyprompt:NAME]` whatever comes before or after it. The character just before the label can still show up to 4 bits of the key's first byte, and the one just after it up to 4 bits of its last.
 
 ## 0.2.0 — 2026-11-06
 

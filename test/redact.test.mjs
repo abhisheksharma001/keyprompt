@@ -105,6 +105,46 @@ test('a value under 8 characters is masked only as an exact copy; characters, no
   assert.equal(redactInChunks({ K: 'пароль12' }, encoded('пароль12'), [100]), '[keyprompt:K] [keyprompt:K] [keyprompt:K]')
 })
 
+// Base64 writes every 3 bytes as 4 characters, so the text around a value changes how the value's base64 looks (S-25, bug B-12).
+test('masks the base64 of a value inside longer base64, whatever text comes before or after it (S-25)', () => {
+  const label = '[keyprompt:K]'
+  // Lengths 18, 19 and 20 end the value at each place in a 3-byte group; the texts before it start it at each place.
+  for (const value of ['dummy-not-a-key-12', 'dummy-not-a-key-123', 'dummy-not-a-key-1234']) {
+    for (const before of ['', 'a', 'ab', 'user:', 'apiuser:']) {
+      for (const after of ['', 'xyz', '\n']) {
+        const where = `${JSON.stringify(before)} + ${value.length} characters + ${JSON.stringify(after)}`
+        const text = Buffer.from(before + value + after).toString('base64')
+        const out = redactInChunks({ K: value }, text, [100])
+        assert.ok(out.includes(label), `${where}: ${out}`)
+        const [left, right, ...more] = out.split(label)
+        assert.equal(more.length, 0, `${where}: masked once`)
+        // Every character made only of the value's bits is masked: at most one character on each side still holds some of them.
+        const first = Math.ceil((8 * Buffer.byteLength(before)) / 6)
+        const end = Math.floor((8 * Buffer.byteLength(before + value)) / 6)
+        assert.equal(left, text.slice(0, first), `${where}: before the label`)
+        assert.ok(text.slice(end).endsWith(right), `${where}: after the label`)
+      }
+    }
+  }
+})
+
+test('masks the key in the Authorization line that curl -v -u user:KEY prints, split across chunks anywhere (S-25, bug B-12)', () => {
+  const key = 'dummy-not-a-key-123'
+  const line = `> Authorization: Basic ${Buffer.from(`apiuser:${key}`).toString('base64')}\r\n`
+  assert.equal(line, '> Authorization: Basic YXBpdXNlcjpkdW1teS1ub3QtYS1rZXktMTIz\r\n')
+  for (let size = 1; size <= line.length; size++) {
+    assert.equal(redactInChunks({ K: key }, line, [size]), '> Authorization: Basic YXBpdXNlcjp[keyprompt:K]\r\n', `chunk size ${size}`)
+  }
+})
+
+test('masks the base64url of a value inside longer base64url text, wherever it starts (S-25)', () => {
+  // VALUE's base64 has "+" or "/" at each start offset, so only the base64url pieces can match here.
+  for (const before of ['', 'a', 'ab']) {
+    const text = Buffer.from(`${before}${VALUE}xyz`).toString('base64url')
+    assert.match(redactInChunks({ TOKEN: VALUE }, text, [100]), /\[keyprompt:TOKEN\]/, JSON.stringify(before))
+  }
+})
+
 test('with no secrets it is a pass-through', () => {
   const r = createRedactor(new Map())
   assert.equal(r.push(Buffer.from('hello')).toString(), 'hello')
