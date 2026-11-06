@@ -157,4 +157,14 @@ The deadline is the real-world path. Someone presses Save near the end of the 5 
 **Blocks:** nothing.
 **Files:** `src/card-page.mjs` (the label), maybe `src/card-script.mjs` (a live count), the PRD sketch, `test/card-server.test.mjs`.
 **Research:** none · **Model:** sonnet · **Confidence:** 0.9 that the label overstates (seen); how much it matters is Abhishek's call.
+**Fix step:** S-30 (PR #33), as Abhishek chose (D-8, 2026-11-07: "Plain 'Save' if any box optional"). A card with any optional box now says plain "Save"; a card where every box must be filled keeps "Save all N" (several boxes) and "Save securely" (one box). `renderCard` in `src/card-page.mjs` decides, and the PRD sketch says `[Save]`. A lone optional box says "Save" too, because on `run` it may be left empty. Chosen over a live count ("Save 1 of 3") and over a plain "Save" on every card. Still open and logged apart: B-15 (the README's demo pictures show the old button).
+
+### B-15 — The README's two demo pictures show the old "Save all 3" button
+
+**Seen:** 2026-11-07 in S-30. `README.md` (lines 15 and 17) links two pictures pinned to an older commit, `docs/demo-card.png` and `docs/demo-finished.png`, and their alt text says "the buttons Later, Cancel and Save all 3" and "after pressing Save all 3". The demo card has an optional box (`DEMO_PRIVATE_KEY:multiline:optional`), so since S-30 `keyprompt demo` says "Save", as the headless-browser look in S-30 showed in light and dark. The pictures are true of the older card; they no longer match what the demo shows.
+**Requirement:** invariant 9 in `.claude/CLAUDE.md` in spirit (the alt text and pictures are shown to people); the README's own comment says that after changing a picture both links point at the commit that has the new one.
+**Needs first:** S-30 and S-31 (B-8) merged, so the pictures are retaken once, after both changes to the demo card. The new pictures must be in a commit before the links can point at it, so this is a two-step docs change (commit the pictures, then update the links in a later commit).
+**Blocks:** nothing hard; best done before the next release.
+**Files:** `docs/demo-card.png`, `docs/demo-finished.png`, `README.md` (two links, two alt texts).
+**Research:** none · **Model:** sonnet · **Confidence:** 0.9 that the pictures no longer match the demo card (seen in S-30); how much it matters before the next release is Abhishek's call.
 **Fix step:** not queued yet.

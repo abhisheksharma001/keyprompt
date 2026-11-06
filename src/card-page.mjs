@@ -78,7 +78,10 @@ export function renderCard({ fields, reason, requester, storeLabel, replacing, a
     : several
       ? 'Secrets requested'
       : 'Secret requested'
-  const action = replacing ? (several ? 'Replace values' : 'Replace value') : several ? `Save all ${fields.length}` : 'Save securely'
+  // "Save all N" is true only when every box must be filled. A card with an optional box may save fewer than it shows, so it says plain "Save" (B-14, invariant 9).
+  const mayLeaveEmpty = fields.some((f) => f.optional)
+  const saveLabel = mayLeaveEmpty ? 'Save' : several ? `Save all ${fields.length}` : 'Save securely'
+  const action = replacing ? (several ? 'Replace values' : 'Replace value') : saveLabel
   const demoHtml = demo ? '<p class="note" role="note"><strong>Demo — nothing you type is saved.</strong></p>' : ''
   // The footer says where a Save goes and nothing about what the agent can see (B-10, invariant 9).
   const footerText = demo ? 'Demo · nothing is stored' : `Stored in your ${escapeHtml(storeLabel)}`

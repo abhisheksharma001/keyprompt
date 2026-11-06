@@ -2,6 +2,12 @@
 
 What changed in each version of keyprompt. Everything listed under a version is merged to `main`.
 
+## Unreleased
+
+### Fixed
+
+- **The Save button no longer says "Save all 3" when a box may be left empty.** On a card with an optional box (`keyprompt set A B:optional`, or the card `keyprompt demo` opens), the button counted every box, so pressing it with the optional box empty saved fewer keys than the button said. Now a card with any optional box says plain "Save". A card where every box must be filled still says "Save all 2", and one required box still says "Save securely".
+
 ## 0.2.1 — 2026-11-07
 
 Masking catches more copies of a key, `run` refuses a command that spells a key out, and three things that ended wrongly now end right: a save and a delete whose list of names could not be updated, and a `run` card where every box is optional.
