@@ -2,7 +2,7 @@
 
 **Give API keys to AI coding agents without pasting them into the chat.**
 
-When an agent (Claude Code, Codex, Cursor, …) needs a key, it runs one command. A secure card opens in your browser, you paste the key there, and it goes straight into your computer's password store: the macOS Keychain, Windows Credential Manager, or the Linux keyring. The agent then uses the key without ever seeing it.
+When an agent (Claude Code, Codex, Cursor, …) needs a key, it runs one command. A secure card opens in your browser, you paste the key there, and it goes straight into your computer's password store: the macOS Keychain, Windows Credential Manager, or the Linux keyring. After that the agent runs its commands through `keyprompt run`, which hands the key to that one command. keyprompt has no command that prints a saved key back, and [SECURITY.md](SECURITY.md) says plainly what it does not cover.
 
 <p align="center">
   <img src="docs/card.png" width="380" alt="The keyprompt secret card: the secret's name, why it is needed, a masked field, Cancel and Save securely">
@@ -15,8 +15,8 @@ When an agent (Claude Code, Codex, Cursor, …) needs a key, it runs one command
 A key pasted into an AI chat is in the conversation log for good: in the transcript, in the model's context, often synced to the cloud. You can't take it back, so the only safe fix is to rotate the key. keyprompt makes the safe path the easy one:
 
 - **The value never enters the chat.** It travels from your clipboard to the card to the OS password store.
-- **Agents use keys, not see them.** `keyprompt run` puts the key into one command's environment and masks any copy of it in that command's output.
-- **There is no "get" command.** Nothing prints a saved key, so an agent can't be talked into revealing one.
+- **Keys go into a command, not into the chat.** `keyprompt run` puts a key into one command's environment and masks exact copies of it in that command's output (not with `--no-redact`). A command can still transform or send it; see [SECURITY.md](SECURITY.md).
+- **There is no "get" command.** keyprompt has no command that prints a saved key back.
 - **Works on Windows, macOS and Linux**, with nothing to sign up for and no cloud service.
 
 ## Install
@@ -37,7 +37,7 @@ On Linux, also install `secret-tool`: `sudo apt install libsecret-tools` (Debian
 1. You ask your agent to do something that needs a key ("run the eval", "deploy to Fly").
 2. The agent runs `keyprompt set OPENAI_API_KEY --reason "..."` and tells you a card opened.
 3. You paste the key into the card and click **Save securely**. Not now? Click **Later**: nothing is saved and the agent is told you chose Later.
-4. From then on the agent runs commands with the key, e.g. `keyprompt run OPENAI_API_KEY -- python eval.py`, and never sees the value. Next week, in a new chat, it's still there: no popup.
+4. From then on the agent runs commands with the key, e.g. `keyprompt run OPENAI_API_KEY -- python eval.py`: the key goes to that command, not into the chat. Next week, in a new chat, it's still there: no popup.
 
 ## Commands
 

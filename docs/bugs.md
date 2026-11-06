@@ -12,7 +12,7 @@ A bug is written here first, then into the plan, then fixed as its own step. For
 **Blocks:** any public announcement or npm publish (S-17).
 **Files:** `README.md`, `package.json`, the GitHub repo description (changed with `gh repo edit`, which is public, so Abhishek says yes first).
 **Research:** none · **Model:** sonnet · **Confidence:** 0.95 that this is a real overclaim — the files were read and compared on 2026-11-05.
-**Fix step:** S-15.
+**Fix step:** S-15 (PR #19), taken as the next step by id on "next", 2026-11-06. README, `package.json` and the GitHub description say what is true. Same overclaim, also fixed there: the README line "an agent can't be talked into revealing one" and quick-start step 4's "never sees the value". Still open and logged apart: B-10 (card footer) and B-11 (`--no-redact`).
 
 ### B-2 — `SECURITY.md` doesn't say plainly that the agent itself can read a saved key from the OS store
 
@@ -22,7 +22,7 @@ A bug is written here first, then into the plan, then fixed as its own step. For
 **Blocks:** nothing directly. The Claude Code guard hook (v0.3 candidate 2) would make it enforced inside Claude Code.
 **Files:** `SECURITY.md`.
 **Research:** none · **Model:** sonnet · **Confidence:** 0.9 — keyprompt's own prompt-free read proves any caller of the same binary gets the same access; not separately run as an attack.
-**Fix step:** S-15 (one plain sentence in `SECURITY.md`).
+**Fix step:** S-15 (PR #19). `SECURITY.md` now says it in one plain line. The macOS claim was run on 2026-11-06 (a plain `security find-generic-password -w` read an item written the way keyprompt writes it, with no prompt); Linux and Windows use the same kind of prompt-free read (`secret-tool lookup`, `CredReadW`) and were not run.
 
 ### B-3 — A failed catalog write after a successful save makes the card say "Could not save"
 
@@ -106,3 +106,23 @@ The deadline is the real-world path. Someone presses Save near the end of the 5 
 **Files:** `src/card-script.mjs` (`finish`), `src/card-page.mjs` if the wording moves, `docs/prd/card-v2.md`, `test/card-script.test.mjs`.
 **Research:** none · **Model:** sonnet · **Confidence:** 0.8 that the words mislead (seen in the frames); the wording is Abhishek's call.
 **Fix step:** not queued yet. Proposed: `finish` changes the footer for the endings that saved nothing, with a test per ending.
+
+### B-10 — The card footer says "never shown to your agent"
+
+**Seen:** every real card ends with "Stored in your {store} · never shown to your agent" (`src/card-page.mjs:83`), and a card with Remember unticked with "Held for this one command only · never shown to your agent" (`src/card-script.mjs:114`). `test/card-server.test.mjs:95` pins the first. keyprompt itself does not show the key to the agent, but a person reads this as "my agent cannot see it", and `SECURITY.md` says a command the agent writes can print a transformed copy, send the key, or (B-11) turn masking off. It is the same overclaim as B-1, on the card instead of the README. Found 2026-11-06 in S-15 while sweeping the repo for B-1's wording. Not fixed in S-15: its files are `README.md`, `package.json` and `SECURITY.md`, and a card change needs the PRD, the page and its tests.
+**Requirement:** invariant 9 in `.claude/CLAUDE.md` ("Never 'your agent can never see it'"). A grep of `docs/prd/` for the phrase found none, so the PRD's footer text does not quote it.
+**Needs first:** Abhishek's choice of wording. B-9 changes the same footer line, so ask both together and fix them in one step.
+**Blocks:** nothing.
+**Files:** `src/card-page.mjs`, `src/card-script.mjs`, `test/card-server.test.mjs`, and `test/card-script.test.mjs` if the Remember-unticked footer is pinned there.
+**Research:** none · **Model:** sonnet · **Confidence:** 0.65 that people read it as a guarantee (a judgment about readers, not seen); under 0.7, so nothing is built until Abhishek decides.
+**Fix step:** not queued yet. Proposed: say what keyprompt does ("keyprompt does not show the key to your agent") or drop the clause, together with B-9's wording.
+
+### B-11 — An agent can turn masking off with `run --no-redact` and read any saved key
+
+**Seen:** reproduced on macOS on 2026-11-06 in S-15. A throwaway item was saved the way keyprompt saves (service `keyprompt`, an environment-style name), then `keyprompt run NAME -- printenv NAME` printed `[keyprompt:NAME]` and `keyprompt run NAME --no-redact -- printenv NAME` printed the value. `--no-redact` is in `HELP` (`src/cli.mjs`), the README and `skill/SKILL.md`; the skill tells the agent to use it only for full-screen terminal programs, and nothing enforces that. So one keyprompt command, typed by the agent without the person's say, shows it a saved key. It adds no new access (the agent can already read the OS store directly, B-2), but it breaks invariant 3 ("masking covers every value handed to `run`, whatever the agent said") and makes `HELP`'s "There is no command that prints a secret" (pinned by a test in `test/cli.test.mjs`) true only for keyprompt's own commands. S-15 now says so in `SECURITY.md` and the README; the flag itself is unchanged.
+**Requirement:** invariant 3 in `.claude/CLAUDE.md`; invariant 1 in spirit.
+**Needs first:** a decision from Abhishek (opus to lay out the options): (a) keep the flag and have the card say when masking is off, so the person sees it before pasting (the S-14 follow-up); (b) remove the flag, and mask full-screen programs another way; (c) keep it as documented in S-15.
+**Blocks:** a stronger README claim than the one S-15 makes; the "refuse a saved key pasted into a command" idea (S-19) is a separate step and does not cover this.
+**Files:** `src/cli.mjs` (`parseArgs`, `HELP`, `run`), `src/card-page.mjs` if the card says so, `README.md`, `skill/SKILL.md`, `test/cli.test.mjs`, `test/run.test.mjs`.
+**Research:** none · **Model:** opus for the decision, sonnet for the fix · **Confidence:** 0.95 that it happens (seen); the right answer is Abhishek's.
+**Fix step:** not queued yet.

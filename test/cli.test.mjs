@@ -56,6 +56,21 @@ test('the README lists every exit code, and the skill explains Later (exit 6)', 
   assert.match(skill, /Later/)
 })
 
+test('the headline claims nothing the code does not do (B-1, B-2)', () => {
+  const read = (path) => readFileSync(new URL(path, import.meta.url), 'utf8')
+  // A command the agent writes can print a transformed copy, so no text may say the agent never sees a key.
+  for (const path of ['../README.md', '../package.json']) {
+    assert.doesNotMatch(read(path), /without (ever )?seeing|not see them|never sees?\b/i, path)
+  }
+  // SECURITY.md says what the OS store and masking do not stop.
+  const security = read('../SECURITY.md')
+  assert.match(security, /read a saved key straight from the OS store/)
+  assert.match(security, /find-generic-password/)
+  assert.match(security, /--no-redact/)
+  // The protections table says "keyprompt command", not "command": a command the agent writes can print the key.
+  assert.match(security, /no keyprompt command that outputs a saved value/)
+})
+
 test('there is no get command', () => {
   const r = cli(['get', 'OPENAI_API_KEY'])
   assert.equal(r.status, 2)
