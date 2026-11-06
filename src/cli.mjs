@@ -216,13 +216,52 @@ export async function saveAndRecord(store, values, reason) {
  * @param {unknown} error
  */
 export function catalogNotUpdated(names, storeLabel, error) {
-  const found = error instanceof Error ? /** @type {NodeJS.ErrnoException} */ (error).code : undefined
-  const code = typeof found === 'string' && /^[A-Z0-9_]{1,20}$/.test(found) ? ` (${found})` : ''
   const them = names.length === 1 ? 'it' : 'them'
   return (
-    `keyprompt: Saved ${joinNames(names)} in the ${storeLabel}, but could not update the list of names${code}, so "keyprompt list" may not show ${them}. ` +
+    `keyprompt: Saved ${joinNames(names)} in the ${storeLabel}, but could not update the list of names${plainCode(error)}, so "keyprompt list" may not show ${them}. ` +
     `The save itself worked. The list is ${catalogPath()}.\n`
   )
+}
+
+/**
+ * What `delete` does: take the value out of the store, then the name off the
+ * list `keyprompt list` shows. Once the store has answered, the value is gone
+ * (or was never there), so a failure of the list must not turn that into an
+ * error: the agent would be told a delete failed that worked (B-13). A failure
+ * of the store itself still throws, and then the list is not touched.
+ * @param {import('./store/index.mjs').SecretStore} store
+ * @param {string} name
+ * @returns {Promise<{ removed: boolean, note: string | undefined }>} `note` is a line for stderr when the list could not be updated.
+ */
+export async function removeAndRecord(store, name) {
+  const removed = await store.remove(name)
+  try {
+    await recordRemoved(name)
+  } catch (error) {
+    return { removed, note: catalogNotUpdatedAfterDelete(name, error) }
+  }
+  return { removed, note: undefined }
+}
+
+/**
+ * The stderr line for a delete whose list of names could not be updated. It
+ * says nothing about the value: stdout and the exit code already do, and the
+ * name may never have been saved. Only a plain error code is repeated.
+ * @param {string} name
+ * @param {unknown} error
+ */
+export function catalogNotUpdatedAfterDelete(name, error) {
+  return `keyprompt: Could not update the list of names${plainCode(error)}, so "keyprompt list" may still show ${name}. The list is ${catalogPath()}.\n`
+}
+
+/**
+ * ` (ENOSPC)` for an error that has a plain code, otherwise nothing. The
+ * error's text is never repeated: it could carry anything.
+ * @param {unknown} error
+ */
+function plainCode(error) {
+  const found = error instanceof Error ? /** @type {NodeJS.ErrnoException} */ (error).code : undefined
+  return typeof found === 'string' && /^[A-Z0-9_]{1,20}$/.test(found) ? ` (${found})` : ''
 }
 
 /**
@@ -395,8 +434,8 @@ export async function main(argv) {
     if (rest.length !== 1) throw new KeypromptError('Usage: keyprompt delete NAME', { exitCode: EXIT.USAGE })
     const name = assertName(rest[0])
     const store = getStore()
-    const removed = await store.remove(name)
-    await recordRemoved(name)
+    const { removed, note } = await removeAndRecord(store, name)
+    if (note) process.stderr.write(note)
     process.stdout.write(removed ? `Deleted ${name} from the ${store.label}.\n` : `${name} was not saved.\n`)
     return removed ? EXIT.OK : EXIT.NOT_FOUND
   }
