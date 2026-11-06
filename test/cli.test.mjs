@@ -15,6 +15,7 @@ import {
   outputIsTerminal,
   parseArgs,
   removeAndRecord,
+  runCardLine,
   saveAndRecord,
   secretsInCommand,
   setReport,
@@ -424,6 +425,17 @@ test('the delete line repeats an error code only when it is a plain one, never a
   assert.ok(!(await line(withCode('ENOSPC'))).includes('the text of the error'))
 })
 
+test('what run tells the agent about its card: names only, and when every box was left empty, that the command gets no value for them (B-4, S-28)', () => {
+  const fields = [{ name: 'A', optional: true }, { name: 'B', optional: true }]
+  const lines = [
+    [fields, { remembered: false, values: new Map() }, 'keyprompt: A and B were left empty on the card, so keyprompt gives the command no value for them.\n'],
+    [[fields[0]], { remembered: false, values: new Map() }, 'keyprompt: A was left empty on the card, so keyprompt gives the command no value for it.\n'],
+    [fields, { remembered: true, values: new Map([['B', 'secret-b']]) }, 'keyprompt: B saved in the macOS Keychain.\n'],
+    [fields, { remembered: false, values: new Map([['A', 'secret-a'], ['B', 'secret-b']]) }, 'keyprompt: A and B received for this run only.\n'],
+  ]
+  for (const [asked, answer, line] of lines) assert.equal(runCardLine(asked, answer, 'macOS Keychain'), line)
+})
+
 test('Later on run: exit 6, names the boxes and the command, never its arguments', () => {
   const one = laterForRun([{ name: 'A' }], 'npm')
   assert.equal(one.exitCode, 6)
@@ -621,6 +633,58 @@ test('delete with a list of names that cannot be read: the value is deleted, the
     assert.match(again.stderr, note)
   } finally {
     await store.remove(name).catch(() => {})
+  }
+})
+
+test('run with every missing name optional: Save with every box empty starts the command without them, saves nothing and tells the agent; set still refuses (B-4, S-28)', { skip: !realCard }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'keyprompt-b4-'))
+  const answer = join(dir, 'answer')
+  const browser = join(dir, 'empty.mjs')
+  // Presses Save with the values in KP_VALUES, records the status the card answered, and cancels if it was not a 200.
+  writeFileSync(
+    browser,
+    `#!${process.execPath}
+import { writeFileSync } from 'node:fs'
+import { request } from 'node:http'
+const url = new URL(process.argv[2])
+const headers = { Origin: url.origin, 'Content-Type': 'application/json' }
+const post = (action, body, done) =>
+  request({ hostname: url.hostname, port: url.port, path: url.pathname + '/' + action, method: 'POST', headers }, (res) => {
+    res.resume()
+    res.on('end', () => done(res.statusCode))
+  }).end(JSON.stringify(body))
+post('submit', { values: JSON.parse(process.env.KP_VALUES), remember: true }, (status) => {
+  writeFileSync(${JSON.stringify(answer)}, String(status))
+  if (status !== 200) post('cancel', {}, () => {})
+})
+`,
+  )
+  chmodSync(browser, 0o755)
+  const [a, b] = [0, 1].map(() => `KEYPROMPT_TEST_${randomBytes(4).toString('hex').toUpperCase()}`)
+  const marker = join(dir, 'env')
+  const keyprompt = (args, values) =>
+    spawnSync(process.execPath, [BIN, ...args], {
+      encoding: 'utf8',
+      env: { ...process.env, KEYPROMPT_HOME: dir, KEYPROMPT_BROWSER: browser, KP_VALUES: JSON.stringify(values) },
+      timeout: 15000,
+    })
+  try {
+    const seen = `require('fs').writeFileSync(${JSON.stringify(marker)}, JSON.stringify([${JSON.stringify(a)} in process.env, ${JSON.stringify(b)} in process.env]))`
+    const run = keyprompt(['run', `${a}:optional,${b}:optional:multiline`, '--', process.execPath, '-e', seen], { [a]: '', [b]: ' \n ' })
+    assert.equal(readFileSync(answer, 'utf8'), '200', 'the card took the empty Save')
+    assert.equal(run.status, 0, run.stderr)
+    assert.equal(readFileSync(marker, 'utf8'), '[false,false]', 'the command ran without either name')
+    assert.ok(run.stderr.includes(`keyprompt: ${a} and ${b} were left empty on the card, so keyprompt gives the command no value for them.\n`), run.stderr)
+    assert.equal(keyprompt(['has', a], {}).status, 3)
+    assert.equal(keyprompt(['has', b], {}).status, 3)
+    assert.equal(existsSync(join(dir, 'catalog.json')), false, 'nothing went on the list of names')
+
+    const set = keyprompt(['set', `${a}:optional`], { [a]: '' })
+    assert.equal(readFileSync(answer, 'utf8'), '400', 'set still needs one value')
+    assert.equal(set.status, 4, set.stderr)
+  } finally {
+    await getStore().remove(a).catch(() => {})
+    await getStore().remove(b).catch(() => {})
   }
 })
 

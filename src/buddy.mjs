@@ -19,6 +19,7 @@ export const MOODS = [
   { id: 'stashing', caption: 'Putting it away…' },
   { id: 'locked', caption: 'Locked in your {store}.' },
   { id: 'one-run', caption: 'Handed to this one command. Not saved.' },
+  { id: 'skipped', caption: 'Nothing was saved. The command gets no value from this card.' },
   { id: 'later', caption: 'Okay, later. Nothing was saved.' },
   { id: 'bye', caption: 'Cancelled. Nothing was saved.' },
   { id: 'asleep', caption: 'This card timed out. Nothing was saved.' },

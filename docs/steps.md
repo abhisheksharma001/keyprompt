@@ -13,7 +13,7 @@ Plan: `docs/prd/card-v2.md`. Rules: `.claude/CLAUDE.md`. Standard: `~/.claude/sk
 | 3 Buddy | S-11 → S-12 → S-13 → S-14 | Demo command, the creature, motion, receipt and deadline |
 | 4 Honest and shipped | S-15, S-22, S-23, S-16 → S-17 | Headline fixed, mascot name dropped, card footer true, README and 0.2.0, npm publish |
 | 4b Lite wins from the teardowns | S-18, S-19 | Masking catches encoded copies; refuse a key pasted into a command |
-| Fixes | S-20, S-21, S-25, S-26, S-27 | B-6 (the card never ends while a save is under way), B-7 (one true sentence for an ended card), B-12 (masking finds a key's base64 inside longer base64), B-3 (a failed update of the list of names no longer fails a save that worked) and B-13 (the same for a delete that worked) |
+| Fixes | S-20, S-21, S-25, S-26, S-27, S-28 | B-6 (the card never ends while a save is under way), B-7 (one true sentence for an ended card), B-12 (masking finds a key's base64 inside longer base64), B-3 (a failed update of the list of names no longer fails a save that worked), B-13 (the same for a delete that worked) and B-4 (on `run`, every optional box may be left empty) |
 
 Order: S-3, S-7, S-15 and S-18 touch different files from the S-2 → S-4 chain, so they can be built in parallel by separate sessions. Everything else follows the arrows.
 
@@ -621,6 +621,28 @@ Pinguu is our own design: flat vector shapes, rounded, a key-shaped head tuft an
 **Acceptance:** WHEN the store has removed the value (or had none) and the list of names cannot be read or written THEN `delete` SHALL exit 0 (or 3 for a name that was not saved) with its usual stdout line, and stderr SHALL carry one line saying the list of names was not updated.
 **Verify:** `node --test --test-timeout=15000 test/cli.test.mjs` with new tests: the Map-store ones (a folder where `catalog.json` should be; a `catalog.json` that is not JSON, for a saved and a never-saved name, left as it was; a working list says nothing and loses the name, and a failing store still fails and leaves the list alone; the code filter), and the opt-in one on the real CLI. Commit, then break `src/cli.mjs` (try removed, error swallowed, a line when fine, a store failure swallowed, the list touched before the store answers, any code repeated, the error text repeated, the path left out, the line never written, `delete` back to the old calls, the line claiming the delete worked, the exit code changed) and watch the tests fail. Then `KEYPROMPT_STORE_TEST=1 npm test`.
 **Must not:** change what `delete` prints or returns when the list works, `recordRemoved`, the catalog's format or place, S-26's line; repair or rewrite a corrupt catalog; add a dependency.
+
+### S-28 — On `run`, Save works with every box empty when every box is optional (bug B-4)
+
+**PR:** one. Server, page, buddy, CLI and docs go together: a server that accepts the empty Save without the page would show "Saved" for nothing, and the old docs lines would be false the moment it merges (invariant 9).
+**Depends on:** Abhishek's decision on B-4, given 2026-11-07 ("Run without it", D-7 in the PRD).
+**Blocks:** nothing.
+**Research:** none.
+**Model:** opus — it changes a card server endpoint.
+**Confidence:** 0.85 — reproduced before the fix (the card answered 400 and only Cancel ended it); tested at every layer, end to end on the real CLI, and by hand in Chrome in light and dark with Remember ticked and unticked. The new pose is the plain one (no new drawing), which is Abhishek's to judge.
+**Files:** `src/card-server.mjs`, `src/cli.mjs`, `src/card-script.mjs`, `src/buddy.mjs`, `test/card-server.test.mjs`, `test/card-script.test.mjs`, `test/buddy.test.mjs`, `test/cli.test.mjs`, `docs/prd/card-v2.md`, `README.md`, `skill/SKILL.md`, `CHANGELOG.md`, `docs/bugs.md`, `docs/steps.md`.
+**Today:** `keyprompt run API_KEY,ORG_ID:optional -- COMMAND` with `API_KEY` saved opens a card with only the optional `ORG_ID` box (a card shows only the names not saved yet). Save with it empty answers "Paste at least one value." (`readValues` in `src/card-server.mjs`), so the only way off the card is Cancel (exit 4): the command never starts, and the next run opens the same card again.
+**Change:**
+- `CardRequest.allowEmpty` in `src/card-server.mjs`. With it, `readValues` lets a submit with no values through. A required box is checked first, so this happens only when every box is optional (or already saved). Such a submit answers `200 { remembered: false, receipt }` (every line "Left empty"), ends the card with no values, and never calls `onSubmit`: nothing reaches the store or the list of names.
+- `run` passes `allowEmpty: true` through `askWithCard`. `set` and `demo` do not, so an empty `set` card still answers 400.
+- The agent's line after a `run` card moves into `runCardLine(fields, answer, storeLabel)` in `src/cli.mjs`. With no values: `keyprompt: ORG_ID was left empty on the card, so keyprompt gives the command no value for it.` (several: "A and B were … for them"). It does not say "not set": `run` copies the agent's own environment, so a variable already set there stays set. With values the line is what it was.
+- The page (`src/card-script.mjs`): when every box is empty (trimmed, as the server trims) Save does not show the key going into the vault and does not wait for that trip. On a 200 it shows the receipt and ends with the title "Left empty" and the mood `skipped`, with no masking sentence (nothing from this card goes to the command) and no footer (B-9: it would name a store the key never reached).
+- The mood `skipped` in `src/buddy.mjs`, caption "Nothing was saved. The command gets no value from this card." Its pose is the plain one: the penguin by the shut vault, holding nothing, still.
+- Docs: the PRD (D-7; A5; the command-line, protocol, receipt and footer lines; the buddy table, now 12 rows), the README and skill hint tables (the skill told agents never to mark every name `:optional`), and `--help`. The PRD line that an empty optional name is "simply absent from the command's environment" is corrected where it was made.
+
+**Acceptance:** WHEN `run` opens a card whose boxes are all optional and the person presses Save with every box empty THEN the card SHALL end with the title "Left empty" and the `skipped` caption, nothing SHALL be saved or listed, stderr SHALL carry one line naming those names as left empty, and `run` SHALL carry on to the command, which gets no value for them from keyprompt; WHEN the same happens on a `set` card THEN it SHALL still answer "Paste at least one value."
+**Verify:** `KEYPROMPT_STORE_TEST=1 npm test` with the new tests: `test/card-server.test.mjs` (an allowed empty submit ends with no values and never calls the store; a required box is still refused), `test/card-script.test.mjs` (no trip into the vault, the ending with Remember ticked and unticked, and a refused empty Save), `test/buddy.test.mjs` (12 moods), `test/cli.test.mjs` (`runCardLine`, and the opt-in end-to-end run with a fake browser, which also checks `set` still refuses). Commit, then break each guard and watch a test fail. Then the card by hand in Chrome, light and dark.
+**Must not:** let `set` or `demo` end with no values; call `onSubmit`, the store or the list of names for an empty submit; let a required box stay empty; change what a Save that gave values says or does; change the Save button's label (B-14); add a dependency.
 
 ---
 

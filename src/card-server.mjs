@@ -32,6 +32,7 @@ const CARD_ENDED = 'This card is no longer active. Close this tab.'
  * @property {boolean} allowSessionOnly Show "Remember on this computer"; when false the values are always saved.
  * @property {boolean} [demo] A demo card: the page says so and never claims a save or a store. Its `onSubmit` must keep nothing.
  * @property {boolean} [masked] The values go to a command whose output keyprompt masks, so the done screen may say so.
+ * @property {boolean} [allowEmpty] Save may leave every box empty when no box is required: the card then ends with no values, and `onSubmit` is not called. `run` sets it, so an optional name can be skipped; `set` does not, because saving nothing is not a save (B-4).
  * @property {(values: Map<string, string>, remember: boolean) => Promise<void>} onSubmit Store (or hold) the non-empty values; throw to show the error on the card.
  * @property {(url: string) => Promise<boolean>} open Open the card for the person. Resolves false if nothing could be opened.
  * @property {number} [timeoutMs]
@@ -40,12 +41,15 @@ const CARD_ENDED = 'This card is no longer active. Close this tab.'
 /**
  * Check a submitted `values` object against the fields the card asked for.
  * Returns the non-empty values, trimmed at both ends (line breaks inside are
- * kept), in the card's order, or the 400 body to send back.
+ * kept), in the card's order, or the 400 body to send back. A required box is
+ * always checked first, so no values at all can pass only when every box is
+ * optional (or already saved) and `allowEmpty` is set.
  * @param {CardField[]} fields
  * @param {unknown} values
+ * @param {boolean} allowEmpty
  * @returns {{ values: Map<string, string> } | { error: string, field?: string }}
  */
-function readValues(fields, values) {
+function readValues(fields, values, allowEmpty) {
   if (typeof values !== 'object' || values === null || Object.getPrototypeOf(values) !== Object.prototype) {
     return { error: 'Malformed request.' }
   }
@@ -63,7 +67,7 @@ function readValues(fields, values) {
     if (value.length > 0) filled.set(field.name, value)
     else if (!field.optional && !field.saved) return { error: `Fill in ${field.name}.`, field: field.name }
   }
-  if (filled.size === 0) return { error: 'Paste at least one value.' }
+  if (filled.size === 0 && !allowEmpty) return { error: 'Paste at least one value.' }
   return { values: filled }
 }
 
@@ -208,7 +212,7 @@ export function requestSecretWithCard(request) {
           send(400, { error: 'Malformed request.' })
           return
         }
-        const checked = readValues(request.fields, body?.values)
+        const checked = readValues(request.fields, body?.values, request.allowEmpty === true)
         if (!('values' in checked)) {
           send(400, checked)
           return
@@ -216,6 +220,12 @@ export function requestSecretWithCard(request) {
         const { values } = checked
         if (busy) {
           send(409, { error: 'Already saving. Wait a moment.' })
+          return
+        }
+        if (values.size === 0) {
+          // Every box was left empty on a card that allows it: nothing to store or hold, so the store is not called.
+          send(200, { remembered: false, receipt: receiptFor(request.fields, values, false) })
+          finish(() => resolve({ remembered: false, values }))
           return
         }
         const remember = request.allowSessionOnly ? body?.remember !== false : true

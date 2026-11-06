@@ -39,11 +39,11 @@ A bug is written here first, then into the plan, then fixed as its own step. For
 
 **Seen:** `keyprompt run X:optional -- COMMAND` with X not saved opens a card with one optional box. Leaving it empty and pressing Save answers "Paste at least one value." (the S-4 rule, `readValues` in `src/card-server.mjs`), so the only ways out are to type something or Cancel (exit 4). Reproduced on 2026-11-05 during S-6 (headless Chromium, real macOS Keychain, a dummy name): the card stayed open and `run` ended with exit 4. The PRD says an empty optional box is "simply absent from the command's environment" (`docs/prd/card-v2.md`, Command line), which this prevents whenever optional boxes are the only kind on the card. `set` is not affected: saving nothing is rightly refused.
 **Requirement:** the PRD line above.
-**Needs first:** a decision from Abhishek: should an all-empty card be allowed for `run` when no box is required? If yes, the card request needs an option for it (the server checks "at least one value" today for every card).
+**Needs first:** a decision from Abhishek: should an all-empty card be allowed for `run` when no box is required? If yes, the card request needs an option for it (the server checks "at least one value" today for every card). **Answered 2026-11-07** (Abhishek: "Run without it", D-7 in the PRD): yes, for `run` only. Found while asking: the card shows only the names that are not saved yet, so `run API_KEY,ORG_ID:optional` with `API_KEY` saved is such a card, and every later run opened it again.
 **Blocks:** nothing now. S-10's agent instructions must not say that `:optional` lets the person skip a name until this is fixed.
 **Files:** `src/card-server.mjs` (`readValues` and the request), `src/cli.mjs`, `test/card-server.test.mjs`.
 **Research:** none · **Model:** opus — it changes a card server endpoint · **Confidence:** 0.9 that the gap is real (reproduced); 0.6 that "allow an empty submit" is the right fix, so a decision comes first.
-**Fix step:** not queued yet.
+**Fix step:** S-28 (PR #31). A `run` card takes Save with every box empty when every box is optional: the card ends "Left empty" with the new `skipped` pose, nothing is saved or listed, stderr says the command gets no value for those names from keyprompt, and `run` carries on to the command. `set` still answers "Paste at least one value.". Reproduced again first, on main, with a fake browser: the card answered 400 to an empty Save.
 
 ### B-5 — On macOS, the tail of a value longer than about 4,000 bytes runs as a separate `security` command
 
@@ -148,3 +148,13 @@ The deadline is the real-world path. Someone presses Save near the end of the 5 
 **Files:** `src/cli.mjs` (`delete`, and the new `removeAndRecord`), `test/cli.test.mjs`.
 **Research:** none · **Model:** sonnet · **Confidence:** 0.95 that it happens (reproduced 2026-11-07, again before the fix in S-27).
 **Fix step:** S-27 (PR #30). After `store.remove` has answered, a failed `recordRemoved` no longer changes the result: `delete` exits 0 (value deleted) or 3 (never saved) as before, prints its usual line, and one line on stderr says "Could not update the list of names (CODE), so "keyprompt list" may still show NAME. The list is …/catalog.json." The line says nothing about the value, because the name may never have been saved. A failing store still fails the delete and leaves the list alone. A corrupt catalog is not repaired. **Also changed:** a list that cannot be read used to end `delete` of a name that was never saved with exit 1 and a raw error; it now ends with exit 3 and "NAME was not saved." plus the line.
+
+### B-14 — The Save button says "Save all N" when some boxes will be left empty
+
+**Seen:** 2026-11-07 during S-28, in Chrome, on a `run` card with two optional boxes. The button read "Save all 2", and pressing it with both empty saved nothing (the card then said "Left empty. Nothing was saved."). The label comes from `renderCard` in `src/card-page.mjs` ("Save all N" for several fields, by count of boxes, not of filled ones). It is not new: since S-4 (one card, many fields), a card with optional boxes left empty saves fewer than N, for example "Save all 3" saving one. S-28 only makes the all-empty case reachable. The done screen and the receipt are true; only the button overstates.
+**Requirement:** invariant 9 in `.claude/CLAUDE.md` (the button is a word shown to people); the PRD layout sketch shows "Save all 3" on a card with an optional box.
+**Needs first:** Abhishek's choice of label, for example "Save" whenever a card has an optional box, or a count of the filled boxes that changes as the person types.
+**Blocks:** nothing.
+**Files:** `src/card-page.mjs` (the label), maybe `src/card-script.mjs` (a live count), the PRD sketch, `test/card-server.test.mjs`.
+**Research:** none · **Model:** sonnet · **Confidence:** 0.9 that the label overstates (seen); how much it matters is Abhishek's call.
+**Fix step:** not queued yet.
