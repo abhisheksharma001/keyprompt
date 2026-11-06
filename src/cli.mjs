@@ -103,6 +103,47 @@ export function outputIsTerminal(stdout, stderr) {
   return stdout.isTTY === true && stderr.isTTY === true
 }
 
+/**
+ * A value this short ("test", "1234") turns up in ordinary command text by
+ * chance, so refusing on it would be wrong more often than right. Counted in
+ * characters (code points), as in src/redact.mjs.
+ */
+const MIN_PASTED_LENGTH = 8
+
+/**
+ * The names whose value is spelled out inside one of the command's own words.
+ * A command written that way has put the value in the agent's transcript and
+ * on the process list, which is what `run` is for avoiding (S-19). Only the
+ * exact value is looked for; an encoded copy of it is not.
+ * @param {Map<string, string>} secrets
+ * @param {string[]} command The program and its arguments, as given after `--`.
+ * @returns {string[]} Names only, in the order `run` was given them.
+ */
+export function secretsInCommand(secrets, command) {
+  /** @type {string[]} */
+  const found = []
+  for (const [name, value] of secrets) {
+    if ([...value].length < MIN_PASTED_LENGTH) continue
+    if (command.some((word) => word.includes(value))) found.push(name)
+  }
+  return found
+}
+
+/**
+ * What `run` tells the agent when it refuses because a value is in the command.
+ * Names only, never the value or any part of it. Says "value", not "saved
+ * value": one the person gave for this run only is refused the same way.
+ * @param {string[]} names
+ */
+export function valueInCommandError(names) {
+  const one = names.length === 1
+  const what = one ? `The value of ${names[0]} appears` : `The values of ${joinNames(names)} appear`
+  const how = one ? `the command gets it in its environment as $${names[0]}` : 'the command gets each one in its environment under its own name'
+  return new KeypromptError(`${what} in the command itself, so keyprompt did not start it. Leave ${one ? 'it' : 'them'} out: ${how} (see keyprompt --help).`, {
+    exitCode: EXIT.USAGE,
+  })
+}
+
 /** Who is asking, for the card. Only a label; nothing trusts it. */
 function requesterLabel(/** @type {string | undefined} */ by) {
   if (by) return by
@@ -261,6 +302,9 @@ export async function main(argv) {
       process.stderr.write(`keyprompt: ${joinNames(given)} ${asked.remembered ? `saved in the ${store.label}` : 'received for this run only'}.\n`)
       return asked
     })
+    // After the values are known and before the command starts, so a refused run starts nothing.
+    const inCommand = secretsInCommand(secrets, args.command)
+    if (inCommand.length > 0) throw valueInCommandError(inCommand)
     return runWithSecrets(command, commandArgs, secrets, { redact: args.redact })
   }
 
