@@ -3,29 +3,30 @@
 **Give API keys to AI coding agents without pasting them into the chat.**
 
 ```sh
-npm install -g github:abhisheksharma001/keyprompt   # 1. install it
-keyprompt install-skill                             # 2. teach Claude Code to use it
-keyprompt demo                                      # 3. see the card (nothing is saved)
+npm install -g keyprompt   # 1. install it
+keyprompt install-skill    # 2. teach Claude Code to use it
+keyprompt demo             # 3. see the card (nothing is saved)
 ```
 
 Needs Node.js 18.17 or later. On Linux, also install `secret-tool`: see [Install](#install).
 
+<!-- The pictures use full links pinned to one commit, so they also show on the npm page, which does not reliably resolve paths inside the repo. After changing a picture, point both links at the commit that has the new one. -->
 <p align="center">
-  <img src="docs/demo-card.png" width="380" align="middle" alt="The keyprompt demo card: a penguin beside a vault, three boxes for sample secrets, and the buttons Later, Cancel and Save all 3. A banner says nothing you type is saved.">
+  <img src="https://raw.githubusercontent.com/abhisheksharma001/keyprompt/e24f5eab0411ceb7c204ace26130acf3ba99f3c4/docs/demo-card.png" width="380" align="middle" alt="The keyprompt demo card: a penguin beside a vault, three boxes for sample secrets, and the buttons Later, Cancel and Save all 3. A banner says nothing you type is saved.">
   &nbsp;
-  <img src="docs/demo-finished.png" width="380" align="middle" alt="The demo after pressing Save all 3: the penguin has shut the vault, the title reads Demo finished, and the card says nothing was saved.">
+  <img src="https://raw.githubusercontent.com/abhisheksharma001/keyprompt/e24f5eab0411ceb7c204ace26130acf3ba99f3c4/docs/demo-finished.png" width="380" align="middle" alt="The demo after pressing Save all 3: the penguin has shut the vault, the title reads Demo finished, and the card says nothing was saved.">
 </p>
 
 <p align="center"><sub><code>keyprompt demo</code> opens this card. Nothing you type in it is saved.</sub></p>
 
-When an agent (Claude Code, Codex, Cursor, …) needs a key, it runs one command. A secure card opens in your browser, you paste the key there, and it goes straight into your computer's password store: the macOS Keychain, Windows Credential Manager, or the Linux keyring. After that the agent runs its commands through `keyprompt run`, which hands the key to that one command. keyprompt has no command that prints a saved key back, and [SECURITY.md](SECURITY.md) says plainly what it does not cover.
+When an agent (Claude Code, Codex, Cursor, …) needs a key, it runs one command. A secure card opens in your browser, you paste the key there, and it goes straight into your computer's password store: the macOS Keychain, Windows Credential Manager, or the Linux keyring. After that the agent runs its commands through `keyprompt run`, which hands the key to that one command. keyprompt has no command that prints a saved key back, and [SECURITY.md](https://github.com/abhisheksharma001/keyprompt/blob/main/SECURITY.md) says plainly what it does not cover.
 
 ## Why
 
 A key pasted into an AI chat is in the conversation log for good: in the transcript, in the model's context, often synced to the cloud. You can't take it back, so the only safe fix is to rotate the key. keyprompt makes the safe path the easy one:
 
 - **The value never enters the chat.** It travels from your clipboard to the card to the OS password store.
-- **Keys go into a command, not into the chat.** `keyprompt run` puts a key into one command's environment and masks exact copies of it in that command's output (not with `--no-redact`). A command can still transform or send it; see [SECURITY.md](SECURITY.md).
+- **Keys go into a command, not into the chat.** `keyprompt run` puts a key into one command's environment and masks exact copies of it in that command's output (not with `--no-redact`). A command can still transform or send it; see [SECURITY.md](https://github.com/abhisheksharma001/keyprompt/blob/main/SECURITY.md).
 - **There is no "get" command.** keyprompt has no command that prints a saved key back.
 - **Works on Windows, macOS and Linux**, with nothing to sign up for and no cloud service.
 
@@ -34,11 +35,11 @@ A key pasted into an AI chat is in the conversation log for good: in the transcr
 Needs Node.js 18.17 or later.
 
 ```sh
-npm install -g github:abhisheksharma001/keyprompt
+npm install -g keyprompt
 keyprompt install-skill        # teach Claude Code to use it
 ```
 
-Or run it without installing: `npx -y github:abhisheksharma001/keyprompt <command>`.
+Or run it without installing: `npx -y keyprompt <command>`.
 
 On Linux, also install `secret-tool`: `sudo apt install libsecret-tools` (Debian/Ubuntu) or `sudo dnf install libsecret` (Fedora). macOS and Windows need nothing extra.
 
@@ -103,7 +104,7 @@ Once the command in `keyprompt run` has started, `run` exits with the command's 
 - If the exit code is 6, the user chose Later and nothing was saved. Tell them in one line, carry on with work that doesn't need the secret, and ask again only when you are about to use it.
 - To use one, run `keyprompt run NAME -- <command>`; the command reads it from `$NAME`. `keyprompt has NAME` checks whether it exists.
 - If the user pastes a secret into the chat anyway, tell them it is now exposed and should be rotated, then store the new one with `keyprompt set`.
-- If `keyprompt` is not installed, use `npx -y github:abhisheksharma001/keyprompt` instead.
+- If `keyprompt` is not installed, use `npx -y keyprompt` instead.
 ```
 
 Using a key as a command-line argument (an `Authorization` header, say)? Let a shell inside `run` expand it, so the value never appears in the agent's own command:
@@ -131,7 +132,7 @@ You can see or delete them there yourself at any time. `~/.keyprompt/catalog.jso
 - The OS password store caps how long one value can be. Windows Credential Manager: 1,280 characters. macOS: about 4,000 bytes on one line, or about 2,000 with line breaks (a shorter name leaves a little more room). Linux: keyprompt allows 65,536 characters; values near that size have not been tested. A value that is too long is refused, and the card says so.
 - Line breaks inside a value (a PEM key, say) are kept on macOS, Windows and Linux. CI checks this with short values (up to 160 bytes on Windows and Linux); the size limits above still apply.
 
-See [SECURITY.md](SECURITY.md) for exactly what keyprompt protects against and what it doesn't.
+See [SECURITY.md](https://github.com/abhisheksharma001/keyprompt/blob/main/SECURITY.md) for exactly what keyprompt protects against and what it doesn't.
 
 ## Development
 

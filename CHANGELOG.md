@@ -2,9 +2,9 @@
 
 What changed in each version of keyprompt. Everything listed under a version is merged to `main`.
 
-## 0.2.0 — unreleased
+## 0.2.0 — 2026-11-06
 
-Not published to npm yet: install it from GitHub, as the README says.
+The first version on npm: `npm install -g keyprompt`, or `npx -y keyprompt <command>` without installing.
 
 ### Added
 

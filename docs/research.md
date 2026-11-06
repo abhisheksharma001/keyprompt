@@ -119,8 +119,8 @@ Judgment (not legal advice): low risk while keyprompt is small and free; the ris
 **Where:** card v2 · S-17
 **Find out:** whether `keyprompt` can be published under that name.
 **Confidence:** 0.9 — `npm view keyprompt` returned 404 Not Found on 2026-11-05. Names can be taken at any time; check again right before publishing.
-**Status:** answered 2026-11-05 (re-check at S-17).
-**Answer:** free on 2026-11-05.
+**Status:** answered 2026-11-05; re-checked 2026-11-06 at S-17.
+**Answer:** free on 2026-11-05. Re-checked 2026-11-06 17:17 IST against the live registry: `npm view keyprompt` returned 404, and so did `key-prompt`, `key_prompt` and `key.prompt`.
 
 ### R-8 — How do we hide a pasted multi-line secret on the card?
 

@@ -71,12 +71,24 @@ test('the headline claims nothing the code does not do (B-1, B-2)', () => {
   assert.match(security, /no keyprompt command that outputs a saved value/)
 })
 
-test('the README shows pictures that exist and documents demo, and the CHANGELOG has the package version (S-16)', () => {
+test('the README shows pictures that exist and documents demo, and the CHANGELOG has the package version (S-16, S-17)', () => {
   const root = new URL('../', import.meta.url)
   const readme = readFileSync(new URL('README.md', root), 'utf8')
   const pictures = [...readme.matchAll(/<img [^>]*src="([^"]+)"/g)].map((m) => m[1])
   assert.ok(pictures.length >= 2)
-  for (const src of pictures) assert.ok(existsSync(new URL(src, root)), `README picture ${src}`)
+  // The npm page does not reliably resolve paths inside the repo, so each picture is a full link pinned to a commit (S-17).
+  const pinned = /^https:\/\/raw\.githubusercontent\.com\/abhisheksharma001\/keyprompt\/[0-9a-f]{40}\/(docs\/[\w.-]+)$/
+  for (const src of pictures) {
+    const m = pinned.exec(src)
+    assert.ok(m, `README picture is not a pinned full link: ${src}`)
+    assert.ok(existsSync(new URL(m[1], root)), `README picture ${m[1]}`)
+  }
+  // Links inside the repo break on the npm page the same way.
+  assert.doesNotMatch(readme, /\]\((?!https?:|#)[^)]+\)/, 'README has a link to a path inside the repo')
+  // Install from npm, not from GitHub (S-17).
+  for (const text of [readme, readFileSync(new URL('skill/SKILL.md', root), 'utf8')]) {
+    assert.doesNotMatch(text, /github:abhisheksharma001/)
+  }
   // B-10: the old screenshot's alt text said it, and the card no longer does.
   assert.doesNotMatch(readme, /never shown to your agent/)
   assert.match(readme, /^\| `keyprompt demo` \|/m)
