@@ -1,18 +1,20 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { test } from 'node:test'
-import { readCatalog } from '../src/catalog.mjs'
+import { readCatalog, recordSavedMany } from '../src/catalog.mjs'
 import {
   catalogNotUpdated,
+  catalogNotUpdatedAfterDelete,
   demoRequest,
   laterForRun,
   outputIsTerminal,
   parseArgs,
+  removeAndRecord,
   saveAndRecord,
   secretsInCommand,
   setReport,
@@ -254,8 +256,8 @@ test('set reports saved, replaced and empty names, never values', () => {
   assert.ok(!report.includes('sk-'))
 })
 
-/** A store that keeps values in a Map. `failWrite` makes every write throw. */
-function mapStore({ failWrite = false } = {}) {
+/** A store that keeps values in a Map. `failWrite` makes every write throw, `failRemove` every remove. */
+function mapStore({ failWrite = false, failRemove = false } = {}) {
   const items = new Map()
   return {
     items,
@@ -270,6 +272,7 @@ function mapStore({ failWrite = false } = {}) {
       items.set(name, value)
     },
     async remove(name) {
+      if (failRemove) throw new KeypromptError(`Could not delete ${name} from the test store.`)
       return items.delete(name)
     },
   }
@@ -350,6 +353,73 @@ test('the line repeats an error code only when it is a plain one, never an error
       text,
       `keyprompt: Saved A in the test store, but could not update the list of names, so "keyprompt list" may not show it. The save itself worked. The list is ${where}.\n`,
     )
+  }
+  assert.ok(!(await line(withCode('ENOSPC'))).includes('the text of the error'))
+})
+
+test('a list of names that cannot be read does not fail a delete that worked, and the agent is told (B-13, S-27)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'keyprompt-b13-'))
+  // A folder where catalog.json should be: reading it fails (EISDIR) on every OS.
+  mkdirSync(join(dir, 'catalog.json'))
+  const store = mapStore()
+  store.items.set('A', 'sk-aaaaaaaa')
+  store.items.set('B', 'sk-bbbbbbbb')
+  const result = await withHome(dir, () => removeAndRecord(store, 'A'))
+  assert.equal(result.removed, true)
+  assert.deepEqual([...store.items], [['B', 'sk-bbbbbbbb']], 'the value is gone, the other one is not touched')
+  assert.match(result.note, /^keyprompt: Could not update the list of names \([A-Z]+\), so "keyprompt list" may still show A\. The list is /)
+  assert.ok(result.note.endsWith(`${join(dir, 'catalog.json')}.\n`), result.note)
+  assert.ok(!result.note.includes('sk-'), 'no value in the line')
+  assert.equal(statSync(join(dir, 'catalog.json')).isDirectory(), true, 'left as it was')
+})
+
+test('a catalog.json that is not JSON is the same case, also for a name that was never saved, and is left as it was (B-13, S-27)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'keyprompt-b13-'))
+  writeFileSync(join(dir, 'catalog.json'), '{not json')
+  const store = mapStore()
+  store.items.set('A', 'sk-aaaaaaaa')
+  const never = await withHome(dir, () => removeAndRecord(store, 'GONE'))
+  assert.equal(never.removed, false)
+  assert.deepEqual([...store.items], [['A', 'sk-aaaaaaaa']])
+  // A parse error has no code, so the line has none. It says nothing about the value.
+  assert.equal(
+    never.note,
+    `keyprompt: Could not update the list of names, so "keyprompt list" may still show GONE. The list is ${join(dir, 'catalog.json')}.\n`,
+  )
+  const saved = await withHome(dir, () => removeAndRecord(store, 'A'))
+  assert.equal(saved.removed, true)
+  assert.equal(store.items.size, 0)
+  assert.equal(saved.note, never.note.replace('GONE', 'A'))
+  assert.equal(readFileSync(join(dir, 'catalog.json'), 'utf8'), '{not json')
+})
+
+test('when the list is fine a delete says nothing extra and takes the name off it; when the store fails the delete still fails and the list is not touched (S-27)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'keyprompt-b13-'))
+  await withHome(dir, async () => {
+    await recordSavedMany(['A', 'B'], { store: 'fake' })
+    const store = mapStore()
+    store.items.set('A', 'sk-aaaaaaaa')
+    assert.deepEqual(await removeAndRecord(store, 'A'), { removed: true, note: undefined })
+    assert.deepEqual(Object.keys(await readCatalog()), ['B'])
+    assert.deepEqual(await removeAndRecord(store, 'A'), { removed: false, note: undefined })
+
+    await assert.rejects(removeAndRecord(mapStore({ failRemove: true }), 'B'), (error) => {
+      assert.ok(error instanceof KeypromptError)
+      assert.equal(error.message, 'Could not delete B from the test store.')
+      return true
+    })
+    assert.deepEqual(Object.keys(await readCatalog()), ['B'], 'B is still on the list: the store did not say it is gone')
+  })
+})
+
+test('the delete line repeats an error code only when it is a plain one, never an error text (S-27)', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'keyprompt-b13-'))
+  const line = (error) => withHome(home, () => catalogNotUpdatedAfterDelete('A', error))
+  const withCode = (code) => Object.assign(new Error('the text of the error'), { code })
+  const where = join(home, 'catalog.json')
+  assert.ok((await line(withCode('ENOSPC'))).includes('update the list of names (ENOSPC), so'))
+  for (const odd of [withCode('no space left sk-12345678'), withCode(28), withCode(undefined), new Error('x'), 'a string', null]) {
+    assert.equal(await line(odd), `keyprompt: Could not update the list of names, so "keyprompt list" may still show A. The list is ${where}.\n`)
   }
   assert.ok(!(await line(withCode('ENOSPC'))).includes('the text of the error'))
 })
@@ -522,6 +592,35 @@ post('submit', { values: { ${name}: ${JSON.stringify(value)} }, remember: true }
     }
   } finally {
     await getStore().remove(name).catch(() => {})
+  }
+})
+
+// Writes a random value to the real OS store, so it is opt-in like the store tests. No card is involved.
+test('delete with a list of names that cannot be read: the value is deleted, the exit code is the usual one, and stderr says the list was not updated (B-13, S-27)', { skip: process.env.KEYPROMPT_STORE_TEST !== '1' }, async () => {
+  const home = mkdtempSync(join(tmpdir(), 'keyprompt-b13-'))
+  mkdirSync(join(home, 'catalog.json'))
+  const name = `KEYPROMPT_TEST_${randomBytes(4).toString('hex').toUpperCase()}`
+  const value = randomBytes(12).toString('hex')
+  const env = { ...process.env, KEYPROMPT_HOME: home }
+  const keyprompt = (args) => spawnSync(process.execPath, [BIN, ...args], { encoding: 'utf8', env, timeout: 15000 })
+  const store = getStore()
+  const note = new RegExp(`^keyprompt: Could not update the list of names \\([A-Z]+\\), so "keyprompt list" may still show ${name}\\. The list is .+catalog\\.json\\.\\n$`)
+  await store.write(name, value)
+  try {
+    assert.equal(keyprompt(['has', name]).status, 0, 'saved before')
+    const deleted = keyprompt(['delete', name])
+    assert.equal(deleted.status, 0, deleted.stderr)
+    assert.equal(deleted.stdout, `Deleted ${name} from the ${store.label}.\n`)
+    assert.match(deleted.stderr, note)
+    assert.ok(!deleted.stdout.includes(value) && !deleted.stderr.includes(value), 'no value is printed')
+    assert.equal(keyprompt(['has', name]).status, 3, 'the value is gone')
+
+    const again = keyprompt(['delete', name])
+    assert.equal(again.status, 3, again.stderr)
+    assert.equal(again.stdout, `${name} was not saved.\n`)
+    assert.match(again.stderr, note)
+  } finally {
+    await store.remove(name).catch(() => {})
   }
 })
 
