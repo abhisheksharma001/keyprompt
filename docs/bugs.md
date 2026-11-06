@@ -178,3 +178,13 @@ The deadline is the real-world path. Someone presses Save near the end of the 5 
 **Files:** `README.md` (two links, and the comment above them).
 **Research:** none · **Model:** sonnet · **Confidence:** 0.95 that the pin is not on main (git says so) and that 82deb12 serves the same bytes (read live on 2026-11-07).
 **Fix step:** S-33 (PR #36). Both links point at 82deb12, a commit on main. The comment above them now says to merge a picture first and then pin to a commit on main, because with squash merges a commit on the picture's own branch is not on main. No test can say a commit is on main (CI clones shallow), so it is checked by command and recorded in the step.
+
+### B-17 — The S-29 register row says its tag and GitHub release come "after the merge", though both exist
+
+**Seen:** 2026-11-07, while preparing the 0.2.2 release (S-33 noted it and left it for its own step). The S-29 status row in `docs/steps.md` ended "**After the merge:** tag `v0.2.1` on the squash commit once `npm pack` there gives the same shasum, then the GitHub release; both need Abhishek's go." Both were done: the annotated tag v0.2.1 is on 9705e21, the S-29 squash commit (`git for-each-ref refs/tags/v0.2.1`, read 2026-11-07), and the release "keyprompt 0.2.1" exists (created 2026-11-06 21:13:54 UTC; `gh release view v0.2.1`). The row was written before them and never updated, so a reader of the register would think 0.2.1 has no tag or release.
+**Requirement:** the standard's rule that a wrong claim is corrected in the place it was made. The PRD does not cover it.
+**Needs first:** nothing.
+**Blocks:** nothing.
+**Files:** `docs/steps.md` (the S-29 row, and the S-33 row's note about it).
+**Research:** none · **Model:** sonnet · **Confidence:** 0.95 that the row is stale (tag, release and the published shasum were all read from the system).
+**Fix step:** S-35 (PR #38). The S-29 row's last sentence now says where the tag is (9705e21, whose message holds the shasum; `npm pack` at that commit gives it again, read 2026-11-07) and that the release exists. The S-29 entry further down keeps the plan as it was written. A register row that waits on an owner act (a tag, a release) names the act in words that stay true after it is done, as the S-34 row does.
