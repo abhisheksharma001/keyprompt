@@ -2,13 +2,23 @@
 
 **Give API keys to AI coding agents without pasting them into the chat.**
 
-When an agent (Claude Code, Codex, Cursor, …) needs a key, it runs one command. A secure card opens in your browser, you paste the key there, and it goes straight into your computer's password store: the macOS Keychain, Windows Credential Manager, or the Linux keyring. After that the agent runs its commands through `keyprompt run`, which hands the key to that one command. keyprompt has no command that prints a saved key back, and [SECURITY.md](SECURITY.md) says plainly what it does not cover.
+```sh
+npm install -g github:abhisheksharma001/keyprompt   # 1. install it
+keyprompt install-skill                              # 2. teach Claude Code to use it
+keyprompt demo                                       # 3. see the card (nothing is saved)
+```
+
+Needs Node.js 18.17 or later. On Linux, also install `secret-tool`: see [Install](#install).
 
 <p align="center">
-  <img src="docs/card.png" width="380" alt="The keyprompt secret card: the secret's name, why it is needed, a masked field, Cancel and Save securely">
+  <img src="docs/demo-card.png" width="380" align="middle" alt="The keyprompt demo card: a penguin beside a vault, three boxes for sample secrets, and the buttons Later, Cancel and Save all 3. A banner says nothing you type is saved.">
   &nbsp;
-  <img src="docs/saved.png" width="380" alt="After saving: Saved securely and kept private, never shown to your agent">
+  <img src="docs/demo-finished.png" width="380" align="middle" alt="The demo after pressing Save all 3: the penguin has shut the vault, the title reads Demo finished, and the card says nothing was saved.">
 </p>
+
+<p align="center"><sub><code>keyprompt demo</code> opens this card. Nothing you type in it is saved.</sub></p>
+
+When an agent (Claude Code, Codex, Cursor, …) needs a key, it runs one command. A secure card opens in your browser, you paste the key there, and it goes straight into your computer's password store: the macOS Keychain, Windows Credential Manager, or the Linux keyring. After that the agent runs its commands through `keyprompt run`, which hands the key to that one command. keyprompt has no command that prints a saved key back, and [SECURITY.md](SECURITY.md) says plainly what it does not cover.
 
 ## Why
 
@@ -49,6 +59,7 @@ On Linux, also install `secret-tool`: `sudo apt install libsecret-tools` (Debian
 | `keyprompt list` | Saved names, reasons and dates. Never values. |
 | `keyprompt delete NAME` | Removes it from the password store. |
 | `keyprompt install-skill` | Installs the Claude Code skill (`~/.claude/skills/keyprompt/SKILL.md`). |
+| `keyprompt demo` | Opens a sample card with three boxes, so you can see how it looks. Nothing you type is saved. Save, **Later** and Cancel all end it with exit code 0. |
 
 Names look like environment variables (`OPENAI_API_KEY`, `STRIPE_SECRET_KEY`), because that's what `run` sets.
 
