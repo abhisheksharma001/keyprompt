@@ -2,7 +2,9 @@
 
 What changed in each version of keyprompt. Everything listed under a version is merged to `main`.
 
-## Unreleased
+## 0.2.1 — 2026-11-07
+
+Masking catches more copies of a key, `run` refuses a command that spells a key out, and three things that ended wrongly now end right: a save and a delete whose list of names could not be updated, and a `run` card where every box is optional.
 
 ### Added
 
