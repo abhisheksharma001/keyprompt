@@ -125,7 +125,7 @@ HINT  = visible | multiline | optional
 
 ### Saving: all or nothing
 
-For each value in order: read what was there before, then write. If any write fails, every earlier name is put back exactly as it was (old value restored, or removed if it was new), and the card shows the error. The catalog is written once, after everything succeeded.
+For each value in order: read what was there before, then write. If any write fails, every earlier name is put back exactly as it was (old value restored, or removed if it was new), and the card shows the error. The catalog is written once, after everything succeeded. If that write (or the read before it) fails, the values are still saved: the card still says Saved, and one line on stderr tells the agent the list of names was not updated (B-3, S-26).
 
 ### The buddy
 
