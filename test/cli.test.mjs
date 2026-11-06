@@ -111,7 +111,7 @@ test('--no-redact needs a terminal: from a pipe, run exits 2 before reading a ke
   assert.equal(outputIsTerminal({}, {}), false)
 
   // spawnSync pipes stdout and stderr, as an agent's shell tool does. The browser does not
-  // exist, so if the check let this through, no real browser would open and run would fail otherwise.
+  // exist, so if the check let this through, no real browser would open and run would end with another exit code.
   const dir = mkdtempSync(join(tmpdir(), 'keyprompt-noredact-'))
   const marker = join(dir, 'ran')
   const r = spawnSync(
