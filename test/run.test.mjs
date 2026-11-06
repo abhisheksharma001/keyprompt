@@ -30,6 +30,12 @@ test('the value is masked in stdout and stderr, even when written in pieces', ()
   assert.ok(!r.stdout.includes('tok-super-secret-42') && !r.stderr.includes('tok-super-secret-42'))
 })
 
+test('a command that prints the base64 of its key shows [keyprompt:NAME] instead (S-18)', () => {
+  const r = runSnippet({ MY_TOKEN: 'tok-super-secret-42' }, 'console.log("auth " + Buffer.from(process.env.MY_TOKEN).toString("base64"))')
+  assert.equal(r.status, 0)
+  assert.equal(r.stdout, 'auth [keyprompt:MY_TOKEN]\n')
+})
+
 test("the command's exit code is passed through", () => {
   assert.equal(runSnippet({ K: 'v' }, 'process.exit(7)').status, 7)
 })

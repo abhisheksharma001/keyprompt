@@ -126,3 +126,12 @@ The deadline is the real-world path. Someone presses Save near the end of the 5 
 **Files:** `src/cli.mjs` (`parseArgs`, `HELP`, `run`), `src/card-page.mjs` if the card says so, `README.md`, `skill/SKILL.md`, `test/cli.test.mjs`, `test/run.test.mjs`.
 **Research:** none · **Model:** opus for the decision, sonnet for the fix · **Confidence:** 0.95 that it happens (seen); the right answer is Abhishek's.
 **Fix step:** S-24 (PR #23). From a pipe or a file, `run --no-redact` stops with exit 2 before reading a key, so an agent's shell tool can no longer turn masking off by accident. Not closed for an agent acting on purpose: one whose commands run in a real terminal, or one that starts keyprompt inside `script` (which makes a terminal, checked on macOS 2026-11-06), still can. That is the same kind of limit as B-2, and `SECURITY.md` says so.
+
+### B-12 — `curl -v -u user:KEY` shows the key base64-encoded together with the username, and masking misses it
+
+**Seen:** 2026-11-06 during S-18, on macOS with curl 8.7.1 against a local test server: `curl -v -u apiuser:dummy-not-a-key-123` prints `> Authorization: Basic YXBpdXNlcjpkdW1teS1ub3QtYS1rZXktMTIz`, the base64 of `apiuser:dummy-not-a-key-123`. S-18 masks the base64 of the value on its own, which matches here only when the text before the value is a multiple of 3 bytes long, because base64 works in 3-byte groups. With `ab:` the line became `YWI6[keyprompt:K]`; with `user:` and `apiuser:` nothing was masked. `SECURITY.md` names `curl -v` as an example of what masking is for, and APIs that take the key as a Basic-auth password (the key in `-u user:KEY`) are common.
+**Requirement:** `SECURITY.md`, the row "A command echoing the key in its output (`curl -v`, …)". The PRD does not cover it beyond that.
+**Needs first:** a decision on partial masking. The fix would also mask the base64 of the value shifted by 1 and 2 bytes, keeping only the characters that depend on the value alone. The one or two characters on each side of `[keyprompt:NAME]` still mix in a few bits of the value's first and last bytes, so a few bits would show. Check how secret scanners handle this before choosing. `SECURITY.md` names the gap since S-18.
+**Blocks:** nothing.
+**Files:** `src/redact.mjs` (`copiesOf`), `test/redact.test.mjs`, `SECURITY.md`, `README.md`, `skill/SKILL.md`.
+**Research:** lookup · **Model:** opus (the masking boundary) · **Confidence:** 0.95 that it happens (seen); 0.6 on the right fix until the partial-masking question is answered.

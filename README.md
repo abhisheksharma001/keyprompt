@@ -26,7 +26,7 @@ When an agent (Claude Code, Codex, Cursor, …) needs a key, it runs one command
 A key pasted into an AI chat is in the conversation log for good: in the transcript, in the model's context, often synced to the cloud. You can't take it back, so the only safe fix is to rotate the key. keyprompt makes the safe path the easy one:
 
 - **The value never enters the chat.** It travels from your clipboard to the card to the OS password store.
-- **Keys go into a command, not into the chat.** `keyprompt run` puts a key into one command's environment and masks exact copies of it in that command's output (not with `--no-redact`). A command can still transform or send it; see [SECURITY.md](https://github.com/abhisheksharma001/keyprompt/blob/main/SECURITY.md).
+- **Keys go into a command, not into the chat.** `keyprompt run` puts a key into one command's environment and masks copies of it in that command's output: the exact value and a few common encodings of it (not with `--no-redact`). A command can still transform or send it; see [SECURITY.md](https://github.com/abhisheksharma001/keyprompt/blob/main/SECURITY.md).
 - **There is no "get" command.** keyprompt has no command that prints a saved key back.
 - **Works on Windows, macOS and Linux**, with nothing to sign up for and no cloud service.
 
@@ -128,7 +128,7 @@ You can see or delete them there yourself at any time. `~/.keyprompt/catalog.jso
 ## Limits
 
 - Needs a desktop session to open the card. Over plain SSH or in CI it stops with a clear message; use that environment's own secret store (GitHub Actions secrets, for example).
-- Masking catches exact copies of a value. A program that prints a key base64-encoded, URL-encoded or only partly is not masked, so agents must still not print secrets on purpose.
+- Masking catches the exact value and, for a value of 8 or more characters, its base64, base64url, lowercase hex, URL-encoded and JSON-escaped forms ([SECURITY.md](https://github.com/abhisheksharma001/keyprompt/blob/main/SECURITY.md) has the exact list). A program that prints a key any other way (only partly, hashed, in another encoding, or base64-encoded together with a username as in `curl -v -u`) is usually not masked, so agents must still not print secrets on purpose.
 - The OS password store caps how long one value can be. Windows Credential Manager: 1,280 characters. macOS: about 4,000 bytes on one line, or about 2,000 with line breaks (a shorter name leaves a little more room). Linux: keyprompt allows 65,536 characters; values near that size have not been tested. A value that is too long is refused, and the card says so.
 - Line breaks inside a value (a PEM key, say) are kept on macOS, Windows and Linux. CI checks this with short values (up to 160 bytes on Windows and Linux); the size limits above still apply.
 

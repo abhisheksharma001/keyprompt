@@ -2,6 +2,12 @@
 
 What changed in each version of keyprompt. Everything listed under a version is merged to `main`.
 
+## Unreleased
+
+### Added
+
+- **Masking catches encoded copies too.** `run` now also replaces the base64, base64url, lowercase hex, URL-encoded and JSON-escaped forms of a value of 8 or more characters with `[keyprompt:NAME]`. Shorter values are still caught only as exact copies. Any other transformation still gets through; `SECURITY.md` has the exact list.
+
 ## 0.2.0 — 2026-11-06
 
 The first version on npm: `npm install -g keyprompt`, or `npx -y keyprompt <command>` without installing.
