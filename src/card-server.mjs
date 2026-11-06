@@ -8,6 +8,8 @@ import { joinNames } from './save.mjs'
 /** 12 fields of up to 64 KiB each, with room for JSON escaping. */
 const MAX_BODY_BYTES = 1024 * 1024
 export const DEFAULT_CARD_TIMEOUT_MS = 5 * 60 * 1000
+/** Said to any request that reaches a card after it ended. True however it ended: saved, cancelled, Later or timed out. */
+const CARD_ENDED = 'This card is no longer active. Close this tab.'
 
 /**
  * One box on the card. The hints only change how the box looks; they never
@@ -160,7 +162,7 @@ export function requestSecretWithCard(request) {
         return
       }
       if (settled) {
-        send(410, { error: 'This card was already used. Close this tab.', final: true })
+        send(410, { error: CARD_ENDED, final: true })
         return
       }
 
@@ -174,7 +176,7 @@ export function requestSecretWithCard(request) {
       req.on('end', async () => {
         // The card may have ended while this body was still arriving.
         if (settled) {
-          send(410, { error: 'This card was already used. Close this tab.', final: true })
+          send(410, { error: CARD_ENDED, final: true })
           return
         }
         if (action === 'cancel') {

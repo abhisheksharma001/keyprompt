@@ -85,7 +85,7 @@ function openCard({ names = ['A', 'B'], demo = false, run = false, expiresIn = 6
     return Object.assign(row, { box })
   })
   const posts = []
-  const fetch = (path, init) => new Promise((resolve) => posts.push({ path, body: JSON.parse(init.body), resolve }))
+  const fetch = (path, init) => new Promise((resolve, reject) => posts.push({ path, body: JSON.parse(init.body), resolve, reject }))
   const document = {
     getElementById: (id) => byId[id] ?? null,
     querySelector: (selector) => ({ 'main.card': main, '.buddy': buddy, h1: heading })[selector] ?? null,
@@ -106,9 +106,15 @@ function openCard({ names = ['A', 'B'], demo = false, run = false, expiresIn = 6
     post.resolve({ ok: status < 400, status, json: async () => data })
     await flush()
   }
+  // The server is gone: the request fails without an answer.
+  const fail = async (post) => {
+    post.reject(new Error('network'))
+    await flush()
+  }
   return {
     time,
     timers: time.running,
+    fail,
     byId,
     rows,
     posts,
@@ -244,4 +250,34 @@ test('a demo card shows no receipt, even after Later', async () => {
   assert.equal(card.title(), 'Later')
   assert.equal(card.byId.receipt.children.length, 0)
   assert.equal(card.byId.receipt.hidden, true)
+})
+
+test('an ended card shows one caption that claims nothing about how it ended: after a 410 and after a Cancel nobody answers', async () => {
+  const sentence = 'This card is no longer active. You can close this tab.'
+  assert.equal(CAPTIONS.closed, sentence)
+  const ended = { error: 'This card is no longer active. Close this tab.', final: true }
+
+  const submitted = openCard()
+  submitted.rows[0].box.value = 'sk-secret-a'
+  await submitted.submit()
+  await submitted.reply(submitted.posts[0], 410, ended)
+
+  const laterPressed = openCard()
+  await laterPressed.press('later')
+  await laterPressed.reply(laterPressed.posts[0], 410, ended)
+
+  const cancelPressed = openCard()
+  await cancelPressed.press('cancel')
+  await cancelPressed.reply(cancelPressed.posts[0], 410, ended)
+
+  const silent = openCard()
+  await silent.press('cancel')
+  await silent.fail(silent.posts[0])
+
+  for (const [how, card] of Object.entries({ submitted, laterPressed, cancelPressed, silent })) {
+    assert.equal(card.title(), 'Closed', how)
+    assert.equal(card.mood(), 'closed', how)
+    assert.equal(card.byId.caption.textContent, sentence, how)
+    assert.equal(card.byId['form-view'].hidden, true, how)
+  }
 })

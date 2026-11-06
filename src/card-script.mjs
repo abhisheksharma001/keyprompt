@@ -216,8 +216,8 @@ export function cardScript() {
     document.getElementById('done-view').hidden = id === 'closed'
   }
 
-  // The server ended the card. 410 means it was already used; anything else is
-  // that request's own error.
+  // The server ended the card. 410 means it has ended, and the page cannot tell
+  // how (maybe another tab saved); anything else is that request's own error.
   function finishFinal(status, message) {
     if (status === 410) finish('Closed', 'closed')
     else finish('Closed', 'oops', message || 'This card is no longer active.')
@@ -311,7 +311,7 @@ export function cardScript() {
       setMood('oops', data.error || 'That did not work. Try again.')
     } catch {
       // No answer means the card already ended, maybe with a save from another tab.
-      finish('Closed', 'closed', 'This card is no longer active. You can close this tab.')
+      finish('Closed', 'closed')
       return
     }
     lock(false)
