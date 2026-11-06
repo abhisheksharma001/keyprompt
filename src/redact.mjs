@@ -26,10 +26,10 @@ function percentEncode(bytes, keep) {
  * Base64 writes every 3 bytes as 4 characters, so text before the value (the
  * `user:` in the base64 of `user:KEY` that `curl -v -u user:KEY` prints)
  * changes every character of the value's base64 unless that text is a multiple
- * of 3 bytes long. The character at each end of the value usually mixes in
- * bits of the text around it, so it is left out: what is masked holds only the
- * value's own bits, and the 1 or 2 characters beside the label still show up
- * to 4 bits of the value's first byte and 4 bits of its last. GitHub Actions
+ * of 3 bytes long. The character at each end of the value can mix in bits of
+ * the text around it, so it is left out: what is masked holds only the value's
+ * own bits, and the character just before and just after the label can still
+ * show up to 4 bits of the value's first byte and 4 of its last. GitHub Actions
  * masks the same shifts (`Base64StringEscapeShift1` and `Shift2` in
  * actions/runner); this keeps fewer of the value's bits visible.
  * @param {Buffer} bytes

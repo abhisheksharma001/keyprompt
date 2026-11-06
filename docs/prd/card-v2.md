@@ -206,7 +206,7 @@ As of 2026-11-05. **Sources:**
 | Where the human types | Web dashboard wizard | A command-line argument (ends up in shell history) | A hidden terminal line; a pasted PEM keeps only its first line | Their desktop app | Their app | Browser card; masked; multi-line paste box |
 | What you must set up | Account, cloud or enterprise-licensed self-host, a proxy, a trusted certificate; $2 per 1,000 requests after 5,000 | Account and a daemon | Nothing, but telemetry is on by default | Desktop app (Pro €7.99/mo) | Subscription and desktop app | **Nothing** |
 | How the key reaches the program | HTTPS proxy adds it to requests (HTTP only) | Proxy/MCP; `env --` injects *every* secret | Environment, unmasked; an opt-in shell hook exports every secret | Filled in at launch | `op run` | Only the named keys, into one command |
-| Output masking | None | Strong (encoded forms too) | None | Not mentioned | Yes (`op run`) | Exact copies, plus base64, hex, URL and JSON forms for values of 8+ characters (S-18) |
+| Output masking | None | Strong (encoded forms too) | None | Not mentioned | Yes (`op run`) | Exact copies, plus base64, hex, URL and JSON forms for values of 8+ characters (S-18), base64 also inside longer base64 such as `curl -u` (S-25) |
 | Enforced in Claude Code | — | — | Hooks block env dumps and pasted keys, redact transcripts | — | — | Skill instructions only; guard hook planned (v0.3) |
 | Honest about limits | Docs say 7-day sessions; CLI default never expires | Claims agents "never hold, see, or receive" values; `SECURITY.md` linked but missing | Yes — "enforced vs advisory" | — | — | `SECURITY.md`; headline fix (B-1, B-2) |
 | Size | Platform | ~24k lines Go | ~53k lines TS | App | App | ~1.8k lines JS |
