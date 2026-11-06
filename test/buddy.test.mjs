@@ -33,7 +33,7 @@ test('MOODS is the buddy table in the PRD, caption for caption', () => {
     id,
     caption: cell.startsWith('"') ? cell.slice(1, -1) : null,
   }))
-  assert.equal(rows.length, 12)
+  assert.equal(rows.length, 13)
   assert.deepEqual(MOODS, rows)
 })
 
@@ -97,7 +97,7 @@ test('a caption that names the store has a demo caption that does not', () => {
   assert.ok(CAPTION_VARIANTS.oneRun.listening)
 })
 
-test('motion: every mood but watching, skipped and closed moves, only transform and opacity, and only listening and asleep loop', () => {
+test('motion: every mood but watching, handing, skipped and closed moves, only transform and opacity, and only listening and asleep loop', () => {
   const frames = keyframes()
   const runs = animations()
   const moved = [...new Set(runs.map((r) => r.mood))].sort()
@@ -141,7 +141,21 @@ test("the done screen waits only for the key's trip into the vault, which is und
   assert.ok(style.includes(`.key { animation: b-key-in ${STASH_MS}ms `))
   const script = cardScript()
   assert.ok(script.includes(`const STASH_MS = ${STASH_MS}`))
-  assert.ok(script.includes('if (ok && !blank) await settle(started)'))
+  // A one-run Save hands an envelope over and nothing travels, so there is no trip to wait for (B-8).
+  assert.ok(script.includes('if (ok && !blank && !handing) await settle(started)'))
+})
+
+test('with Remember unticked the penguin holds out an envelope and the vault stays shut: only a real save opens it (B-8, S-31)', () => {
+  const shows = (part) => svg.match(new RegExp(`<g class="${part}" data-show="([^"]+)"`))[1].split(' ')
+  const hides = (part) => svg.match(new RegExp(`<g class="${part}" data-hide="([^"]+)"`))[1].split(' ')
+  assert.ok(shows('envelope').includes('handing'), 'the envelope is in hand')
+  assert.ok(!hides('door').includes('handing'), 'the vault door stays shut')
+  assert.ok(!shows('door-open').includes('handing'), 'the open vault is not shown')
+  assert.ok(!shows('key').includes('handing'), 'no key is carried')
+  // The same three parts are what a real save shows, and it still does.
+  assert.ok(hides('door').includes('stashing') && shows('door-open').includes('stashing') && shows('key').includes('stashing'))
+  assert.equal(MOODS.find((m) => m.id === 'handing').caption, 'Handing it over…')
+  assert.equal(CAPTION_VARIANTS.oneRun.stashing, undefined, 'a one-run Save never shows the vault pose, so it needs no caption for it')
 })
 
 // The penguin has no name (decision R-4, 2026-11-06): "Pingu" is a toy character whose

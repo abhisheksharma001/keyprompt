@@ -286,6 +286,42 @@ test('a run card saved with every box empty: no key goes into the vault, no wait
   assert.equal(set.byId['form-view'].hidden, false)
 })
 
+test('Save with Remember unticked shows the envelope in hand, never the vault, and does not wait for a trip into it; ticked, the key goes to the vault (B-8, S-31)', async () => {
+  const oneRun = openCard({ run: true, withRemember: true })
+  await oneRun.tick(false)
+  oneRun.rows[0].box.value = 'sk-secret-a'
+  await oneRun.submit()
+  assert.deepEqual(oneRun.posts[0].body, { values: { A: 'sk-secret-a', B: '' }, remember: false })
+  assert.equal(oneRun.mood(), 'handing')
+  assert.equal(oneRun.byId.caption.textContent, 'Handing it over…')
+  await oneRun.reply(oneRun.posts[0], 200, { remembered: false, receipt: [{ name: 'A', outcome: 'handed' }, { name: 'B', outcome: 'empty' }] })
+  // Nothing travelled into a vault, so the card ends at once.
+  assert.equal(oneRun.title(), 'Ready')
+  assert.equal(oneRun.mood(), 'one-run')
+
+  const kept = openCard({ run: true, withRemember: true })
+  kept.rows[0].box.value = 'sk-secret-a'
+  await kept.submit()
+  assert.equal(kept.mood(), 'stashing')
+  assert.equal(kept.byId.caption.textContent, CAPTIONS.stashing)
+  await kept.reply(kept.posts[0], 200, { remembered: true, receipt: [{ name: 'A', outcome: 'saved' }, { name: 'B', outcome: 'empty' }] })
+  // The key's trip into the vault is still waited for.
+  assert.equal(kept.title(), '')
+  await kept.time.advance(700)
+  assert.equal(kept.title(), 'Saved')
+  assert.equal(kept.mood(), 'locked')
+
+  // A refused one-run Save goes back to the form: the penguin shakes its head, and a retry hands again.
+  const refused = openCard({ run: true, withRemember: true })
+  await refused.tick(false)
+  refused.rows[0].box.value = 'sk-secret-a'
+  await refused.submit()
+  await refused.reply(refused.posts[0], 422, { error: 'Could not save. Try again.' })
+  assert.equal(refused.mood(), 'oops')
+  await refused.submit()
+  assert.equal(refused.mood(), 'handing')
+})
+
 test('a demo card shows no receipt, even after Later', async () => {
   const card = openCard({ demo: true })
   await card.press('later')

@@ -264,13 +264,16 @@ export function cardScript() {
     // run card whose boxes are all optional (B-4). No key goes to the vault then,
     // so the buddy does not carry one there.
     const blank = Object.keys(values).every((name) => values[name].trim() === '')
+    // "Remember" unticked: the value goes to one command, not into the vault. The
+    // buddy holds the envelope with the vault shut, and no key makes a trip to wait for (B-8).
+    const handing = Boolean(remember) && !remember.checked
     lock(true)
     still = true
-    if (!blank) setMood('stashing')
+    if (!blank) setMood(handing ? 'handing' : 'stashing')
     const started = Date.now()
     try {
       const { ok, status, data } = await post('/submit', { values, remember: remember ? remember.checked : true })
-      if (ok && !blank) await settle(started)
+      if (ok && !blank && !handing) await settle(started)
       if (ok && demo) {
         finish('Demo finished', 'locked')
         return
