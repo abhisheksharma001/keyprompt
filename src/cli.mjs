@@ -56,6 +56,7 @@ Options:
   --reason TEXT   Shown on the card: why the secret is needed.
   --by TEXT       Shown on the card: who is asking (default: detected agent and folder).
   --no-redact     Pass COMMAND's output through untouched (for full-screen tools).
+                  Works only when the output goes straight to a terminal.
 `
 
 /**
@@ -87,6 +88,19 @@ export function parseArgs(argv) {
     else parsed.positionals.push(arg)
   }
   return parsed
+}
+
+/**
+ * `run --no-redact` hands COMMAND keyprompt's own stdout and stderr untouched.
+ * That is for a full-screen program a person watches, so both must be a
+ * terminal. Output going into a pipe or a file (an agent's shell tool, a log)
+ * stays masked (B-11). Nothing may skip this check: anything that could, an
+ * agent could set.
+ * @param {{ isTTY?: boolean }} stdout
+ * @param {{ isTTY?: boolean }} stderr
+ */
+export function outputIsTerminal(stdout, stderr) {
+  return stdout.isTTY === true && stderr.isTTY === true
 }
 
 /** Who is asking, for the card. Only a label; nothing trusts it. */
@@ -225,6 +239,13 @@ export async function main(argv) {
     const fields = parseFields(rest)
     if (fields.length === 0 || args.command.length === 0) {
       throw new KeypromptError('Usage: keyprompt run NAME[,NAME...] -- COMMAND [ARGS...]', { exitCode: EXIT.USAGE })
+    }
+    // Before the store is read or a card opens, so a refused run touches nothing.
+    if (!args.redact && !outputIsTerminal(process.stdout, process.stderr)) {
+      throw new KeypromptError(
+        "--no-redact works only when keyprompt's output goes straight to a terminal, and here it does not. Run the command again without --no-redact; masking stays on.",
+        { exitCode: EXIT.USAGE },
+      )
     }
     const store = getStore()
     const [command, ...commandArgs] = args.command

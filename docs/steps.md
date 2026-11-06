@@ -530,6 +530,31 @@ Pinguu is our own design: flat vector shapes, rounded, a key-shaped head tuft an
 
 ---
 
+### S-24 — `run --no-redact` works only when the output goes straight to a terminal (bug B-11)
+
+**PR:** one.
+**Depends on:** nothing. Abhishek chose "Terminal only" on 2026-11-06 from four options: terminal only, a card that asks each time, remove the flag, keep it as documented.
+**Blocks:** S-17 (B-11 was to be decided before the npm publish).
+**Research:** lookup (done):
+- Claude Code's Bash tool gives a command no terminal: `[ -t 1 ]` is false and `process.stdout.isTTY` is undefined (run in Claude Code on macOS, 2026-11-06).
+- 1Password's `op run --no-masking` turns masking off with no such check; its docs show it printing a secret (https://www.1password.dev/cli/reference/commands/run, read 2026-11-06, live).
+- On macOS, `script -q /dev/null COMMAND` gives COMMAND a terminal (stdout and stderr both TTYs) and passes its exit code through (run here, 2026-11-06). So an agent can get past this check on purpose.
+
+**Model:** sonnet (opus laid out the decision).
+**Confidence:** 0.9 — `isTTY` is the same check `src/browser.mjs` already trusts before printing the card link; the refusal has a test on every OS; the terminal path is checked by hand with `script` on macOS, not by a test.
+**Files:** `src/cli.mjs`, `test/cli.test.mjs`, `README.md`, `skill/SKILL.md`, `SECURITY.md`, `CHANGELOG.md`, `docs/prd/card-v2.md`, `docs/bugs.md`, `docs/steps.md`, `.claude/CLAUDE.md`.
+**Today:** `run --no-redact` hands the command keyprompt's own stdout and stderr, whatever they are. An agent can type `keyprompt run NAME --no-redact -- printenv NAME` and the saved key lands in the chat (B-11, reproduced in S-15). The option exists for full-screen programs, which need a terminal; an agent's shell tool such as Claude Code's has none, so there the option can only leak.
+**Change:**
+- `run` with `--no-redact` checks that keyprompt's stdout and stderr are both a terminal. If either is not, it stops with exit 2: "--no-redact works only when keyprompt's output goes straight to a terminal, and here it does not. Run the command again without --no-redact; masking stays on." The check runs after the usage checks and before the store is read or a card opens.
+- The check is an exported function, `outputIsTerminal(stdout, stderr)`, so a test can hand it fake streams. No environment variable or option skips it: anything that could, an agent could set.
+- The words follow: `HELP`, the README (options line, exit code 2), the skill (agents: don't use it), `SECURITY.md` (the `--no-redact` limit, with what it does not stop), `CHANGELOG.md` (0.2.0, Changed), the PRD's command line and decision D-6, and invariant 3 in `.claude/CLAUDE.md`, which now names this one exception.
+
+**Acceptance:** WHEN `keyprompt run NAME --no-redact -- COMMAND` runs with its stdout or stderr not a terminal THEN it SHALL exit 2 with that message, without reading the store, opening a card or starting COMMAND; and WHEN both are a terminal THEN it SHALL behave as before.
+**Verify:** `node --test --test-timeout=15000 test/cli.test.mjs` with a new test: `outputIsTerminal` with fake streams (both, only stdout, only stderr, neither), and `run NAME --no-redact -- COMMAND` from a pipe exits 2 with the message, opens no card and starts nothing. The opt-in card test no longer tries `--no-redact` from a pipe (`test/card-server.test.mjs` already covers a card that does not mask). Commit, then break the check (removed, `||` for `&&`, stderr ignored) and watch the new test fail. By hand on macOS with a throwaway Keychain item: from a pipe, exit 2; inside `script -q /dev/null`, the value prints with `--no-redact` and is masked without it. Then `npm test`.
+**Must not:** change masking itself, `run` without `--no-redact`, or any card; add a way to skip the check; add a dependency.
+
+---
+
 ## Next release (v0.3) — ranked candidates, not frozen
 
 1. **`keyprompt mcp` — become the page an MCP agent opens.** Claude Code 2.1.287 added "URL prompts from MCP servers" on the 2025-11-25 protocol: it asks you, then opens the URL in your browser (live CHANGELOG via `gh`, 2026-11-05). VS Code declares URL mode support. A small stdio MCP server with a `request_secret` tool answering with URL elicitation would make the card native in those agents, with the shell command still there for everything else. Needs R-6 closed and a yes on how to build it (hand-written JSON-RPC vs the MCP SDK dependency, invariant 7).

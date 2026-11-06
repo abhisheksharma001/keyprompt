@@ -10,7 +10,7 @@ keyprompt is a small CLI that lets AI coding agents get API keys from a person w
 
 1. **No command prints, returns or writes a saved secret value.** There is no `get`. keyprompt's own stdout/stderr never contain a value.
 2. **A value reaches a program only through `keyprompt run`**, in the environment of the one command it starts.
-3. **Masking covers every value handed to `run`, whatever the agent said.** Hints an agent gives (`:visible`, `:multiline`, `:optional`) change how the card looks, never what is protected. (`src/redact.mjs`)
+3. **Masking covers every value handed to `run`, whatever the agent said.** Hints an agent gives (`:visible`, `:multiline`, `:optional`) change how the card looks, never what is protected. (`src/redact.mjs`) The one way to turn it off is `run --no-redact`, and that works only when keyprompt's output goes straight to a terminal (B-11, S-24).
 4. **The card server stays locked down:** 127.0.0.1 only, one-time 256-bit path token, exact Host and Origin checks, JSON only, size cap, one successful submit, a deadline. (`src/card-server.mjs`)
 5. **The card page loads nothing from the network.** No external scripts, fonts, images or CDNs. CSP stays `default-src 'none'` with one nonce'd inline script. The mascot is inline SVG + CSS only — no animation libraries.
 6. **No telemetry, analytics, crash reporting or network calls** from keyprompt, ever.

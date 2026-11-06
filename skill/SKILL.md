@@ -79,7 +79,7 @@ keyprompt run TWILIO_ACCOUNT_SID:visible,TWILIO_AUTH_TOKEN -- python send_sms.py
 - When a tool needs the value as an argument, let a shell inside `run` expand it, so it never appears in your own command text:
   - macOS / Linux: `keyprompt run API_TOKEN -- sh -c 'curl -sS -H "Authorization: Bearer $API_TOKEN" https://api.example.com/me'`
   - Windows (PowerShell): `keyprompt run API_TOKEN -- powershell -NoProfile -Command "Invoke-RestMethod https://api.example.com/me -Headers @{Authorization = 'Bearer ' + $env:API_TOKEN}"`
-- `--no-redact` passes output through untouched; only use it for full-screen terminal programs that print no secrets.
+- Don't use `--no-redact`. It turns masking off, for a person running a full-screen program in their own terminal, and it stops with exit code 2 when the output is not a terminal, as in your shell tool.
 
 ## Replace or remove
 

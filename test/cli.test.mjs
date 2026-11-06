@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { test } from 'node:test'
-import { demoRequest, laterForRun, parseArgs, setReport } from '../src/cli.mjs'
+import { demoRequest, laterForRun, outputIsTerminal, parseArgs, setReport } from '../src/cli.mjs'
 import { EXIT } from '../src/errors.mjs'
 import { getStore } from '../src/store/index.mjs'
 
@@ -102,6 +102,30 @@ test('bad names and bad usage are usage errors (exit 2)', () => {
   assert.equal(cli(['run', 'A:optional']).status, 2) // hints are fine, the command is missing
   assert.equal(cli(['demo', 'NAME']).status, 2) // demo takes no arguments
   assert.equal(cli(['demo', '--', 'echo']).status, 2)
+})
+
+test('--no-redact needs a terminal: from a pipe, run exits 2 before reading a key, opening a card or starting the command (B-11)', () => {
+  assert.equal(outputIsTerminal({ isTTY: true }, { isTTY: true }), true)
+  assert.equal(outputIsTerminal({ isTTY: true }, {}), false)
+  assert.equal(outputIsTerminal({}, { isTTY: true }), false)
+  assert.equal(outputIsTerminal({}, {}), false)
+
+  // spawnSync pipes stdout and stderr, as an agent's shell tool does. The browser does not
+  // exist, so if the check let this through, no real browser would open and run would fail otherwise.
+  const dir = mkdtempSync(join(tmpdir(), 'keyprompt-noredact-'))
+  const marker = join(dir, 'ran')
+  const r = spawnSync(
+    process.execPath,
+    [BIN, 'run', 'KEYPROMPT_NO_REDACT_TEST', '--no-redact', '--', process.execPath, '-e', `require('fs').writeFileSync(${JSON.stringify(marker)}, 'ran')`],
+    { encoding: 'utf8', env: { ...process.env, KEYPROMPT_HOME: dir, KEYPROMPT_BROWSER: join(dir, 'no-such-browser') }, timeout: 15000 },
+  )
+  assert.equal(r.status, 2, r.stderr)
+  assert.equal(
+    r.stderr,
+    "keyprompt: --no-redact works only when keyprompt's output goes straight to a terminal, and here it does not. Run the command again without --no-redact; masking stays on.\n",
+  )
+  assert.equal(r.stdout, '')
+  assert.equal(existsSync(marker), false)
 })
 
 test('set reports saved, replaced and empty names, never values', () => {
@@ -252,7 +276,9 @@ request({ hostname: url.hostname, port: url.port, path: url.pathname + '/later',
   }
 })
 
-test('the masking sentence is on the card for run, and not for run --no-redact or set', { skip: !realCard }, async () => {
+// From a pipe, run --no-redact stops before any card opens (S-24), so it is not tried here;
+// test/card-server.test.mjs covers a card whose output is not masked.
+test('the masking sentence is on the card for run, and not for set', { skip: !realCard }, async () => {
   const dir = mkdtempSync(join(tmpdir(), 'keyprompt-mask-'))
   const browser = join(dir, 'look.mjs')
   // Reads the card page, records whether it holds the masking sentence, then cancels.
@@ -288,7 +314,6 @@ get.end()
   }
   try {
     assert.equal(says(['run', name, '--', process.execPath, '-e', '0']), 'true')
-    assert.equal(says(['run', name, '--no-redact', '--', process.execPath, '-e', '0']), 'false')
     assert.equal(says(['set', name]), 'false')
   } finally {
     await getStore().remove(name).catch(() => {})
