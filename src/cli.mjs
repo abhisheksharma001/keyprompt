@@ -74,6 +74,8 @@ Exit codes:
   run exits with COMMAND's own code once COMMAND has started.
 
 Options:
+  --json          One names-only JSON result for set, has, list or delete.
+                  Failures are JSON too; existing exit codes stay the same.
   --reason TEXT   Shown on the card: why the secret is needed.
   --by TEXT       Shown on the card: who is asking (default: detected agent and folder).
   --no-redact     Pass COMMAND's output through untouched (for full-screen tools).
@@ -180,14 +182,14 @@ async function savedNames() {
 
 /**
  * @param {string[]} argv
- * @returns {{ positionals: string[], command: string[], reason?: string, by?: string, redact: boolean, yes: boolean, help: boolean, version: boolean }}
+ * @returns {{ positionals: string[], command: string[], reason?: string, by?: string, redact: boolean, yes: boolean, help: boolean, version: boolean, json: boolean }}
  */
 export function parseArgs(argv) {
   const dash = argv.indexOf('--')
   const own = dash === -1 ? argv : argv.slice(0, dash)
   const command = dash === -1 ? [] : argv.slice(dash + 1)
   /** @type {ReturnType<typeof parseArgs>} */
-  const parsed = { positionals: [], command, redact: true, yes: false, help: false, version: false }
+  const parsed = { positionals: [], command, redact: true, yes: false, help: false, version: false, json: false }
   for (let i = 0; i < own.length; i++) {
     const arg = own[i]
     const takeValue = () => {
@@ -202,12 +204,56 @@ export function parseArgs(argv) {
     else if (arg === '--by') parsed.by = takeValue()
     else if (arg === '--no-redact') parsed.redact = false
     else if (arg === '--yes') parsed.yes = true
+    else if (arg === '--json') parsed.json = true
     else if (arg === '--help' || arg === '-h') parsed.help = true
     else if (arg === '--version' || arg === '-v') parsed.version = true
     else if (arg.startsWith('--')) throw new KeypromptError(`Unknown option ${arg}. See keyprompt --help.`, { exitCode: EXIT.USAGE })
     else parsed.positionals.push(arg)
   }
   return parsed
+}
+
+const JSON_COMMANDS = new Set(['set', 'has', 'list', 'delete'])
+
+/**
+ * Recognize output mode even when argument parsing fails. Option values and
+ * the child's arguments cannot select it. Never reflect an unknown verb.
+ * @param {string[]} argv
+ */
+function jsonRequest(argv) {
+  let json = false
+  let command = null
+  let foundVerb = false
+  for (let i = 0; i < argv.length && argv[i] !== '--'; i++) {
+    const arg = argv[i]
+    if (arg === '--reason' || arg === '--by') {
+      if (argv[i + 1] !== undefined && !argv[i + 1].startsWith('--')) i++
+    } else if (arg === '--json') json = true
+    else if (!arg.startsWith('-') && !foundVerb) {
+      foundVerb = true
+      if (JSON_COMMANDS.has(arg)) command = arg
+    }
+  }
+  return { json, command }
+}
+
+/**
+ * Only validated names and an allowlisted outcome reach the JSON error.
+ * Error messages can contain invalid arguments, paths or helper output.
+ * @param {string | null} command
+ * @param {string[]} names
+ * @param {unknown} error
+ */
+function jsonFailure(command, names, error) {
+  const code = error instanceof KeypromptError ? error.exitCode : EXIT.ERROR
+  const statuses = { 1: 'error', 2: 'invalid_usage', 3: 'missing', 4: 'cancelled', 5: 'timed_out', 6: 'deferred' }
+  const exitCode = Object.hasOwn(statuses, code) ? code : EXIT.ERROR
+  return { command, status: statuses[exitCode], names, exitCode }
+}
+
+/** @param {object} result */
+function writeJson(result) {
+  process.stdout.write(`${JSON.stringify(result)}\n`)
 }
 
 /**
@@ -277,7 +323,7 @@ function requesterLabel(/** @type {string | undefined} */ by) {
  * a failed save shows on the card. `remember: false` hands them to this run only.
  * @param {import('./store/index.mjs').SecretStore} store
  * @param {import('./card-server.mjs').CardField[]} fields
- * @param {{ reason?: string, by?: string, replacing: boolean, allowSessionOnly: boolean, masked?: boolean, allowEmpty?: boolean }} options
+ * @param {{ reason?: string, by?: string, replacing: boolean, allowSessionOnly: boolean, masked?: boolean, allowEmpty?: boolean, warnings?: string[] }} options
  */
 async function askWithCard(store, fields, options) {
   process.stderr.write(
@@ -299,7 +345,10 @@ async function askWithCard(store, fields, options) {
         return
       }
       const note = await saveAndRecord(store, values, options.reason)
-      if (note) process.stderr.write(note)
+      if (note) {
+        if (options.warnings) options.warnings.push('catalog_not_updated')
+        else process.stderr.write(note)
+      }
     },
   })
 }
@@ -466,7 +515,27 @@ export function demoRequest() {
  * @returns {Promise<number>} exit code
  */
 export async function main(argv) {
-  const args = parseArgs(argv)
+  const request = jsonRequest(argv)
+  let names = []
+  try {
+    const args = parseArgs(argv)
+    if (request.json && !request.command) {
+      throw new KeypromptError('--json works only with set, has, list and delete.', { exitCode: EXIT.USAGE })
+    }
+    if (args.json && args.command.length > 0) throw new KeypromptError('These JSON commands do not take a child command.', { exitCode: EXIT.USAGE })
+    // Invalid names never get reflected in an error result.
+    if (request.json && request.command !== 'list') names = parseFields(args.positionals.slice(1)).map((f) => f.name)
+    return await mainParsed(args)
+  } catch (error) {
+    if (!request.json) throw error
+    const result = jsonFailure(request.command, names, error)
+    writeJson(result)
+    return result.exitCode
+  }
+}
+
+/** @param {ReturnType<typeof parseArgs>} args */
+async function mainParsed(args) {
   const [verb, ...rest] = args.positionals
 
   if (args.version) {
@@ -490,13 +559,25 @@ export async function main(argv) {
     /** @type {import('./card-server.mjs').CardField[]} */
     const fields = []
     for (const field of parsed) fields.push({ ...field, saved: (await store.read(field.name)) !== null })
+    const warnings = []
     const { values } = await askWithCard(store, fields, {
       reason: args.reason,
       by: args.by,
       replacing: fields.every((f) => f.saved),
       allowSessionOnly: false,
+      warnings: args.json ? warnings : undefined,
     })
-    process.stdout.write(setReport(fields, values, store.label))
+    if (args.json) {
+      writeJson({
+        command: verb,
+        status: 'saved',
+        names: fields.filter((f) => values.has(f.name)).map((f) => f.name),
+        exitCode: EXIT.OK,
+        replaced: fields.filter((f) => f.saved && values.has(f.name)).map((f) => f.name),
+        empty: fields.filter((f) => !values.has(f.name)).map((f) => f.name),
+        warnings,
+      })
+    } else process.stdout.write(setReport(fields, values, store.label))
     return EXIT.OK
   }
 
@@ -549,16 +630,28 @@ export async function main(argv) {
     const name = assertName(rest[0])
     const store = getStore()
     if ((await store.read(name)) !== null) {
-      process.stdout.write(`${name} is saved in the ${store.label}.\n`)
+      if (args.json) writeJson({ command: verb, status: 'saved', names: [name], exitCode: EXIT.OK })
+      else process.stdout.write(`${name} is saved in the ${store.label}.\n`)
       return EXIT.OK
     }
-    process.stdout.write(`${name} is not saved. Ask for it with: keyprompt set ${name} --reason "..."\n`)
+    if (args.json) writeJson({ command: verb, status: 'missing', names: [name], exitCode: EXIT.NOT_FOUND })
+    else process.stdout.write(`${name} is not saved. Ask for it with: keyprompt set ${name} --reason "..."\n`)
     return EXIT.NOT_FOUND
   }
 
   if (verb === 'list') {
+    if (args.json && (rest.length > 0 || args.command.length > 0)) throw new KeypromptError('Usage: keyprompt list --json', { exitCode: EXIT.USAGE })
     const catalog = await readCatalog()
     const names = Object.keys(catalog).sort()
+    if (args.json) {
+      try {
+        names.forEach(assertName)
+      } catch {
+        throw new KeypromptError('The catalog contains an invalid name.')
+      }
+      writeJson({ command: verb, status: 'listed', names, exitCode: EXIT.OK })
+      return EXIT.OK
+    }
     if (names.length === 0) {
       process.stdout.write('No secrets saved with keyprompt yet.\n')
       return EXIT.OK
@@ -576,8 +669,17 @@ export async function main(argv) {
     const name = assertName(rest[0])
     const store = getStore()
     const { removed, note } = await removeAndRecord(store, name)
-    if (note) process.stderr.write(note)
-    process.stdout.write(removed ? `Deleted ${name} from the ${store.label}.\n` : `${name} was not saved.\n`)
+    if (args.json) writeJson({
+      command: verb,
+      status: removed ? 'deleted' : 'missing',
+      names: [name],
+      exitCode: removed ? EXIT.OK : EXIT.NOT_FOUND,
+      warnings: note ? ['catalog_not_updated'] : [],
+    })
+    else {
+      if (note) process.stderr.write(note)
+      process.stdout.write(removed ? `Deleted ${name} from the ${store.label}.\n` : `${name} was not saved.\n`)
+    }
     return removed ? EXIT.OK : EXIT.NOT_FOUND
   }
 

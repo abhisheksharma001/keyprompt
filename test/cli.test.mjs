@@ -751,3 +751,171 @@ test('list on a fresh machine says nothing is saved', () => {
   assert.equal(r.status, 0)
   assert.match(r.stdout, /No secrets saved/)
 })
+
+// Test-only preload replaces the store in the subprocess. Production has no
+// fake-store switch; no real credential is read or written by these tests.
+function jsonCliFixture() {
+  const dir = mkdtempSync(join(tmpdir(), 'keyprompt-json-'))
+  const preload = join(dir, 'store.mjs')
+  const storeUrl = new URL('../src/store/index.mjs', import.meta.url).href
+  const errorsUrl = new URL('../src/errors.mjs', import.meta.url).href
+  writeFileSync(preload, `
+import { getStore } from ${JSON.stringify(storeUrl)}
+import { KeypromptError } from ${JSON.stringify(errorsUrl)}
+const store = getStore()
+const values = new Map(Object.entries(JSON.parse(process.env.KP_JSON_VALUES || '{}')))
+store.read = async (name) => {
+  if (process.env.KP_JSON_ERROR) throw new KeypromptError(process.env.KP_JSON_ERROR, { exitCode: Number(process.env.KP_JSON_CODE || 1) })
+  return values.get(name) ?? null
+}
+store.write = async (name, value) => { values.set(name, value) }
+store.remove = async (name) => {
+  if (process.env.KP_JSON_ERROR) throw new Error(process.env.KP_JSON_ERROR)
+  return values.delete(name)
+}
+`)
+  return {
+    dir,
+    run(args, extra = {}) {
+      return spawnSync(process.execPath, ['--import', pathToFileURL(preload).href, BIN, ...args], {
+        encoding: 'utf8', timeout: 15000,
+        env: { ...process.env, KEYPROMPT_HOME: dir, KEYPROMPT_BROWSER: join(dir, 'no-browser'), ...extra },
+      })
+    },
+  }
+}
+
+function jsonAnswer(result, exitCode) {
+  assert.equal(result.status, exitCode, result.stderr)
+  assert.equal(result.stdout.trim().split('\n').length, 1, result.stdout)
+  const answer = JSON.parse(result.stdout)
+  assert.equal(answer.exitCode, exitCode)
+  return answer
+}
+
+test('JSON has, list and delete report names and real outcomes, never store values or catalog metadata (S-41)', () => {
+  const f = jsonCliFixture()
+  const value = 'dummy-sensitive-value-41'
+  const env = { KP_JSON_VALUES: JSON.stringify({ TOKEN: value }) }
+  assert.deepEqual(jsonAnswer(f.run(['has', 'TOKEN', '--json'], env), 0), {
+    command: 'has', status: 'saved', names: ['TOKEN'], exitCode: 0,
+  })
+  assert.deepEqual(jsonAnswer(f.run(['--json', 'has', 'ABSENT']), 3), {
+    command: 'has', status: 'missing', names: ['ABSENT'], exitCode: 3,
+  })
+  assert.deepEqual(jsonAnswer(f.run(['list', '--json']), 0).names, [])
+  writeFileSync(join(f.dir, 'catalog.json'), JSON.stringify({
+    Z: { reason: value, updatedAt: value, store: value, value },
+    A: { reason: value, updatedAt: value, store: value },
+  }))
+  assert.deepEqual(jsonAnswer(f.run(['list', '--json']), 0), {
+    command: 'list', status: 'listed', names: ['A', 'Z'], exitCode: 0,
+  })
+  assert.deepEqual(jsonAnswer(f.run(['delete', 'TOKEN', '--json'], env), 0), {
+    command: 'delete', status: 'deleted', names: ['TOKEN'], exitCode: 0, warnings: [],
+  })
+  assert.deepEqual(jsonAnswer(f.run(['delete', 'ABSENT', '--json']), 3), {
+    command: 'delete', status: 'missing', names: ['ABSENT'], exitCode: 3, warnings: [],
+  })
+  const text = f.run(['has', 'TOKEN'], env)
+  assert.match(text.stdout, /^TOKEN is saved in the /)
+  assert.equal(text.stderr, '')
+})
+
+test('JSON failures never echo a helper error, invalid argument, unknown verb or corrupt catalog (S-41)', () => {
+  const f = jsonCliFixture()
+  const sensitive = 'dummy-sensitive-error-41'
+  for (const args of [
+    ['has', sensitive, '--json'], ['set', `TOKEN:${sensitive}`, '--json'],
+    ['has', 'TOKEN', `--${sensitive}`, '--json'], [sensitive, '--json'],
+    ['set', 'TOKEN', '--reason', '--json'], ['--json'], ['list', sensitive, '--json'],
+  ]) {
+    const r = f.run(args)
+    assert.equal(jsonAnswer(r, 2).status, 'invalid_usage')
+    assert.ok(!r.stdout.includes(sensitive), r.stdout)
+    assert.equal(r.stderr, '')
+  }
+  for (const verb of ['has', 'delete']) {
+    const r = f.run([verb, 'TOKEN', '--json'], { KP_JSON_ERROR: sensitive })
+    assert.deepEqual(jsonAnswer(r, 1), { command: verb, status: 'error', names: ['TOKEN'], exitCode: 1 })
+    assert.equal(r.stderr, '')
+    assert.ok(!r.stdout.includes(sensitive))
+  }
+  writeFileSync(join(f.dir, 'catalog.json'), `{ ${sensitive}`)
+  assert.deepEqual(jsonAnswer(f.run(['list', '--json']), 1), { command: 'list', status: 'error', names: [], exitCode: 1 })
+  writeFileSync(join(f.dir, 'catalog.json'), JSON.stringify({ [sensitive]: {} }))
+  const badCatalog = f.run(['list', '--json'])
+  assert.deepEqual(jsonAnswer(badCatalog, 1), { command: 'list', status: 'error', names: [], exitCode: 1 })
+  assert.equal(badCatalog.stderr, '')
+})
+
+test('JSON cancellation, timeout and deferral keep their exit codes without raw messages (S-41)', () => {
+  const f = jsonCliFixture()
+  for (const [code, status] of [[4, 'cancelled'], [5, 'timed_out'], [6, 'deferred']]) {
+    const r = f.run(['set', 'TOKEN', '--json'], { KP_JSON_ERROR: 'dummy-do-not-print-this', KP_JSON_CODE: String(code) })
+    assert.deepEqual(jsonAnswer(r, code), { command: 'set', status, names: ['TOKEN'], exitCode: code })
+    assert.equal(r.stderr, '')
+  }
+})
+
+test('JSON catalog warnings preserve the successful delete or missing outcome (S-41)', () => {
+  const f = jsonCliFixture()
+  writeFileSync(join(f.dir, 'catalog.json'), '{ broken')
+  for (const [values, code, status] of [[{ TOKEN: 'dummy-41' }, 0, 'deleted'], [{}, 3, 'missing']]) {
+    const r = f.run(['delete', 'TOKEN', '--json'], { KP_JSON_VALUES: JSON.stringify(values) })
+    assert.deepEqual(jsonAnswer(r, code), { command: 'delete', status, names: ['TOKEN'], exitCode: code, warnings: ['catalog_not_updated'] })
+    assert.equal(r.stderr, '')
+  }
+})
+
+test('JSON option boundaries and unsupported commands are enforced before any side effect (S-41)', () => {
+  const f = jsonCliFixture()
+  for (const args of [
+    ['run', 'TOKEN', '--json', '--', process.execPath, '-e', 'process.exit(99)'],
+    ['install-guard', '--yes', '--json'], ['demo', '--json'],
+    ['set', 'TOKEN', '--json', '--', 'echo'], ['has', 'TOKEN', '--json', '--', 'echo'],
+  ]) {
+    const r = f.run(args, { KP_JSON_ERROR: 'must-not-read-the-store' })
+    assert.equal(jsonAnswer(r, 2).status, 'invalid_usage')
+    assert.equal(r.stderr, '')
+  }
+  for (const flag of ['--reason', '--by']) {
+    const r = f.run(['list', flag, '--json']) // invalid value, not a value token
+    assert.equal(jsonAnswer(r, 2).status, 'invalid_usage')
+    const parsed = parseArgs(['list', flag, 'literal--json'])
+    assert.equal(parsed.json, false)
+  }
+  const childFlag = f.run(['run', 'TOKEN', '--', '--json'], { KP_JSON_ERROR: 'must-not-read-the-store' })
+  assert.equal(childFlag.status, 1)
+  assert.match(childFlag.stderr, /must-not-read-the-store/)
+  assert.equal(childFlag.stdout, '')
+})
+
+test('JSON set distinguishes saved, replaced and empty boxes, and catalog-only failures (S-41)', { skip: process.platform === 'win32' }, () => {
+  const f = jsonCliFixture()
+  const browser = join(f.dir, 'save.mjs')
+  writeFileSync(browser, `#!${process.execPath}
+import { request } from 'node:http'
+const url = new URL(process.argv[2])
+const action = process.env.KP_JSON_ACTION || 'submit'
+const body = action === 'submit' ? { values: { OLD: 'dummy-new-sensitive-41', NEW: 'dummy-other-sensitive-41' }, remember: true } : {}
+request({ hostname: url.hostname, port: url.port, path: url.pathname + '/' + action, method: 'POST', headers: { Origin: url.origin, 'Content-Type': 'application/json' } }, res => res.resume()).end(JSON.stringify(body))
+`)
+  chmodSync(browser, 0o755)
+  const args = ['set', 'OLD', 'NEW', 'EMPTY:optional', '--json']
+  const env = { KP_JSON_VALUES: '{"OLD":"dummy-old-sensitive-41"}', KEYPROMPT_BROWSER: browser }
+  for (const broken of [false, true]) {
+    if (broken) writeFileSync(join(f.dir, 'catalog.json'), '{ broken')
+    const r = f.run(args, env)
+    assert.deepEqual(jsonAnswer(r, 0), {
+      command: 'set', status: 'saved', names: ['OLD', 'NEW'], exitCode: 0,
+      replaced: ['OLD'], empty: ['EMPTY'], warnings: broken ? ['catalog_not_updated'] : [],
+    })
+    assert.ok(!r.stdout.includes('sensitive'), r.stdout)
+    assert.ok(!r.stderr.includes('sensitive'), r.stderr)
+  }
+  for (const [action, code, status] of [['cancel', 4, 'cancelled'], ['later', 6, 'deferred']]) {
+    const r = f.run(args, { ...env, KP_JSON_ACTION: action })
+    assert.deepEqual(jsonAnswer(r, code), { command: 'set', status, names: ['OLD', 'NEW', 'EMPTY'], exitCode: code })
+  }
+})

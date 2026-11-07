@@ -881,15 +881,19 @@ Order and cadence are Abhishek's (D-10, D-13): one PR, then stop. S-38 and S-39 
 
 ---
 
-### S-41 — `--json` results for agents (outline: grill first)
+### S-41 — `--json` results for agents
 
-**Depends on:** S-40 done; the S-41 grill. **Blocks:** nothing.
-**Research:** lookup · how Infisical and AgentSecrets shape a structured "missing" error (R-5 has notes; read again live).
-**Model:** sonnet once the grill is done.
-**Confidence:** 0.5 (low) — not ready. Open: which commands take `--json` (`set`, `has`, `list`, `delete`, and `run`'s card line); field names; whether errors become JSON too; and how `run` keeps its own lines apart from COMMAND's output (the likely answer: `--json` covers keyprompt's own lines only, never COMMAND's).
-**Files:** `src/cli.mjs`, `test/cli.test.mjs`; the README and the skill in a docs step after it.
-**Acceptance:** written at the grill.
-**Must not:** put a value in any JSON (invariant 1); change the plain-text output when `--json` is absent.
+**PR:** one.
+**Depends on:** S-40 done; scope recommended and accepted by "next" on 2026-11-07. **Blocks:** S-42.
+**Research:** lookup done below R-5 in `docs/research.md` (live 2026-11-07).
+**Model:** Codex in this session, as requested by "next"; no delegation.
+**Confidence before:** 0.9 — existing output paths read; the chosen scope avoids child-process output mixing.
+**Files:** `src/cli.mjs`, `test/cli.test.mjs`, this register, `docs/prd/v0-3.md`, `docs/research.md`.
+**Today:** results and failures are sentences, so agents must parse them.
+**Change:** implement the JSON contract in `docs/prd/v0-3.md`, including stable outcomes for errors and a names-only catalog warning. Keep the existing reports for text mode. Reject `run --json` before reading a store or starting a child. Handle parse errors in JSON mode too, without echoing invalid input. No changes to the card UI or store implementations.
+**Acceptance:** J in `docs/prd/v0-3.md`.
+**Verify:** `npm test`; CLI subprocess checks for real JSON, correct exit codes, one final result, mixed set outcomes, failures and warnings, no value leakage, flag parsing and unchanged text mode. After committing, break one error-sanitization guard and see its focused test fail, then restore the committed file. CI on all three OSes.
+**Must not:** put a value or raw error into JSON; add a dependency; change plain-text output without the flag; implement S-42 or publish a release. README and agent-skill examples belong to a following docs step.
 
 ### S-42 — `keyprompt setup`: ask for a project's missing names on one card (outline: grill first)
 
