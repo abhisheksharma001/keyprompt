@@ -1,6 +1,6 @@
 # Step register — card v2
 
-Plan: `docs/prd/card-v2.md`. Rules: `.claude/CLAUDE.md`. Standard: `~/.claude/skills/mystandard/SKILL.md`.
+Plan: `docs/prd/card-v2.md` (0.2.x) and `docs/prd/v0-3.md` (0.3). Rules: `.claude/CLAUDE.md`. Standard: `~/.claude/skills/mystandard/SKILL.md`.
 **One step = one PR. Stop after every PR.** A step whose "Depends on" is not done does not start. A session that is not the model a step names does not start it.
 
 ## Map
@@ -16,6 +16,7 @@ Plan: `docs/prd/card-v2.md`. Rules: `.claude/CLAUDE.md`. Standard: `~/.claude/sk
 | Fixes | S-20, S-21, S-25, S-26, S-27, S-28, S-30, S-31, S-32, S-33, S-35 | B-6 (the card never ends while a save is under way), B-7 (one true sentence for an ended card), B-12 (masking finds a key's base64 inside longer base64), B-3 (a failed update of the list of names no longer fails a save that worked), B-13 (the same for a delete that worked), B-4 (on `run`, every optional box may be left empty), B-14 (the Save button says plain "Save" when any box is optional), B-8 (with Remember unticked, the penguin holds an envelope and the vault stays shut), B-15 (the README's two demo pictures match the card again), B-16 (the README's picture links pin a commit on main) and B-17 (the S-29 row says its tag and release exist) |
 | 5 Release | S-29, S-34 | 0.2.1 on npm: the six steps since 0.2.0; 0.2.2: the four since (S-30 to S-33) |
 | Research | S-36 | R-9 answered: what keymask, the closest rival, is and is not |
+| 6 v0.3 | S-37 → S-38 → S-39 → S-40, then S-41, S-42, S-43, then S-44 → S-45, then S-46 | The plan; the Claude Code guard (its check, its installer, its docs); `--json` results; `keyprompt setup`; a names-only activity log; research on MCP (R-6), then `keyprompt mcp`; release 0.3.0 |
 
 Order: S-3, S-7, S-15 and S-18 touch different files from the S-2 → S-4 chain, so they can be built in parallel by separate sessions. Everything else follows the arrows.
 
@@ -59,6 +60,7 @@ Order: S-3, S-7, S-15 and S-18 touch different files from the S-2 → S-4 chain,
 | S-34 | done 2026-11-07 (PR #37) | **Published:** keyprompt@0.2.2 is on npm (2026-11-06 23:38:53 UTC, which is 2026-11-07 05:08:53 IST, by the registry's own time), with `latest` on it. It came from c6edf70, the PR head CI tested (run 42310323398, 6 of 6). Its shasum, ce4062b5de55ecc7bbb9091286f5e11e5a77ce5d, is the dry run's, read back from the registry (27 files, 46.5 kB). `npx -y --cache <empty folder> keyprompt@latest --version`, run in an empty folder, printed 0.2.2. **Route:** the one S-17 found. npm was already logged in as abhishekshar649; `printf '\n' | script -q /dev/null npm publish --access public --auth-type=web` printed an approval link, Abhishek approved it with Touch ID, and no password or code passed through the session. npm answered "being processed" at the upload and `latest` flipped about 2 minutes later. **The go:** asked and given before the publish, after CI was green and after npm's live state was read again right before (05:05 IST: `latest` 0.2.1, and 0.2.2 gave a 404). **Release prep:** `package.json` and `package-lock.json` say 0.2.2; the CHANGELOG's "Unreleased" heading is now "0.2.2 — 2026-11-07" with one lead sentence that matches its two bullets (B-14 and B-8). The README's two pictures (S-32, S-33) ship with it and rest on 82deb12, a commit on main. **Proof:** 154 of 154 with `KEYPROMPT_STORE_TEST=1`; `npm pack --dry-run` is 27 files, 46.5 kB, shasum ce4062b5de55ecc7bbb9091286f5e11e5a77ce5d, the same file list as 0.2.1. **Break-tests:** the CHANGELOG-matches-version guard, broken 3 ways (heading back to "Unreleased", heading naming 0.2.3, `package.json` moved alone to 0.2.3): each failed only that test, and the tree matched the commit after each restore. **Ships:** B-14 and B-8 in the program, and the README pictures of S-32 and S-33 on the npm page, resting on 82deb12, a commit on main. **After the merge:** the tag `v0.2.2` and the GitHub release are made on the squash commit, each with Abhishek's go; `gh release list` shows whether they exist. **Learned:** a published package freezes every link its README holds, so the README is read before the release commit is made, not after; that read found B-16 and is why S-33 came first. |
 | S-35 | done 2026-11-07 (PR #38) | Fixes B-17. **Before:** the S-29 row ended "**After the merge:** tag `v0.2.1` on the squash commit once `npm pack` there gives the same shasum, then the GitHub release; both need Abhishek's go." It was written before the tag and release were made and never updated. **The change:** that sentence now says the annotated tag `v0.2.1` is on 9705e21 (the S-29 squash commit; its message holds the shasum) and the GitHub release "keyprompt 0.2.1" exists (created 2026-11-06 21:13:54 UTC). The S-33 row's note about the gap is in the past tense and points here. **Proof:** read live 2026-11-07: the tag's target and message (`git for-each-ref`), the release (`gh release view v0.2.1`), and `npm pack --dry-run` in a scratch worktree at 9705e21, which gave 5a5d29a668ec0075ca2c208102597b3f322c83a5 and 27 files, the same as the published 0.2.1. 154 of 154 with `KEYPROMPT_STORE_TEST=1`. Nothing to break: the step guards no behaviour. **Found while:** Abhishek asked for everything open to be resolved before the 0.2.2 GitHub release; this and R-9 (S-36) were what was left. **Learned:** a row written before an owner act goes stale the moment the act is done, so it should name the act in words that stay true (the S-34 row does). |
 | S-36 | done 2026-11-07 (PR #39) | Answers R-9. **Before:** keymask, named in the PRD as the closest rival, was "unverified" at confidence 0.4 (one cached libraries.io page, 2026-09-26); the flag was to be closed before S-16 and was not. **Found** (read live 2026-11-07; the sources are in R-9): it is real, with five versions on npm from 2026-05-23 to 2026-05-28 (0.2.0 is `latest`); its source repository is not public (404); it is an MCP server whose form takes one or two fields per request and has no Later button; its output masking is exact-match only (its own comment says encoded copies are not matched). It does more than keyprompt in destinations (Vault, SSH hosts, a `.env` file). **The change:** R-9 is answered with sources; the PRD's two lines about keymask say what is known; the README needed nothing, because it compares nothing. **Proof:** 154 of 154 with `KEYPROMPT_STORE_TEST=1` (the buddy test reads the PRD). Nothing to break: no behaviour. **Learned:** I first wrote "one version line" from the headline fields of one `npm view`; reading `npm view ... versions` before opening the PR found five, so a count in a research answer is read from the list itself. **Known gaps:** the form was not rendered in a browser; keymask's Windows and Linux paths were not read in detail; upkeep beyond the last publish date cannot be judged because its commits are not visible. R-2 and R-6 stay parked (v0.3 ideas that need Abhishek's decisions). |
+| S-38 … S-46 | todo | — |
 
 ---
 
@@ -793,14 +795,157 @@ Pinguu is our own design: flat vector shapes, rounded, a key-shaped head tuft an
 
 ---
 
+## v0.3 — the guard first, then hand-offs for agents (`docs/prd/v0-3.md`)
+
+Order and cadence are Abhishek's (D-10, D-13): one PR, then stop. S-38 and S-39 each start with a grill on the open questions the PRD lists for them; a step whose confidence is under 0.7 is not ready and is not built.
+
+### S-37 — Plan v0.3: the PRD, R-10 answered, steps S-38 to S-46
+
+**PR:** one, docs only, with the register row in its own last commit (it carries this PR's number).
+**Depends on:** S-36 done (PR #39). Abhishek's "lets build these" and his four answers (D-10 to D-13), 2026-11-07.
+**Blocks:** S-38 to S-46.
+**Research:** latest · R-10 read live from the Claude Code hooks reference (code.claude.com/docs/en/hooks, 2026-11-07); R-11, R-12 and R-13 opened.
+**Model:** opus — what a security guard blocks, and how it fails, are design calls.
+**Confidence:** 0.8 — the plan's claims were checked against the source and the live docs; three lookups stay open, each blocking only its own step.
+**Files:** `docs/prd/v0-3.md` (new), `docs/research.md`, `docs/steps.md`, `docs/bugs.md`, `.claude/CLAUDE.md`.
+**Today:** the register lists five ranked v0.3 candidates; there is no PRD and no step for any of them.
+**Change:** a new PRD with acceptance sentences G1 to G4 and decisions D-10 to D-13; R-10 answered; R-11 to R-13 opened; steps S-38 to S-46; B-18 logged (found by this step's path check); the candidate list notes which step each item became.
+**Acceptance:** WHEN a session with no memory of this conversation reads `docs/steps.md` THEN it SHALL find S-38 with every field filled, and each later step SHALL say what must happen before it can start.
+**Verify:** every backticked path the branch adds exists (`[ -e ]` from the repo root); `KEYPROMPT_STORE_TEST=1 npm test` (154 of 154); `git diff --stat main` lists only the five files above.
+**Must not:** change any file under `src/`, `bin/`, `skill/` or `test/`, the README, `SECURITY.md` or the CHANGELOG; edit `~/.claude/settings.json`; change a decision Abhishek made.
+
+---
+
+### S-38 — `keyprompt guard`: the check, and the two hook entry points
+
+**PR:** one.
+**Depends on:** S-37 done. The S-38 grill: Abhishek answers the two D-12 questions in `docs/prd/v0-3.md` (prompts: warn or block; environment dumps: keep or drop the warning). R-12 answered from primary sources, written into `docs/research.md` in this PR's first commit.
+**Blocks:** S-39.
+**Research:** lookup · R-12 (Linux `secret-tool search`, the Windows reads, the `tool_input` of the PowerShell and Monitor tools, and the key formats the prompt check knows, each from its provider's docs); read the hooks reference again live (R-10), because hooks change between Claude Code versions.
+**Model:** opus — a security check where a miss and a false block both cost something.
+**Confidence:** 0.75 — the hook's input and output were read live (R-10) and the macOS reads are known; Linux `search`, the Windows reads and the prompt behaviour wait on R-12 and the grill. Not ready until both are done.
+**Files:** src/guard.mjs (new), `src/cli.mjs`, test/guard.test.mjs (new).
+**Today:** no hook code exists (`git grep -n -i guard src/` finds only a comment in `src/card-server.mjs`). `SECURITY.md` says of the agent reading a saved key: "nothing stops it."
+**Change:**
+1. src/guard.mjs, pure functions with no I/O:
+   - `checkCommand(command, savedNames)` returns `null`, or `{ reason }` for exactly the reads in the PRD's "What counts as a direct read". A read counts only when the store tool is run, not mentioned: its word stands where a command starts (the start of the text, or after `;`, `&&`, `||`, `|`, `$(`, a backtick or a newline, also behind `sudo`, `env NAME=value`, `command`, `exec` or `keyprompt run ... --`), and the quoted script after `bash -c`, `sh -c` or `zsh -c` is checked the same way. The reason says the command reads a keyprompt secret straight from the password store and tells the agent to use `keyprompt run NAME -- COMMAND`.
+   - `checkPrompt(text)` returns `null`, or `{ kind }` (for example "an OpenAI key") for the formats R-12 lists. Never the text or any part of it.
+   - `preToolUse(input, savedNames)` and `userPromptSubmit(input)` return the JSON object to print, or `null`. Their shape is R-10's: `hookSpecificOutput.permissionDecision: "deny"` with `permissionDecisionReason`; for a message, what the grill chose (warn: `systemMessage` and `hookSpecificOutput.additionalContext`; block: `decision: "block"`, `reason` and `hookSpecificOutput.suppressOriginalPrompt: true`). The words say "this message", never "you pasted".
+2. `keyprompt guard pre-tool-use` and `keyprompt guard user-prompt-submit` in `src/cli.mjs`: read stdin (stop at 1 MB), parse the JSON, read the saved names with `readCatalog()` (names only; the store is never opened), print the result or nothing, exit 0. Input that is not valid hook JSON: one line on stderr, exit 1, which Claude Code shows as a hook error and lets through (R-10), so the person sees that the guard is not working. One HELP line: `keyprompt guard EVENT`, used by Claude Code hooks, reads the hook's JSON on stdin.
+3. Test fixtures that look like keys are built from pieces at run time, so no key-shaped string sits in the repo (it would trip secret scanners, and is bad practice).
+**Acceptance:** WHEN `keyprompt guard pre-tool-use` reads `{"tool_name":"Bash","tool_input":{"command":"security find-generic-password -s keyprompt -a OPENAI_API_KEY -w"}}` on stdin THEN it SHALL print a deny whose reason names `keyprompt run`; WHEN it reads the same with the command `git grep find-generic-password` THEN it SHALL print nothing and exit 0.
+**Verify:** `node --test test/guard.test.mjs` with one table of commands. Refused: `-w`; `-g`; `-a` with a saved name and no `-s`; `dump-keychain -d`; after `&&`; inside `bash -c '...'`; behind `sudo`; inside `keyprompt run X -- ...`; `secret-tool lookup service keyprompt account X`; the Windows forms R-12 lists. Let through: `git grep find-generic-password`; `echo security find-generic-password -s keyprompt -w`; `git commit -m "..."` with those words; `security find-generic-password -s keyprompt -a X` with neither `-w` nor `-g`; `keyprompt run X -- node app.js`; `keyprompt has X`. Messages: each format R-12 lists, plus ordinary text with no false alarm. Break test (after the commit): remove the `-w` rule and watch exactly one test fail, then `git checkout -- src/guard.mjs`. Pipe test: `printf '%s' '<the JSON above>' | node bin/keyprompt.mjs guard pre-tool-use`, and `time` it (report the number). `KEYPROMPT_STORE_TEST=1 npm test`; CI on all three OSes.
+**Must not:** read a value from the store; print, log or keep a message, a command or any part of a matched key; refuse anything outside the PRD's list; touch `~/.claude/settings.json` (S-39); change the README, `SECURITY.md` or `skill/SKILL.md` (S-40); add a dependency; make a network call.
+
+---
+
+### S-39 — `keyprompt install-guard` and `uninstall-guard`
+
+**PR:** one.
+**Depends on:** S-38 done. R-11 and R-13 answered from primary sources (this PR's first commit). The S-39 grill: the three S-39 questions in `docs/prd/v0-3.md` (confirming without a terminal; whether the guard refuses `uninstall-guard` when an agent runs it; `keyprompt status`).
+**Blocks:** S-40.
+**Research:** lookup · R-11 (where Claude Code reads its settings), R-13 (npx's cache path; what survives a Node version change).
+**Model:** opus — it writes to the person's own Claude Code settings, and a broken file there breaks every session.
+**Confidence:** 0.65 (low) — not ready: three grill questions and two lookups are open. About 0.8 once they are answered.
+**Files:** src/install-guard.mjs (new), `src/cli.mjs`, test/install-guard.test.mjs (new).
+**Today:** `keyprompt install-skill` writes one skill file under `~/.claude/skills/keyprompt`; nothing in keyprompt touches `~/.claude/settings.json`.
+**Change:**
+1. `install-guard`: find the settings file (R-11). Missing file: start from `{}`. Not valid JSON: say so, exit 1, leave it alone. Running from npx's cache (R-13): refuse and say to run `npm install -g keyprompt` first.
+2. The two entries: under `hooks.PreToolUse`, `{"matcher": "Bash|PowerShell", "hooks": [{"type": "command", "command": <absolute path of this node>, "args": [<absolute path of bin/keyprompt.mjs>, "guard", "pre-tool-use"], "timeout": 10}]}`; under `hooks.UserPromptSubmit`, the same handler with `"user-prompt-submit"` and no matcher.
+3. Print the file path and exactly those entries, ask as the grill decided, then write a temporary file next to it and rename it over the original. Entries already there from keyprompt (their `args` end with `bin/keyprompt.mjs`, `guard` and an event) are replaced, not added again, so a second run after a Node change updates the path.
+4. `uninstall-guard`: remove only keyprompt's entries, and any matcher group or event array that this left empty. Everything else stays as it was.
+**Acceptance:** G3 in `docs/prd/v0-3.md`.
+**Verify:** `node --test test/install-guard.test.mjs`, every test with HOME (and USERPROFILE on Windows) set to a new temporary folder: no file; an empty file; a file with another PreToolUse Bash hook and other settings, which come back equal (`assert.deepEqual` on the parsed JSON without keyprompt's entries); invalid JSON, left byte for byte; two installs give one copy; install then uninstall gives back the original object. Break test: drop the "keep the other entries" merge and watch exactly one test fail. Then, with Abhishek's go (it uses his Claude Code account), one real run in a scratch folder that loads the guard from a scratch settings file and shows a direct read refused, never his own `~/.claude/settings.json`. `KEYPROMPT_STORE_TEST=1 npm test`; CI on all three OSes.
+**Must not:** write the real `~/.claude/settings.json` in a test; write without the confirmation the grill chose; edit project settings files; change the README, `SECURITY.md` or `skill/SKILL.md` (S-40); add a dependency.
+
+---
+
+### S-40 — The guard's docs: README, `SECURITY.md`, the skill, the CHANGELOG
+
+**PR:** one.
+**Depends on:** S-39 done.
+**Blocks:** S-46.
+**Research:** none — the words come from the PRD's "Honest limits" and the real output of S-38 and S-39.
+**Model:** sonnet.
+**Confidence:** 0.85 — words only, and every claim has a test or a source behind it.
+**Files:** `README.md`, `SECURITY.md`, `skill/SKILL.md`, `CHANGELOG.md`.
+**Today:** `SECURITY.md`, "What it does not protect against", says of the agent: "keyprompt's skill tells it not to; nothing stops it." The README and the skill do not mention a guard.
+**Change:** `SECURITY.md`: that bullet says that in Claude Code, after `keyprompt install-guard`, the obvious direct reads are refused; that the guard reads command text only, fails open and covers Claude Code only; and that anything else can still read the store. README: a short "Guard for Claude Code" section with both commands and the exact entries they add. Skill: when the guard refuses a command, use `keyprompt run`, and never try another way round it. CHANGELOG "Unreleased": the guard under Added.
+**Acceptance:** WHEN a person reads `SECURITY.md` THEN the limit about the agent SHALL say what the guard refuses, that it fails open and that it covers Claude Code only, and no sentence in the README or `SECURITY.md` SHALL say that the agent cannot read a key.
+**Verify:** `git grep -n "nothing stops it"` (gone, or followed by the Claude Code exception); `KEYPROMPT_STORE_TEST=1 npm test` (the README and CHANGELOG tests in `test/cli.test.mjs`).
+**Must not:** claim more than the PRD's "Honest limits"; change any file under `src/`, `bin/` or `test/`.
+
+---
+
+### S-41 — `--json` results for agents (outline: grill first)
+
+**Depends on:** S-40 done; the S-41 grill. **Blocks:** nothing.
+**Research:** lookup · how Infisical and AgentSecrets shape a structured "missing" error (R-5 has notes; read again live).
+**Model:** sonnet once the grill is done.
+**Confidence:** 0.5 (low) — not ready. Open: which commands take `--json` (`set`, `has`, `list`, `delete`, and `run`'s card line); field names; whether errors become JSON too; and how `run` keeps its own lines apart from COMMAND's output (the likely answer: `--json` covers keyprompt's own lines only, never COMMAND's).
+**Files:** `src/cli.mjs`, `test/cli.test.mjs`; the README and the skill in a docs step after it.
+**Acceptance:** written at the grill.
+**Must not:** put a value in any JSON (invariant 1); change the plain-text output when `--json` is absent.
+
+### S-42 — `keyprompt setup`: ask for a project's missing names on one card (outline: grill first)
+
+**Depends on:** S-41 done (D-10's order); the S-42 grill. **Blocks:** nothing.
+**Research:** none expected.
+**Model:** sonnet once the grill is done.
+**Confidence:** 0.5 (low) — not ready. Open: where the names come from (`.env.example` only, or a keyprompt file too); what an example value or a comment in it means (`:optional`?); more than 12 missing names (the card's limit); whether `setup` writes anything into the project (the PRD's default: no).
+**Files:** `src/cli.mjs`, a new test file; docs after.
+**Acceptance:** written at the grill.
+**Must not:** read `.env` or any file that may hold values (names only, from the example file); write into the project; open more than one card at a time.
+
+### S-43 — A names-only activity log (outline: grill first)
+
+**Depends on:** S-42 done (D-10's order); the S-43 grill. **Blocks:** nothing.
+**Research:** none expected.
+**Model:** sonnet once the grill is done.
+**Confidence:** 0.5 (low) — not ready. Open: what one line holds (name, time, exit code, and the command's name only, or its full arguments, which may hold other secrets); where it lives (beside the catalog, under `~/.keyprompt`); size limit; on by default or opt-in; a command to read it.
+**Files:** `src/cli.mjs`, `src/catalog.mjs` or a new file, tests; docs after.
+**Acceptance:** written at the grill.
+**Must not:** write a value, an environment, COMMAND's output, or full arguments unless Abhishek chooses that (invariant 8).
+
+### S-44 — Research R-6: can `keyprompt mcp` open the card through MCP URL mode?
+
+**Depends on:** S-43 done (D-10's order). **Blocks:** S-45.
+**Research:** deep · R-6 (open, parked until now): the MCP spec's URL mode, which clients support it today, and what a server needs. Everything read live and cited; R-6's 2026-11-05 facts are read again, not reused.
+**Model:** opus — a dependency question and a protocol design follow from it.
+**Confidence:** 0.7 that R-6 asks the right questions; the answers are unknown.
+**Files:** `docs/research.md`, `docs/steps.md` (S-45 filled in), `docs/prd/v0-3.md`.
+**Acceptance:** WHEN S-44 is done THEN R-6 SHALL be answered with sources, and S-45 SHALL name the dependency choice Abhishek has to make.
+**Must not:** write code; install or add an MCP SDK.
+
+### S-45 — `keyprompt mcp` (outline: waits on S-44)
+
+**Depends on:** S-44 done; Abhishek's yes or no on a dependency (an MCP SDK, or JSON-RPC over stdio written by hand; invariant 7). **Blocks:** S-46 if it ships in 0.3.0.
+**Research:** from S-44. **Model:** opus.
+**Confidence:** 0.3 (low) — nothing is known enough to build.
+**Must not:** return a value through MCP (invariant 1); add a dependency without Abhishek's yes.
+
+### S-46 — Release 0.3.0 (owner step)
+
+**Depends on:** the steps Abhishek chooses to ship (at least S-38 to S-40), CI green, and **Abhishek's explicit go** for the publish, his npm login and a Touch ID approval. He may choose to release after S-40 with only the guard; then this step moves up and a later release takes the rest.
+**Research:** lookup · npm's state read live right before the publish, as in S-34.
+**Model:** sonnet.
+**Confidence:** 0.85 — the publish route worked three times (S-17, S-29, S-34).
+**Files:** `package.json`, `package-lock.json`, `CHANGELOG.md`, `docs/steps.md`.
+**Acceptance:** WHEN someone runs `npx -y keyprompt --version` on a clean machine THEN it SHALL print 0.3.0.
+**Must not:** publish without the go or with CI red; tag or create the GitHub release without his go; type or ask for a password or a 2FA code.
+
+---
+
 ## Next release (v0.3) — ranked candidates, not frozen
+
+*Planned 2026-11-07 (S-37): items 1 to 5 below became S-38 to S-45 (the guard is three steps), in the order Abhishek chose (D-10 in `docs/prd/v0-3.md`). The text below is the original ranking.*
 
 1. **`keyprompt mcp` — become the page an MCP agent opens.** Claude Code 2.1.287 added "URL prompts from MCP servers" on the 2025-11-25 protocol: it asks you, then opens the URL in your browser (live CHANGELOG via `gh`, 2026-11-05). VS Code declares URL mode support. A small stdio MCP server with a `request_secret` tool answering with URL elicitation would make the card native in those agents, with the shell command still there for everything else. Needs R-6 closed and a yes on how to build it (hand-written JSON-RPC vs the MCP SDK dependency, invariant 7).
 2. **A Claude Code guard hook, lite.** Secretless AI's best idea, in about 50 lines:
    - Before a tool runs (PreToolUse on Bash): block commands that read keyprompt's own store directly (`security find-generic-password -s keyprompt`, `secret-tool lookup service keyprompt`) or dump the environment.
    - When you send a prompt (UserPromptSubmit): warn when it looks like it contains a key.
 
-   An honest `keyprompt status` would then say "Enforced in Claude Code; advice only elsewhere". This turns B-2 from "nothing stops it" into "Claude Code stops it".
+   An honest `keyprompt status` would then say "Enforced in Claude Code; advice only elsewhere". *Corrected 2026-11-07 (S-37, R-10):* the hook reads command text and fails open, so it makes the obvious direct reads of the store fail and tells the agent to use `keyprompt run`; it does not make the store unreadable. B-2 stays a limit, stated more narrowly.
 3. **A project manifest** (`keyprompt setup`): read the names a project needs (for example from `.env.example`) and ask for every missing one in one card. This is the "live checklist" and "handover" idea from the reports, built on S-5.
 4. **A names-only activity log**: when each name was handed to which command and its exit code, never values. It feeds the receipt and a future handover checklist.
 5. **`--json` results for agents**: machine-readable saved / deferred / missing lists, like Infisical's and AgentSecrets' structured "missing" errors.
