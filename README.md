@@ -164,7 +164,7 @@ keyprompt uninstall-guard    # removes it again (only in your own terminal)
 What the guard does:
 
 - **Before each Bash or PowerShell command**, it refuses a command that runs the password store's own read tool on a keyprompt item: `security find-generic-password` with `-w` or `-g`, or `security dump-keychain -d` (macOS); `secret-tool lookup` or `search` (Linux); `Get-StoredCredential`, or CredRead through `Add-Type` (Windows). Claude is told to use `keyprompt run` instead. A command that only mentions those words, such as `git grep find-generic-password` or an `echo`, goes through.
-- **Before each message**, it warns when the message looks like it contains a key (an Anthropic, OpenAI, GitHub, Slack or live Stripe key, another key starting `sk-`, or a private key block). The warning names the kind of key and never repeats it. It never blocks a message, so the key has already reached Claude: rotate it.
+- **Before each message**, it warns when the message looks like it contains a key (an Anthropic, OpenAI, GitHub or Slack key, a live Stripe secret or restricted key, another key starting `sk-`, or a private key block). The warning names the kind of key and never repeats it. It never blocks a message, so the key has already reached Claude: rotate it.
 
 What it does not do:
 
