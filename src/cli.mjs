@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
+import { createInterface } from 'node:readline/promises'
 import { fileURLToPath } from 'node:url'
 import { openInBrowser } from './browser.mjs'
 import { requestSecretWithCard } from './card-server.mjs'
@@ -8,6 +9,17 @@ import { catalogPath, readCatalog, recordRemoved, recordSavedMany } from './cata
 import { collectSecrets } from './collect.mjs'
 import { EXIT, KeypromptError } from './errors.mjs'
 import { preToolUse, userPromptSubmit } from './guard.mjs'
+import {
+  addGuard,
+  guardEntries,
+  guardInstalled,
+  nodeCommand,
+  readSettings,
+  removeGuard,
+  runsFromNpxCache,
+  settingsPath,
+  writeSettings,
+} from './install-guard.mjs'
 import { assertName, parseFields } from './names.mjs'
 import { runWithSecrets } from './run.mjs'
 import { assertFits, joinNames, saveAll } from './save.mjs'
@@ -33,6 +45,10 @@ Usage:
   keyprompt delete NAME     Remove NAME from the password store.
   keyprompt demo            Open a sample card to see how it looks. Nothing you type is saved.
   keyprompt install-skill   Teach Claude Code to use keyprompt (writes ~/.claude/skills/keyprompt).
+  keyprompt install-guard [--yes]
+                            Add keyprompt's guard to Claude Code's settings. Shows the
+                            entries first and asks; --yes skips the question.
+  keyprompt uninstall-guard Remove the guard again. Works only in your own terminal.
   keyprompt guard EVENT     Run by Claude Code hooks (EVENT is pre-tool-use or user-prompt-submit).
                             Reads the hook's JSON on stdin; never reads a saved value.
 
@@ -63,6 +79,41 @@ Options:
   --no-redact     Pass COMMAND's output through untouched (for full-screen tools).
                   Works only when the output goes straight to a terminal.
 `
+
+/**
+ * What install-guard is about to add, shown before it asks.
+ *
+ * @param {string} path
+ * @param {ReturnType<typeof guardEntries>} entries
+ */
+export function installGuardPlan(path, entries) {
+  const shown = JSON.stringify({ hooks: { PreToolUse: [entries.PreToolUse], UserPromptSubmit: [entries.UserPromptSubmit] } }, null, 2)
+  return [
+    `keyprompt install-guard adds these hook entries to ${path}:`,
+    '',
+    shown,
+    '',
+    'Before each Bash or PowerShell command, Claude Code runs the guard, which refuses the obvious direct reads of keyprompt secrets from the OS password store.',
+    'Before each message, the guard warns when the message looks like it contains a key; it never blocks a message.',
+    'The guard fails open: if it cannot run, Claude Code lets the command through and shows a hook error.',
+    'Every other setting in the file stays as it is.',
+    '',
+  ].join('\n')
+}
+
+/**
+ * Ask a yes/no question on the terminal. Anything but y or yes is no.
+ *
+ * @param {string} question
+ */
+async function confirm(question) {
+  const prompt = createInterface({ input: process.stdin, output: process.stdout })
+  try {
+    return /^y(es)?$/i.test((await prompt.question(question)).trim())
+  } finally {
+    prompt.close()
+  }
+}
 
 const GUARD_EVENTS = new Set(['pre-tool-use', 'user-prompt-submit'])
 /** A hook's JSON carries the whole command or message; anything larger is not a hook's input. */
@@ -121,14 +172,14 @@ async function savedNames() {
 
 /**
  * @param {string[]} argv
- * @returns {{ positionals: string[], command: string[], reason?: string, by?: string, redact: boolean, help: boolean, version: boolean }}
+ * @returns {{ positionals: string[], command: string[], reason?: string, by?: string, redact: boolean, yes: boolean, help: boolean, version: boolean }}
  */
 export function parseArgs(argv) {
   const dash = argv.indexOf('--')
   const own = dash === -1 ? argv : argv.slice(0, dash)
   const command = dash === -1 ? [] : argv.slice(dash + 1)
   /** @type {ReturnType<typeof parseArgs>} */
-  const parsed = { positionals: [], command, redact: true, help: false, version: false }
+  const parsed = { positionals: [], command, redact: true, yes: false, help: false, version: false }
   for (let i = 0; i < own.length; i++) {
     const arg = own[i]
     const takeValue = () => {
@@ -142,6 +193,7 @@ export function parseArgs(argv) {
     if (arg === '--reason') parsed.reason = takeValue()
     else if (arg === '--by') parsed.by = takeValue()
     else if (arg === '--no-redact') parsed.redact = false
+    else if (arg === '--yes') parsed.yes = true
     else if (arg === '--help' || arg === '-h') parsed.help = true
     else if (arg === '--version' || arg === '-v') parsed.version = true
     else if (arg.startsWith('--')) throw new KeypromptError(`Unknown option ${arg}. See keyprompt --help.`, { exitCode: EXIT.USAGE })
@@ -419,6 +471,10 @@ export async function main(argv) {
     return verb === undefined && !args.help ? EXIT.USAGE : EXIT.OK
   }
 
+  if (args.yes && verb !== 'install-guard') {
+    throw new KeypromptError('--yes works only with install-guard.', { exitCode: EXIT.USAGE })
+  }
+
   if (verb === 'set') {
     const parsed = parseFields(rest)
     if (parsed.length === 0) throw new KeypromptError('Usage: keyprompt set NAME [NAME...] [--reason TEXT]', { exitCode: EXIT.USAGE })
@@ -530,6 +586,66 @@ export async function main(argv) {
     const input = parseHookInput(await readStdin(process.stdin, MAX_HOOK_INPUT))
     const output = event === 'pre-tool-use' ? preToolUse(input, await savedNames()) : userPromptSubmit(input)
     if (output) process.stdout.write(`${JSON.stringify(output)}\n`)
+    return EXIT.OK
+  }
+
+  if (verb === 'install-guard') {
+    if (rest.length > 0 || args.command.length > 0) throw new KeypromptError('Usage: keyprompt install-guard [--yes]', { exitCode: EXIT.USAGE })
+    if (runsFromNpxCache(ROOT)) {
+      throw new KeypromptError(
+        "install-guard is running from npx's temporary folder, which npm can delete at any time; the guard would then stop working. Install keyprompt first (npm install -g keyprompt), then run: keyprompt install-guard",
+        { exitCode: EXIT.USAGE },
+      )
+    }
+    const path = settingsPath()
+    const settings = await readSettings(path)
+    const entries = guardEntries(nodeCommand(), join(ROOT, 'bin', 'keyprompt.mjs'))
+    if (guardInstalled(settings, entries)) {
+      process.stdout.write(`The keyprompt guard is already installed in ${path}. Nothing changed.\n`)
+      return EXIT.OK
+    }
+    const next = addGuard(settings, entries)
+    process.stdout.write(installGuardPlan(path, entries))
+    if (!args.yes) {
+      if (!process.stdin.isTTY) {
+        throw new KeypromptError(
+          "install-guard asks before it changes Claude Code's settings, and it cannot ask here (no terminal). Run it in your own terminal, or add --yes.",
+          { exitCode: EXIT.USAGE },
+        )
+      }
+      if (!(await confirm('Add them? [y/N] '))) {
+        process.stdout.write('Nothing changed.\n')
+        return EXIT.CANCELLED
+      }
+    }
+    await writeSettings(path, next)
+    process.stdout.write(
+      `Installed in ${path}. Claude Code reloads its settings when they change, so open sessions pick this up too.\nRemove it with: keyprompt uninstall-guard\n`,
+    )
+    return EXIT.OK
+  }
+
+  if (verb === 'uninstall-guard') {
+    if (rest.length > 0 || args.command.length > 0) throw new KeypromptError('Usage: keyprompt uninstall-guard', { exitCode: EXIT.USAGE })
+    const path = settingsPath()
+    const { settings: next, removed } = removeGuard(await readSettings(path))
+    if (removed === 0) {
+      process.stdout.write(`The keyprompt guard is not installed in ${path}. Nothing changed.\n`)
+      return EXIT.OK
+    }
+    // Only a person at a terminal can switch the guard off (D-15); an agent's command has no terminal.
+    if (!process.stdin.isTTY || !process.stdout.isTTY) {
+      throw new KeypromptError('uninstall-guard works only in your own terminal, so an agent cannot switch the guard off. Run it there.', {
+        exitCode: EXIT.USAGE,
+      })
+    }
+    process.stdout.write(`This removes keyprompt's guard from ${path}. Every other setting stays as it is.\n`)
+    if (!(await confirm('Remove it? [y/N] '))) {
+      process.stdout.write('Nothing changed.\n')
+      return EXIT.CANCELLED
+    }
+    await writeSettings(path, next)
+    process.stdout.write(`Removed from ${path}.\n`)
     return EXIT.OK
   }
 
