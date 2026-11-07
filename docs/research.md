@@ -100,6 +100,12 @@ Judgment (not legal advice): low risk while keyprompt is small and free; the ris
   - Codex 0.164.0 masks credentials in remote Bash.
 - **Close projects** (cached package pages, unverified): keymask, pi-secrets, keyward. See R-9.
 
+#### S-41 follow-up to R-5 — structured errors (read live 2026-11-07)
+
+Sources reread during this session: https://infisical.com/docs/api-reference/overview/errors documents API fields reqId, statusCode, error and message, with stable identifiers such as NotFound. That is the API, not its CLI: https://infisical.com/docs/cli/troubleshooting explicitly says CLI errors are plain text on stderr and exit 1. https://docs.agentsecrets.tech/troubleshooting/error-codes documents SEC-404 for a missing secret and ERR-999 for unexpected failures; it does not establish a JSON CLI result shape.
+
+Keyprompt's design inference: use stable status identifiers plus its existing exit codes. Do not copy HTTP codes into local-store outcomes. Emit no raw exception text or catalog data; the four-command scope avoids mixing a child's output with JSON. Confidence 0.95 in these documented facts; they were fetched live, not inferred from earlier notes.
+
 ### R-6 — Could keyprompt plug into any MCP agent through "URL mode elicitation"?
 
 **Where:** later (parked) · a possible future `keyprompt mcp` server
