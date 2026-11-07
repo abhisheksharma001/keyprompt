@@ -3,7 +3,7 @@
 keyprompt is a small CLI that lets AI coding agents get API keys from a person without the key ever entering the chat. Node ESM (`.mjs`), one runtime dependency (`cross-spawn`). The "card" is a local web page served on 127.0.0.1.
 
 - Working standard: `~/.claude/skills/mystandard/SKILL.md` — one step is one PR; stop after every PR.
-- Feature plan: `docs/prd/card-v2.md` · Step register: `docs/steps.md` · Research flags: `docs/research.md` · Bugs: `docs/bugs.md`
+- Feature plan: `docs/prd/card-v2.md` (0.2.x) and `docs/prd/v0-3.md` (0.3) · Step register: `docs/steps.md` · Research flags: `docs/research.md` · Bugs: `docs/bugs.md`
 - Threat model and limits: `SECURITY.md`
 
 ## Invariants — a PR that breaks one does not merge

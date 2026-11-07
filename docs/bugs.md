@@ -188,3 +188,13 @@ The deadline is the real-world path. Someone presses Save near the end of the 5 
 **Files:** `docs/steps.md` (the S-29 row, and the S-33 row's note about it).
 **Research:** none · **Model:** sonnet · **Confidence:** 0.95 that the row is stale (tag, release and the published shasum were all read from the system).
 **Fix step:** S-35 (PR #38). The S-29 row's last sentence now says where the tag is (9705e21, whose message holds the shasum; `npm pack` at that commit gives it again, read 2026-11-07) and that the release exists. The S-29 entry further down keeps the plan as it was written. A register row that waits on an owner act (a tag, a release) names the act in words that stay true after it is done, as the S-34 row does.
+
+### B-18 — Three backticked names in the docs are not paths in this repo
+
+**Seen:** 2026-11-07, by a path check run while reviewing the v0.3 PRD (S-37): every backticked token that looks like a path, tested with `[ -e ]` from the repo root. Three on main fail it, each written in backticks there (and in plain text here, so this entry does not repeat the bug): backend/src/ee/LICENSE.md in `docs/research.md` (a path in Infisical's repository, R-5's answer), card-script.mjs in `docs/steps.md` (the note in S-12; the file is `src/card-script.mjs`), and a bare catalog.json in `docs/steps.md` (seven times; the file is `~/.keyprompt/catalog.json`, outside the repo). The project rule in `.claude/CLAUDE.md` says a backticked path inside this repo must exist, and paths in other repos are written in plain text. No automated check enforces it yet.
+**Requirement:** the docs rule in `.claude/CLAUDE.md` ("In docs, a backticked path inside this repo must exist"). The PRD does not cover it.
+**Needs first:** nothing.
+**Blocks:** nothing.
+**Files:** `docs/research.md`, `docs/steps.md`.
+**Research:** none · **Model:** sonnet · **Confidence:** 0.9 that these three are the only ones (the check matches tokens shaped like a/b/c or name.ext; a bare word without an extension is not tested).
+**Fix step:** not planned yet. The fix writes the Infisical path in plain text, card-script.mjs as `src/card-script.mjs`, and the bare catalog.json as `~/.keyprompt/catalog.json` or plain text.
