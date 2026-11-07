@@ -183,11 +183,14 @@ function secretToolRead(args, names) {
  */
 function commandStart(words) {
   let i = words.length > 2 && words[1] === '=' ? 2 : 0
-  let wrapped = false
+  let wrapper = ''
   while (i < words.length) {
     const w = words[i]
-    if (WRAPPERS.has(base(w))) wrapped = true
-    else if (!/^[A-Za-z_][A-Za-z0-9_]*=/.test(w) && !(wrapped && w.startsWith('-'))) break
+    if (WRAPPERS.has(base(w))) wrapper = base(w)
+    else if (wrapper && w.startsWith('-')) {
+      // sudo and doas options that take a value: `sudo -u root security ...`
+      if ((wrapper === 'sudo' || wrapper === 'doas') && /^-[ugUCDhprt]$/.test(w)) i++
+    } else if (!/^[A-Za-z_][A-Za-z0-9_]*=/.test(w)) break
     i++
   }
   return i

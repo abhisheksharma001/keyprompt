@@ -30,6 +30,7 @@ const REFUSED = [
   "bash -c 'security find-generic-password -s keyprompt -w'",
   "zsh -lc 'security find-generic-password -s keyprompt -w'",
   'sudo security find-generic-password -s keyprompt -w',
+  'sudo -u root security find-generic-password -s keyprompt -w',
   'rtk security find-generic-password -s keyprompt -w',
   'env A=1 security find-generic-password -s keyprompt -w',
   'KEY=$(security find-generic-password -s keyprompt -a OPENAI_API_KEY -w) node app.js',
