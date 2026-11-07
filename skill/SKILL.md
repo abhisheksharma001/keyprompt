@@ -81,6 +81,12 @@ keyprompt run TWILIO_ACCOUNT_SID:visible,TWILIO_AUTH_TOKEN -- python send_sms.py
   - Windows (PowerShell): `keyprompt run API_TOKEN -- powershell -NoProfile -Command "Invoke-RestMethod https://api.example.com/me -Headers @{Authorization = 'Bearer ' + $env:API_TOKEN}"`
 - Don't use `--no-redact`. It turns masking off and is meant for a person running a full-screen program in their own terminal. When the output is not a terminal, as in your shell tool, it stops with exit code 2.
 
+## If keyprompt's guard refuses a command
+
+With keyprompt's guard installed, Claude Code refuses a command that reads a saved secret straight from the password store; the reason starts `keyprompt guard:` (Claude Code shows it as a hook error). Run the command that needs the secret as `keyprompt run NAME -- COMMAND` instead. Never try another way round the guard: no script file, no encoded command, no other tool, no editing Claude Code's settings and no `keyprompt uninstall-guard`. If the refused command read nothing and only wrote those words as text into a file (a heredoc, say), write that file with your file-editing tool instead.
+
+When a message comes with a note from keyprompt's guard that it looks like it contains a key, follow rule 4.
+
 ## Replace or remove
 
 - Wrong value or rotated key: run `keyprompt set NAME` again; the card says "Replace secret". With several names, a box the user leaves empty keeps its saved value.

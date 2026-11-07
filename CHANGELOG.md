@@ -2,6 +2,16 @@
 
 What changed in each version of keyprompt. Everything listed under a version is merged to `main`.
 
+## Unreleased
+
+### Added
+
+- **A guard for Claude Code, if you want one.** `keyprompt install-guard` adds two hooks to Claude Code's user settings after showing them and asking (`--yes` skips the question), and leaves every other setting as it is; `keyprompt uninstall-guard` removes them and works only in your own terminal. With the guard, Claude Code refuses a Bash or PowerShell command that reads a keyprompt secret straight from the OS password store (such as `security find-generic-password -w`) and tells Claude to use `keyprompt run`. It also warns when a message looks like it contains a key, naming the kind of key and never repeating it; it does not block the message. The guard reads command text only, fails open (if it cannot run, Claude Code lets the command through and shows a hook error) and works in Claude Code only. The README and `SECURITY.md` say what it does not stop.
+
+### Changed
+
+- Exit code 4 now also means you said no to `install-guard` or `uninstall-guard`.
+
 ## 0.2.2 — 2026-11-07
 
 Two things on the card now say what happens: the Save button on a card with an optional box, and the penguin when "Remember on this computer" is unticked.

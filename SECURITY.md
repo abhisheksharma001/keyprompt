@@ -16,7 +16,10 @@ keyprompt keeps secrets out of AI agents' conversations. This page says exactly 
 ## What it does not protect against
 
 - **Malware or anything else running as you.** It can read your OS password store directly, like any app you've granted access. keyprompt is a context boundary for AI agents, not a vault against your own account.
-- **The agent itself.** It can read a saved key straight from the OS store (for example with `security find-generic-password` on macOS), because it runs as you. keyprompt's skill tells it not to; nothing stops it.
+- **The agent itself.** It can read a saved key straight from the OS store (for example with `security find-generic-password` on macOS), because it runs as you. keyprompt's skill tells it not to. In Claude Code, after you run `keyprompt install-guard`, a guard also refuses the obvious direct reads: a Bash or PowerShell command that runs the store's own read tool on a keyprompt item (`security find-generic-password` with `-w` or `-g`, `security dump-keychain -d`, `secret-tool lookup` or `search`, `Get-StoredCredential`, or CredRead through `Add-Type`). The guard is a guardrail, not a wall:
+  - **It reads command text only.** A script file, an encoded command or another tool can still reach the store, and an agent that can edit Claude Code's settings file can remove the guard.
+  - **It fails open.** If it cannot start, crashes, prints invalid JSON or takes longer than 10 seconds, Claude Code lets the command through and shows a hook error. Removing the Node version or the keyprompt install the hook points at does the same; running `keyprompt install-guard` again fixes it.
+  - **It covers Claude Code only**, and only where you ran `install-guard`. Anywhere else, keyprompt does nothing to stop the agent reading the store.
 - **`run --no-redact`.** This option passes the command's output through untouched, so a command that prints the key shows it. It works only when keyprompt's output goes straight to a terminal. When it does not (a pipe or a file, as in Claude Code's shell tool), `run` stops with exit code 2 before reading a key. That stops an agent from turning masking off by accident, not on purpose: an agent whose commands run in a real terminal, or one that starts keyprompt inside a program that makes a terminal (such as `script`), can still use it. keyprompt's skill tells it not to.
 - **A command that transforms the secret in any other way before printing it.** Masking catches only the exact value and the encoded forms listed above. Not caught, for example: uppercase hex, part of the value, a hash, any other encoding, or base64 broken across lines in the middle of the value.
 - **A command that sends the secret somewhere.** `run` gives the key to the command you name; if that command is malicious, it can use or send the key. Read what an agent proposes to `run`.
@@ -27,6 +30,8 @@ keyprompt keeps secrets out of AI agents' conversations. This page says exactly 
 ## If a key was pasted into a chat
 
 Treat it as exposed: rotate it at the provider (create a new one, revoke the old one), then save the new one with `keyprompt set`. Deleting the message usually does not remove it from logs.
+
+With the guard installed, Claude Code also shows a warning when a message looks like it contains a key. The warning names the kind of key and never repeats it. The guard does not stop the message, so the key has still reached Claude: rotate it all the same.
 
 ## Reporting a vulnerability
 
