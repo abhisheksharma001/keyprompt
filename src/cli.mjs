@@ -67,7 +67,7 @@ same way and masked in COMMAND's output. At most 12 FIELDs per card.
 Example: keyprompt set TWILIO_ACCOUNT_SID:visible TWILIO_AUTH_TOKEN
 
 Exit codes:
-  0 ok                       4 the person cancelled the card
+  0 ok                       4 the person cancelled the card, or said no
   1 failed (message shown)   5 nobody filled it in within 5 minutes
   2 bad usage                6 the person chose Later; nothing was saved
   3 not saved (has, delete)
@@ -102,14 +102,22 @@ export function installGuardPlan(path, entries) {
 }
 
 /**
- * Ask a yes/no question on the terminal. Anything but y or yes is no.
+ * Ask a yes/no question on the terminal. Anything but y or yes is no,
+ * including Ctrl+D and Ctrl+C.
  *
  * @param {string} question
  */
 async function confirm(question) {
   const prompt = createInterface({ input: process.stdin, output: process.stdout })
+  // Closing the prompt alone leaves the question pending and the process would end with exit 0.
+  const cancel = new AbortController()
+  prompt.on('SIGINT', () => cancel.abort())
+  prompt.on('close', () => cancel.abort())
   try {
-    return /^y(es)?$/i.test((await prompt.question(question)).trim())
+    return /^y(es)?$/i.test((await prompt.question(question, { signal: cancel.signal })).trim())
+  } catch {
+    process.stdout.write('\n')
+    return false
   } finally {
     prompt.close()
   }
