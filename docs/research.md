@@ -172,10 +172,14 @@ Judgment (not legal advice): low risk while keyprompt is small and free; the ris
 
 **Where:** v0.3 · S-39 · the installer (`docs/prd/v0-3.md`)
 **Find out:** whether the settings file Claude Code reads is `~/.claude/settings.json` for everyone. If an environment variable moves it, `install-guard` would write a file Claude Code never reads and the person would think they were protected. The answer decides whether the installer reads that variable or refuses when it is set.
-**Confidence:** 0.4 (low) — I remember a `CLAUDE_CONFIG_DIR` variable and have not read it in the docs.
-**Review:** none once answered from Claude Code's settings docs; higher model if it cannot be read there.
-**Status:** open — answer at the start of S-39.
-**Answer:** —
+**Confidence:** 0.9 (high) after the answer below, read in Claude Code's own docs. It was 0.4 (low) before, from memory.
+**Review:** none — the docs settle it.
+**Status:** answered 2026-11-07 (S-39).
+**Answer:** read live on 2026-11-07 at about 09:21 IST, from the raw Markdown of Claude Code's docs (fetched with curl).
+
+- **Yes, it moves.** code.claude.com/docs/en/env-vars: "`CLAUDE_CONFIG_DIR` | Override the configuration directory (default: `~/.claude`). All settings, session history, and plugins are stored under this path." It can be set "in your shell, user settings, or managed settings", and the page's own example is an alias, `alias claude-work='CLAUDE_CONFIG_DIR=~/.claude-work claude'`. code.claude.com/docs/en/settings: "On Windows, `~/.claude` means `%USERPROFILE%\.claude`. To keep the home-directory files somewhere else, set `CLAUDE_CONFIG_DIR`; Claude Code then stores your settings, session history, and plugins there instead."
+- **So the installer** writes `$CLAUDE_CONFIG_DIR/settings.json` when the variable is set (and refuses a relative path), and `~/.claude/settings.json` otherwise. It prints the path it writes. A variable set only inside an alias is invisible to it; the README (S-40) says to run `install-guard` with the same `CLAUDE_CONFIG_DIR`.
+- **Two more facts from the settings page:** "Settings files are strict JSON: a `//` comment or a trailing comma is a syntax error", so the installer parses strict JSON and leaves a broken file alone; and (read with the page-reading tool, live) "Claude Code watches your settings files and reloads them when they change, so it applies most edits to the running session without a restart, including edits to `permissions`, `hooks`, ...".
 
 ### R-12 — Which commands read a keyprompt item directly on each OS, and what does the guard receive from each tool?
 
@@ -196,7 +200,12 @@ Judgment (not legal advice): low risk while keyprompt is small and free; the ris
 
 **Where:** v0.3 · S-39 · the installer (`docs/prd/v0-3.md`, "How the guard works")
 **Find out:** (a) how `install-guard` can tell it is running from npx's temporary cache (the README offers `npx -y keyprompt`), whose folder can be deleted at any time, so that it refuses there; (b) whether the absolute path of the running `node` plus the absolute path of `bin/keyprompt.mjs` survives the usual ways people manage Node (nvm, Homebrew upgrades), and what the person sees when it does not. A path that disappears makes the guard fail open with only a hook error.
-**Confidence:** 0.6 (low) — I expect npx's cache path to contain a folder named `_npx`, from memory.
-**Review:** none once answered from npm's docs or source; higher model otherwise.
-**Status:** open — answer at the start of S-39.
-**Answer:** —
+**Confidence:** 0.8 (medium) after the answer below: the folder layout and the Homebrew path were seen on this machine (one npm version, one Homebrew install), and the exec-form rules were read in Claude Code's docs. It was 0.6 (low) before, from memory.
+**Review:** none.
+**Status:** answered 2026-11-07 (S-39).
+**Answer:** read and run on 2026-11-07 at about 09:20 to 09:25 IST.
+
+- **(a) npx's folder.** npm's docs say only that "The requested packages are installed to a folder in the npm cache" (docs.npmjs.com/cli/v11/commands/npm-exec, live); they do not name it. On this machine (npm 10.9.7, cache `~/.npm` from `npm config get cache`) packages run with npx sit in `~/.npm/_npx/<16 hex characters>/node_modules/<package>`. So the installer refuses when a folder in keyprompt's own path is named `_npx`, on every OS.
+- **(b) Which node.** Homebrew's node reports its versioned path for itself: `/opt/homebrew/bin/node -p process.execPath` printed `/opt/homebrew/Cellar/node/25.9.0_2/bin/node`, while `/opt/homebrew/bin/node` is a link to it. An upgrade that removes the old version would break a hook pointing at the Cellar path (that old versions get removed is from memory of Homebrew's cleanup, not read today). So the installer writes the first `node` on PATH whose real path is the running node's, and falls back to the running node's own path. With nvm, node and the global packages both live in the version's folder (`npm prefix -g` printed `~/.nvm/versions/node/v22.22.2`), so removing that version removes both; the hook then fails open with a hook error, and running `install-guard` again fixes it.
+- **Exec form** (code.claude.com/docs/en/hooks, raw Markdown, live): with `args`, "Claude Code resolves `command` as an executable on `PATH` and spawns it directly with `args` as the argument vector. There is no shell"; "Absolute paths with spaces, such as `C:\Program Files\nodejs\node.exe`, are a single valid executable"; and on Windows "exec form requires `command` to resolve to a real executable such as a `.exe`", not a `.cmd` shim. The installer writes node's absolute path in `command`, so all three hold.
+- **Failing open or closed** (same page): a command hook takes `"onFailure": "continue"` or `"block"` ("Requires Claude Code v2.1.295 or later"); unset, "the action goes ahead" when the hook fails, with "a `<hook name> hook error` notice". The installer leaves it unset (D-17).
