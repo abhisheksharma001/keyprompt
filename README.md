@@ -60,6 +60,9 @@ On Linux, also install `secret-tool`: `sudo apt install libsecret-tools` (Debian
 | `keyprompt list` | Saved names, reasons and dates. Never values. |
 | `keyprompt delete NAME` | Removes it from the password store. |
 | `keyprompt install-skill` | Installs the Claude Code skill (`~/.claude/skills/keyprompt/SKILL.md`). |
+| `keyprompt install-guard [--yes]` | Adds keyprompt's guard to Claude Code's settings (see [Guard for Claude Code](#guard-for-claude-code)). Shows the entries first and asks; `--yes` skips the question. |
+| `keyprompt uninstall-guard` | Removes the guard again. Works only in your own terminal, and always asks. |
+| `keyprompt guard EVENT` | Run by Claude Code's hooks, not by you. Reads the hook's JSON on stdin; never reads a saved value. |
 | `keyprompt demo` | Opens a sample card with three boxes, so you can see how it looks. Nothing you type is saved. Save, **Later** and Cancel all end it with exit code 0. |
 
 Names look like environment variables (`OPENAI_API_KEY`, `STRIPE_SECRET_KEY`), because that's what `run` sets.
@@ -84,7 +87,7 @@ Exit codes:
 | `1` | Something failed; the message says what. |
 | `2` | Bad usage: an unknown option, a bad name, a bad hint, or `--no-redact` when the output is not a terminal. |
 | `3` | Not saved (`keyprompt has`, or `keyprompt delete` of a name that wasn't saved). |
-| `4` | You cancelled the card. |
+| `4` | You cancelled the card, or said no to `install-guard` or `uninstall-guard`. |
 | `5` | Nobody filled in the card within 5 minutes. |
 | `6` | You chose **Later**. Nothing was saved. |
 
@@ -92,7 +95,7 @@ Once the command in `keyprompt run` has started, `run` exits with the command's 
 
 ## For agents
 
-**Claude Code:** run `keyprompt install-skill` once. The skill tells Claude never to ask for keys in chat and to use `keyprompt` instead.
+**Claude Code:** run `keyprompt install-skill` once. The skill tells Claude never to ask for keys in chat and to use `keyprompt` instead. To also have Claude Code refuse the obvious direct reads of saved keys, add the [guard](#guard-for-claude-code).
 
 **Codex, Cursor, Gemini CLI and anything that reads `AGENTS.md`:** add this block to your `AGENTS.md` (project or global):
 
@@ -114,6 +117,64 @@ keyprompt run API_TOKEN -- sh -c 'curl -sS -H "Authorization: Bearer $API_TOKEN"
 ```
 
 On Windows: `keyprompt run API_TOKEN -- powershell -NoProfile -Command "Invoke-RestMethod https://api.example.com/me -Headers @{Authorization = 'Bearer ' + $env:API_TOKEN}"`
+
+## Guard for Claude Code
+
+The skill asks Claude not to read a saved key straight from your password store. The guard makes Claude Code refuse the obvious ways of doing it. It is optional, and it works in Claude Code only.
+
+```sh
+keyprompt install-guard      # shows what it adds, then asks
+keyprompt uninstall-guard    # removes it again (only in your own terminal)
+```
+
+`install-guard` adds two hook entries to Claude Code's user settings, `~/.claude/settings.json` (or `$CLAUDE_CONFIG_DIR/settings.json` when that is set), and leaves every other setting as it is. Before it asks, it prints the file and the entries with their real paths; `--yes` skips the question. Running it again never adds a second copy. The entries look like this:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/absolute/path/to/node",
+            "args": ["/absolute/path/to/keyprompt/bin/keyprompt.mjs", "guard", "pre-tool-use"],
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/absolute/path/to/node",
+            "args": ["/absolute/path/to/keyprompt/bin/keyprompt.mjs", "guard", "user-prompt-submit"],
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+What the guard does:
+
+- **Before each Bash or PowerShell command**, it refuses a command that runs the password store's own read tool on a keyprompt item: `security find-generic-password` with `-w` or `-g`, or `security dump-keychain -d` (macOS); `secret-tool lookup` or `search` (Linux); `Get-StoredCredential`, or CredRead through `Add-Type` (Windows). Claude is told to use `keyprompt run` instead. A command that only mentions those words, such as `git grep find-generic-password` or an `echo`, goes through.
+- **Before each message**, it warns when the message looks like it contains a key (an Anthropic, OpenAI, GitHub, Slack or live Stripe key, another key starting `sk-`, or a private key block). The warning names the kind of key and never repeats it. It never blocks a message, so the key has already reached Claude: rotate it.
+
+What it does not do:
+
+- **It reads command text only.** A script file, an encoded command or another tool can still get round it, and an agent that can edit Claude Code's settings file can remove it. It is a guardrail, not a wall; [SECURITY.md](https://github.com/abhisheksharma001/keyprompt/blob/main/SECURITY.md) has the details. It can also refuse a harmless command that holds one of those reads as text, such as a `cat <<EOF` block written to a file.
+- **It fails open.** If it cannot run (the Node version it points at was removed, with `nvm uninstall` for example, or keyprompt was uninstalled), Claude Code lets every command through and shows a hook error. Run `keyprompt install-guard` again.
+- **It cannot be installed from `npx`**, whose folder npm can delete at any time. Install keyprompt with `npm install -g keyprompt` first.
+
+If you start Claude Code with `CLAUDE_CONFIG_DIR` set (in an alias, say), run `install-guard` with the same value, for example `CLAUDE_CONFIG_DIR="$HOME/.claude-work" keyprompt install-guard`. Otherwise it writes `~/.claude/settings.json`, which that Claude Code does not read.
+
+**Stricter, by hand:** to make Claude Code refuse every Bash and PowerShell command while the guard cannot run, add `"onFailure": "block"` next to `"timeout": 10` in the `PreToolUse` entry (Claude Code 2.1.295 or later). keyprompt leaves it out because a broken install would then stop every command until you fix it. Running `install-guard` again replaces keyprompt's entries and drops that line, so add it again afterwards.
 
 ## Where keys are stored
 
