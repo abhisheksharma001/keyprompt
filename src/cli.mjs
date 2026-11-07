@@ -7,6 +7,7 @@ import { requestSecretWithCard } from './card-server.mjs'
 import { catalogPath, readCatalog, recordRemoved, recordSavedMany } from './catalog.mjs'
 import { collectSecrets } from './collect.mjs'
 import { EXIT, KeypromptError } from './errors.mjs'
+import { preToolUse, userPromptSubmit } from './guard.mjs'
 import { assertName, parseFields } from './names.mjs'
 import { runWithSecrets } from './run.mjs'
 import { assertFits, joinNames, saveAll } from './save.mjs'
@@ -32,6 +33,8 @@ Usage:
   keyprompt delete NAME     Remove NAME from the password store.
   keyprompt demo            Open a sample card to see how it looks. Nothing you type is saved.
   keyprompt install-skill   Teach Claude Code to use keyprompt (writes ~/.claude/skills/keyprompt).
+  keyprompt guard EVENT     Run by Claude Code hooks (EVENT is pre-tool-use or user-prompt-submit).
+                            Reads the hook's JSON on stdin; never reads a saved value.
 
 There is deliberately no command that prints a secret.
 
@@ -60,6 +63,61 @@ Options:
   --no-redact     Pass COMMAND's output through untouched (for full-screen tools).
                   Works only when the output goes straight to a terminal.
 `
+
+const GUARD_EVENTS = new Set(['pre-tool-use', 'user-prompt-submit'])
+/** A hook's JSON carries the whole command or message; anything larger is not a hook's input. */
+const MAX_HOOK_INPUT = 8 * 1024 * 1024
+
+/**
+ * @param {NodeJS.ReadableStream} stream
+ * @param {number} limit bytes
+ * @returns {Promise<string>}
+ */
+export async function readStdin(stream, limit) {
+  /** @type {Buffer[]} */
+  const chunks = []
+  let size = 0
+  for await (const chunk of stream) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+    size += buffer.length
+    if (size > limit) throw new KeypromptError(`keyprompt guard got more than ${limit} bytes on stdin, which is not a hook's input.`)
+    chunks.push(buffer)
+  }
+  return Buffer.concat(chunks).toString('utf8')
+}
+
+/**
+ * The error never quotes the input: it can hold a command or a message with a key in it.
+ *
+ * @param {string} text
+ * @returns {object}
+ */
+export function parseHookInput(text) {
+  let parsed
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    parsed = undefined
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new KeypromptError("keyprompt guard expected a Claude Code hook's JSON object on stdin.")
+  }
+  return parsed
+}
+
+/**
+ * Saved names (never values) for the guard. A catalog that cannot be read
+ * leaves only the `keyprompt` service and label to match on.
+ *
+ * @returns {Promise<string[]>}
+ */
+async function savedNames() {
+  try {
+    return Object.keys(await readCatalog())
+  } catch {
+    return []
+  }
+}
 
 /**
  * @param {string[]} argv
@@ -457,6 +515,22 @@ export async function main(argv) {
     if (note) process.stderr.write(note)
     process.stdout.write(removed ? `Deleted ${name} from the ${store.label}.\n` : `${name} was not saved.\n`)
     return removed ? EXIT.OK : EXIT.NOT_FOUND
+  }
+
+  if (verb === 'guard') {
+    // Claude Code treats exit 2 from a hook as "block", so the guard's own errors exit 1:
+    // Claude Code shows a hook error and lets the call through (R-10).
+    const event = rest[0]
+    if (rest.length !== 1 || !GUARD_EVENTS.has(event)) {
+      throw new KeypromptError('Usage: keyprompt guard pre-tool-use|user-prompt-submit (Claude Code runs it with the hook\'s JSON on stdin).', { exitCode: EXIT.ERROR })
+    }
+    if (process.stdin.isTTY) {
+      throw new KeypromptError("keyprompt guard reads a Claude Code hook's JSON on stdin; it is not meant to be typed.", { exitCode: EXIT.ERROR })
+    }
+    const input = parseHookInput(await readStdin(process.stdin, MAX_HOOK_INPUT))
+    const output = event === 'pre-tool-use' ? preToolUse(input, await savedNames()) : userPromptSubmit(input)
+    if (output) process.stdout.write(`${JSON.stringify(output)}\n`)
+    return EXIT.OK
   }
 
   if (verb === 'install-skill') {
