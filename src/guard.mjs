@@ -326,7 +326,7 @@ export function userPromptSubmit(input) {
   if (kinds.length === 0) return null
   const what = listOf(kinds)
   return {
-    systemMessage: `keyprompt: this message looks like it contains ${what}. It goes to Claude as written, so treat the key as exposed: rotate it at the provider, then save the new one with keyprompt set NAME.`,
+    systemMessage: `keyprompt: this message looks like it contains ${what}. It goes to Claude as written, so treat any key in it as exposed: rotate each one at the provider, then save the new one with keyprompt set NAME.`,
     hookSpecificOutput: {
       hookEventName: 'UserPromptSubmit',
       additionalContext: `keyprompt guard: this message looks like it contains ${what}. Do not repeat it, write it to a file or put it in a command. Suggest rotating it at the provider and saving the new one with \`keyprompt set NAME\`, then using it through \`keyprompt run NAME -- COMMAND\`.`,

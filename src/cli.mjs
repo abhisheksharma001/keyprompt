@@ -80,7 +80,7 @@ export async function readStdin(stream, limit) {
   for await (const chunk of stream) {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
     size += buffer.length
-    if (size > limit) throw new KeypromptError(`keyprompt guard got more than ${limit} bytes on stdin, which is not a hook's input.`)
+    if (size > limit) throw new KeypromptError(`the guard got more than ${limit} bytes on stdin, which is not a hook's input.`)
     chunks.push(buffer)
   }
   return Buffer.concat(chunks).toString('utf8')
@@ -100,7 +100,7 @@ export function parseHookInput(text) {
     parsed = undefined
   }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new KeypromptError("keyprompt guard expected a Claude Code hook's JSON object on stdin.")
+    throw new KeypromptError("the guard expected a Claude Code hook's JSON object on stdin.")
   }
   return parsed
 }
@@ -525,7 +525,7 @@ export async function main(argv) {
       throw new KeypromptError('Usage: keyprompt guard pre-tool-use|user-prompt-submit (Claude Code runs it with the hook\'s JSON on stdin).', { exitCode: EXIT.ERROR })
     }
     if (process.stdin.isTTY) {
-      throw new KeypromptError("keyprompt guard reads a Claude Code hook's JSON on stdin; it is not meant to be typed.", { exitCode: EXIT.ERROR })
+      throw new KeypromptError("the guard reads a Claude Code hook's JSON on stdin; it is not meant to be typed.", { exitCode: EXIT.ERROR })
     }
     const input = parseHookInput(await readStdin(process.stdin, MAX_HOOK_INPUT))
     const output = event === 'pre-tool-use' ? preToolUse(input, await savedNames()) : userPromptSubmit(input)
