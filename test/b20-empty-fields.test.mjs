@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { chmodSync, existsSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -21,18 +21,20 @@ request({ hostname: url.hostname, port: url.port, path: url.pathname + '/cancel'
   process.env.KEYPROMPT_BROWSER = browser
   try {
     const tools = mcpTools()
-    for (const fields of [[' '], [',', '  '], [', ,']]) {
-      const { result, isError } = await tools.request_secret({ fields }, {})
-      assert.equal(isError, true, JSON.stringify(fields))
-      assert.equal(result.status, 'invalid_usage', JSON.stringify(result))
-      assert.equal(result.exitCode, 2)
-      assert.deepEqual(result.names, [])
+    for (const list of [[' '], [',', '  '], [', ,']]) {
+      for (const [tool, key] of [['request_secret', 'fields'], ['check_secrets', 'names']]) {
+        const { result, isError } = await tools[tool]({ [key]: list }, {})
+        assert.equal(isError, true, `${tool} ${JSON.stringify(list)}`)
+        assert.equal(result.status, 'invalid_usage', JSON.stringify(result))
+        assert.equal(result.exitCode, 2)
+        assert.deepEqual(result.names, [])
+        // It names the argument, and repeats nothing that was sent.
+        assert.equal(result.message, `${key} must name at least one secret, for example ["OPENAI_API_KEY"].`)
+      }
     }
-    const checked = await tools.check_secrets({ names: [','] })
-    assert.equal(checked.isError, true)
-    assert.equal(checked.result.status, 'invalid_usage', JSON.stringify(checked.result))
     assert.equal(existsSync(join(home, 'activity.jsonl')), false, 'no card, so no log line')
   } finally {
+    rmSync(home, { recursive: true, force: true })
     for (const [key, value] of [['KEYPROMPT_HOME', before.home], ['KEYPROMPT_BROWSER', before.browser]]) {
       if (value === undefined) delete process.env[key]
       else process.env[key] = value
