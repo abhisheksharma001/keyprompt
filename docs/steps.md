@@ -16,7 +16,7 @@ Plan: `docs/prd/card-v2.md` (0.2.x) and `docs/prd/v0-3.md` (0.3). Rules: `.claud
 | Fixes | S-20, S-21, S-25, S-26, S-27, S-28, S-30, S-31, S-32, S-33, S-35 | B-6 (the card never ends while a save is under way), B-7 (one true sentence for an ended card), B-12 (masking finds a key's base64 inside longer base64), B-3 (a failed update of the list of names no longer fails a save that worked), B-13 (the same for a delete that worked), B-4 (on `run`, every optional box may be left empty), B-14 (the Save button says plain "Save" when any box is optional), B-8 (with Remember unticked, the penguin holds an envelope and the vault stays shut), B-15 (the README's two demo pictures match the card again), B-16 (the README's picture links pin a commit on main) and B-17 (the S-29 row says its tag and release exist) |
 | 5 Release | S-29, S-34 | 0.2.1 on npm: the six steps since 0.2.0; 0.2.2: the four since (S-30 to S-33) |
 | Research | S-36 | R-9 answered: what keymask, the closest rival, is and is not |
-| 6 v0.3 | S-37 → S-38 → S-39 → S-40, then S-41, S-42, S-43, then S-44 → S-45, then S-46 | The plan; the Claude Code guard (its check, its installer, its docs); `--json` results; `keyprompt setup`; a names-only activity log; research on MCP (R-6), then `keyprompt mcp`; release 0.3.0 |
+| 6 v0.3 | S-37 → S-38 → S-39 → S-40, then S-41 → S-47, S-42, S-43, then S-44 → S-45, then S-46 | The plan; the Claude Code guard (its check, its installer, its docs); `--json` results, and a reason when one fails (B-19); `keyprompt setup`; a names-only activity log; research on MCP (R-6), then `keyprompt mcp`; release 0.3.0 |
 
 Order: S-3, S-7, S-15 and S-18 touch different files from the S-2 → S-4 chain, so they can be built in parallel by separate sessions. Everything else follows the arrows.
 
@@ -895,6 +895,20 @@ Order and cadence are Abhishek's (D-10, D-13): one PR, then stop. S-38 and S-39 
 **Acceptance:** J in `docs/prd/v0-3.md`.
 **Verify:** `npm test`; CLI subprocess checks for real JSON, correct exit codes, one final result, mixed set outcomes, failures and warnings, no value leakage, flag parsing and unchanged text mode. After committing, add catalog metadata to the list result and see its names-only test fail, then restore the committed file. CI on all three OSes.
 **Must not:** put a value or raw error into JSON; add a dependency; change plain-text output without the flag; implement S-42 or publish a release. README and agent-skill examples belong to a following docs step.
+
+### S-47 — A `--json` failure says why, in keyprompt's own words (fixes B-19)
+
+**PR:** one.
+**Depends on:** S-41 done; D-18. **Blocks:** the `--json` docs step (README and skill examples).
+**Research:** none — every message is in this repo; the call sites that add text keyprompt did not write were found with `grep -n 'new KeypromptError(' src/` and read one by one.
+**Model:** sonnet.
+**Confidence:** 0.85 — the change is small and local; the one judgment is which messages hold text keyprompt did not write, and a test pins each one found.
+**Files:** `src/errors.mjs`, `src/cli.mjs`, `src/names.mjs`, `src/save.mjs`, `src/store/linux.mjs`, `src/store/windows.mjs`, `test/cli.test.mjs`, `test/errors.test.mjs`.
+**Today:** a JSON failure is `{"command","status","names","exitCode"}` and nothing more, and stderr stays empty, so the agent cannot see why (B-19).
+**Change:** `KeypromptError` takes an optional `jsonMessage`: the message with anything keyprompt did not write left out. It defaults to the message. Set it where a message repeats outside text: `parseArgs` (an unknown option), `assertName` (an invalid name), `parseFields` (an unknown hint), the Linux and Windows stores (a helper's first error line, through one shared `helperError` in `src/errors.mjs`), and `saveAll` (which repeats a store's message). `jsonFailure` adds `message`: the error's `jsonMessage`, or for an error that is not a `KeypromptError` the fixed sentence in the PRD's "JSON results". Help says failures carry keyprompt's message.
+**Acceptance:** J in `docs/prd/v0-3.md`: WHEN a `--json` command fails THEN its result SHALL carry a message, which SHALL equal the text-mode sentence when keyprompt wrote all of it, and SHALL NOT contain a typed argument, a store helper's output or an unexpected error's text.
+**Verify:** `KEYPROMPT_STORE_TEST=1 npm test`. After committing, make `helperError` leave the helper's line in `jsonMessage` and see the JSON failure test fail; restore with `git checkout`.
+**Must not:** change any text-mode output; change a status, an exit code or the shape S-41 merged, beyond the added `message`; put a value in any result.
 
 ### S-42 — `keyprompt setup`: ask for a project's missing names on one card (outline: grill first)
 
