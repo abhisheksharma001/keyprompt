@@ -353,6 +353,8 @@ function requesterLabel(/** @type {string | undefined} */ by) {
  * @param {{ command: 'set' | 'setup' | 'run' | 'mcp', reason?: string, by?: string, replacing: boolean, allowSessionOnly: boolean, masked?: boolean, allowEmpty?: boolean, warnings?: string[] }} options
  */
 async function askWithCard(store, fields, options) {
+  // Every caller checks this first; a card with no boxes would say things that are not true (B-20).
+  if (fields.length === 0) throw new KeypromptError('keyprompt was asked to open a card with no boxes, so it did not.')
   const names = fields.map((f) => f.name)
   process.stderr.write(`keyprompt: opened a secure card in the browser for ${joinNames(names)}. Waiting for it to be filled in...\n`)
   try {
@@ -612,6 +614,22 @@ function toolList(/** @type {unknown} */ args, /** @type {string} */ key) {
   return /** @type {string[]} */ (list)
 }
 
+/**
+ * The fields or names an MCP tool was given, parsed. A list that parses to
+ * nothing (`[" "]`, `[","]`) is refused here, before anything else is
+ * checked or opened (B-20). The message never repeats the list.
+ * @template T
+ * @param {unknown} args
+ * @param {string} key
+ * @param {(parts: string[]) => T[]} parse
+ * @returns {T[]}
+ */
+function toolNames(args, key, parse) {
+  const parsed = parse(toolList(args, key))
+  if (parsed.length === 0) throw new KeypromptError(`${key} must name at least one secret, for example ["OPENAI_API_KEY"].`, { exitCode: EXIT.USAGE })
+  return parsed
+}
+
 /** The card's "who is asking" for an MCP client: its own name, as the agent's words. */
 function mcpRequester(/** @type {import('./mcp.mjs').ClientInfo} */ client) {
   const name = client.title || client.name
@@ -640,7 +658,7 @@ export function mcpTools() {
       /** @type {string[]} */
       let names = []
       try {
-        const parsed = parseFields(toolList(args, 'fields'))
+        const parsed = toolNames(args, 'fields', parseFields)
         names = parsed.map((f) => f.name)
         const reason = args && typeof args === 'object' ? /** @type {Record<string, unknown>} */ (args).reason : undefined
         if (reason !== undefined && typeof reason !== 'string') throw new KeypromptError('reason must be text.', { exitCode: EXIT.USAGE })
@@ -661,7 +679,7 @@ export function mcpTools() {
       /** @type {string[]} */
       let names = []
       try {
-        names = parseNames(toolList(args, 'names'))
+        names = toolNames(args, 'names', parseNames)
         const store = getStore()
         /** @type {string[]} */
         const saved = []
