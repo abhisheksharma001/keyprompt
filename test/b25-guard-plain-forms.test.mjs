@@ -29,6 +29,11 @@ const BASH_READS = [
   'find . -maxdepth 0 -exec security find-generic-password -s keyprompt -w \\;',
   "timeout 5 sh -c 'security find-generic-password -s keyprompt -w'",
   'git bisect run security find-generic-password -s keyprompt -w',
+  // Found by the PR's /code-review: a # glued to $( ) or backticks starts no comment, and a wrapper's option can take `echo` as its value.
+  'true $(true)# ; security find-generic-password -s keyprompt -w',
+  'true `true`# ; security find-generic-password -s keyprompt -w',
+  'env -u echo security find-generic-password -s keyprompt -w',
+  'exec -a echo security find-generic-password -s keyprompt -w',
 ]
 
 /** PowerShell forms: read with PowerShell's own escape character, the backtick. */
@@ -38,6 +43,10 @@ const POWERSHELL_READS = [
   'Get-StoredCredential `\n  -Target keyprompt:X',
   'Get-StoredCredential `\r\n  -Target keyprompt:X',
   "Invoke-Command {Get-StoredCredential -Target 'keyprompt:X'}",
+  '$(1)# ; Get-StoredCredential -Target keyprompt:X',
+  // PowerShell also takes curly quotes as quotes (CharTraits.cs, IsSingleQuote and IsDoubleQuote).
+  'Get-StoredCredential -Target ‘keyprompt:X’',
+  'Get-StoredCredential -Target “keyprompt:X”',
 ]
 
 test('refuses each plain form of a direct read in B-25 (G1)', () => {
@@ -94,6 +103,36 @@ test('a Bash command is read with Bash quoting, and a PowerShell command with Po
   const backticks = 'Write-Output "run `security find-generic-password -s keyprompt -w` later"'
   assert.equal(preToolUse({ tool_name: 'Bash', tool_input: { command: backticks } }, SAVED)?.hookSpecificOutput.permissionDecision, 'deny')
   assert.equal(preToolUse({ tool_name: 'PowerShell', tool_input: { command: backticks } }, SAVED), null)
+})
+
+test('a long command is checked well inside the hook timeout, so it cannot time the guard out', () => {
+  // The hook times out after 10 seconds (src/install-guard.mjs) and Claude Code then lets the command run.
+  // Run in a child process, so a slow check is killed and fails this test instead of hanging the suite.
+  const code = `
+    const { checkCommand } = await import(${JSON.stringify(new URL('../src/guard.mjs', import.meta.url).href)})
+    const read = 'security find-generic-password -s keyprompt -w'
+    const cases = [
+      ['eval '.repeat(60) + 'x; ' + read, 'bash', true],
+      ['pwsh -c '.repeat(200) + 'x', 'bash', false],
+      ['sh '.repeat(5000) + '-c x', 'bash', false],
+      ['security find-generic-password '.repeat(2000), 'bash', false],
+      ['secret-tool lookup '.repeat(2000), 'bash', false],
+      ['Get-StoredCredential '.repeat(5000), 'powershell', false],
+      ['security '.repeat(2000) + '-a '.repeat(2000), 'bash', false],
+    ]
+    const results = cases.map(([command, shell, denied]) => {
+      const start = Date.now()
+      const found = checkCommand(command, ['OPENAI_API_KEY'], shell)
+      return { ms: Date.now() - start, ok: Boolean(found) === denied }
+    })
+    process.stdout.write(JSON.stringify(results))
+  `
+  const child = spawnSync(process.execPath, ['--input-type=module', '-e', code], { encoding: 'utf8', timeout: 8000 })
+  assert.equal(child.status, 0, `the check did not finish within 8 seconds (signal ${child.signal}) ${child.stderr}`)
+  for (const [index, { ms, ok }] of JSON.parse(child.stdout).entries()) {
+    assert.ok(ok, `case ${index}: wrong answer`)
+    assert.ok(ms < 2000, `case ${index}: took ${ms} ms`)
+  }
 })
 
 test('keyprompt guard pre-tool-use denies a B-25 form end to end', () => {
