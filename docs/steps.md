@@ -17,7 +17,7 @@ Plan: `docs/prd/card-v2.md` (0.2.x) and `docs/prd/v0-3.md` (0.3). Rules: `.claud
 | 5 Release | S-29, S-34 | 0.2.1 on npm: the six steps since 0.2.0; 0.2.2: the four since (S-30 to S-33) |
 | Research | S-36 | R-9 answered: what keymask, the closest rival, is and is not |
 | 6 v0.3 | S-37 → S-38 → S-39 → S-40, then S-41 → S-47, S-42 → S-48, S-43 → S-49, then S-44 → S-45 → S-50, then the review fixes S-51 → S-52 → S-53, S-54 → S-55, then S-46 | The plan; the Claude Code guard (its check, its installer, its docs); `--json` results, and a reason when one fails (B-19); `keyprompt setup`, then the docs for both; a names-only activity log; research on MCP (R-6), then `keyprompt mcp`; release 0.3.0 |
-| 7 v0.3 audit | S-56, then S-57 → S-58 → S-59, S-60, S-61, S-62, S-63, S-64 | The feature-end audit (`docs/audits/v0-3-feature-end.md`): G2, G3 and M met; G1, G1b, G4, J, F and L unmet. Then the fixes B-25 to B-31 and tests for the clauses no test pins |
+| 7 v0.3 audit | S-56, then S-57 → S-58 → S-59, S-60, S-61, S-62, S-63, S-64 | The feature-end audit (`docs/audits/v0-3-feature-end.md`): G2, G3, F and M met; G1, G1b, G4, J and L unmet. Then the fixes B-25 to B-31 and tests for the clauses no test pins |
 
 Order: S-3, S-7, S-15 and S-18 touch different files from the S-2 → S-4 chain, so they can be built in parallel by separate sessions. Everything else follows the arrows.
 
@@ -1116,17 +1116,17 @@ Order and cadence are Abhishek's (D-10, D-13): one PR, then stop. S-38 and S-39 
 
 **PR:** one.
 **Depends on:** nothing. **Blocks:** S-58 (same file), S-59.
-**Research:** lookup — which options of `timeout`, `nice`, `env`, `xargs` and `stdbuf` take a value (their man pages), and PowerShell's escape character and module-qualified command names (Microsoft's about_Quoting_Rules and about_Command_Precedence), read live.
+**Research:** lookup — PowerShell's escape character (Microsoft's about_Quoting_Rules) and how `security` reads its options (its man page), read live; which common commands only print, search or store text.
 **Model:** opus — it changes what the guard refuses.
 **Senior review:** required — it changes a security boundary (what reaches the password store).
-**Confidence:** 0.8 — every miss is reproduced; how far PowerShell parsing should go is a judgment.
+**Confidence:** 0.75 — every miss is reproduced; the list of commands that only handle text is a judgment the senior review checks.
 **Files:** `src/guard.mjs`, test/b25-guard-plain-forms.test.mjs (new).
 **Locked tests:** every file in `test/` at the base commit; new tests go in the new file.
 **Today:** the forms in B-25 print nothing and exit 0, so Claude Code runs them.
-**Change:** add `timeout` and `xargs` to the wrappers, and skip the value of each wrapper option that takes one (`nice -n`, `env -u`, `timeout`'s duration and its options, `xargs -I`/`-n`/`-L`); drop a backslash-newline the way bash does; match an option value written against its flag (`-skeyprompt`, `-aNAME`); read the text of a PowerShell call with PowerShell's escape (the backtick, not the backslash) and match a module-qualified cmdlet name (`CredentialManager\Get-StoredCredential`).
-**Acceptance:** WHEN the guard checks any command listed in B-25 THEN it SHALL answer `deny` with the `keyprompt run` reason; every case in `test/guard.test.mjs` SHALL still pass.
-**Verify:** the new test fails on its own commit and passes after the fix; a break test (remove one wrapper) fails exactly one test; `KEYPROMPT_STORE_TEST=1 npm test`; `git diff --name-only main -- test/` lists only the new file.
-**Must not:** edit a locked test; refuse a command that only mentions a read; add a dependency.
+**Change:** stop relying on a list of wrappers, which can never be complete (`timeout`, `stdbuf`, `xargs`, `env -S`, `setsid`, `flock`, `find -exec`): look for the read anywhere among a simple command's words. Deny when the store's read tool and its subcommand appear as consecutive words, with the option and a keyprompt name among the words after them, unless the command's first word only prints, searches or stores text (`echo`, `printf`, `git`, `grep`, `rg`, `cat`, `gh` and the like; the builder settles the list and says in the PR why each is safe). Read `security`'s options as getopt clusters (`-wskeyprompt` is `-w -s keyprompt`; `-skeyprompt` is `-s keyprompt`). Drop a backslash-newline the way bash does. Read a PowerShell call's text with PowerShell's escape character (the backtick), so a backslash stays in `"C:\proj\"` and in `CredentialManager\Get-StoredCredential`, whose module prefix the existing name check then cuts off.
+**Acceptance:** WHEN the guard checks any command listed in B-25, or the same read behind `setsid`, `flock` or `find … -exec`, THEN it SHALL answer `deny` with the `keyprompt run` reason; WHEN a command whose first word only prints, searches or stores text mentions a read THEN it SHALL print nothing and exit 0; every case in `test/guard.test.mjs` SHALL still pass.
+**Verify:** the new test fails on its own commit and passes after the fix; a break test (treat the first word as the only place to look) fails exactly the new test; `KEYPROMPT_STORE_TEST=1 npm test`; `git diff --name-only main -- test/` lists only the new file.
+**Must not:** edit a locked test; refuse `echo`, `printf`, `git grep` or a `git commit -m "…"` that mentions a read; add a dependency.
 
 ### S-58 — A here-document in a commit message passes the guard (bug B-26)
 
@@ -1135,14 +1135,14 @@ Order and cadence are Abhishek's (D-10, D-13): one PR, then stop. S-38 and S-39 
 **Research:** none (bash's here-document rules: a quoted delimiter leaves the body as text; an unquoted one still runs `$( )` and backticks).
 **Model:** opus — it changes what the guard lets through.
 **Senior review:** required — loosening a guard is an access change.
-**Confidence:** 0.85.
+**Confidence:** 0.8 — a here-document fed to a shell is denied today only because the guard cannot read here-documents (B-26), so the fix must keep that.
 **Files:** `src/guard.mjs`, test/b26-guard-heredoc.test.mjs (new).
 **Locked tests:** every file in `test/` at the base commit.
-**Today:** `git commit -m "$(cat <<'EOF' … EOF)"` whose body quotes a read is denied.
-**Change:** teach `splitShell` here-documents: with a quoted delimiter (`<<'EOF'`, `<<"EOF"`, `<<\EOF`) the body is text; with an unquoted one only `$( )` and backticks inside it are commands; `<<-` strips leading tabs. A `#` that starts a word comments out the rest of the line. The CredRead rule matches inside one PowerShell command, not anywhere in the text.
-**Acceptance:** WHEN a commit message or pull request body written with a quoted here-document quotes a read THEN the guard SHALL print nothing and exit 0; WHEN an unquoted here-document runs a read in backticks or `$( )` THEN the guard SHALL still deny it.
+**Today:** `git commit -m "$(cat <<'EOF' … EOF)"` whose body quotes a read is denied; so is `bash <<'EOF'` whose body runs one, rightly.
+**Change:** teach `splitShell` here-documents. A body is text only when the command it feeds only prints or stores text (S-57's list: `cat`, `tee` and the like); fed to anything else (a shell, `python`, `node`, `eval`, an unknown command) it is checked as commands, as today. In a text body, a quoted delimiter (`<<'EOF'`, `<<"EOF"`, `<<\EOF`) leaves everything as text; an unquoted one still runs `$( )` and backticks, which are checked. `<<-` strips leading tabs. A `#` that starts a word comments out the rest of the line. The CredRead rule matches inside one PowerShell command, not anywhere in the text.
+**Acceptance:** WHEN a commit message or pull request body written as `"$(cat <<'EOF' … EOF)"` quotes a read THEN the guard SHALL print nothing and exit 0; WHEN a here-document fed to `bash`, `sh`, `zsh`, `pwsh`, `python`, `node` or `eval` runs a read, with either delimiter, THEN the guard SHALL deny it; WHEN an unquoted here-document runs a read in backticks or `$( )` THEN the guard SHALL deny it.
 **Verify:** as S-57, with the new file.
-**Must not:** let an unquoted here-document's command substitution through; edit a locked test.
+**Must not:** let a here-document fed to a shell or an interpreter through; let an unquoted here-document's command substitution through; edit a locked test.
 
 ### S-59 — The guard's docs say what it refuses and what it misses (bug B-27)
 
@@ -1154,9 +1154,9 @@ Order and cadence are Abhishek's (D-10, D-13): one PR, then stop. S-38 and S-39 
 **Files:** `SECURITY.md`, `README.md`, `skill/SKILL.md` (if it repeats the sentence), `CHANGELOG.md`, test/b27-guard-docs.test.mjs (new).
 **Locked tests:** every file in `test/` at the base commit.
 **Today:** `SECURITY.md:19` and `README.md:280` say every command that runs a read on a keyprompt item is refused; the limits name only a script file, an encoded command and another tool.
-**Change:** keep "the obvious direct reads", and add to the limits the kinds of command text the guard still does not parse after S-57 and S-58 (for example a read built from a shell variable, or piped into a shell), so every word is true. The new test pins the limit sentence, as test/b24-security-limits.test.mjs does for the log.
-**Acceptance:** WHEN a person reads `SECURITY.md` or the README THEN every form the guard lets through that runs a read SHALL fall under a limit those files name.
-**Verify:** run each B-25 form and each documented limit through the guard and match it to a sentence; `npm test`.
+**Change:** keep "the obvious direct reads"; say that the guard reads a read written out as words in a Bash or PowerShell command; and name in the limits the kinds of command text it does not see: a read whose words come from a variable or a file, text piped or fed into a shell, an encoded command, a script file and another tool. A list of kinds can be checked, where "every form" cannot. The new test pins those kinds, as test/b24-security-limits.test.mjs does for the log.
+**Acceptance:** WHEN a person reads `SECURITY.md` or the README THEN they SHALL find each of those five kinds named as a limit, and every form listed in B-25 SHALL be refused.
+**Verify:** run each B-25 form, `S=keyprompt; security find-generic-password -s $S -w`, `echo "<read>" | bash` and a base64-encoded PowerShell command through the guard: the B-25 forms are denied, and each of the others matches a named limit; `npm test`.
 **Must not:** change `src/` or `bin/`; edit a locked test.
 
 ### S-60 — A `--json` failure repeats no typed token and gives the real reason (bug B-28)
@@ -1170,24 +1170,24 @@ Order and cadence are Abhishek's (D-10, D-13): one PR, then stop. S-38 and S-39 
 **Locked tests:** every file in `test/` at the base commit.
 **Today:** `keyprompt -sk_live_X list --json` answers `command: "list"` and a message holding the token; `has` with 13 names says "A card can ask for at most 12 values at once."; `-x has FOO --json` says a name is invalid.
 **Change:** `jsonRequest` picks the command the way `parseArgs` does; the "Unknown command" error gets a `jsonMessage` without the token, and `command` is `null`; the JSON message for `has` is text mode's reason with the typed text left out; `check_secrets` over 12 names says "at most 12 names", not "a card".
-**Acceptance:** WHEN any argument list with `--json` fails THEN the result SHALL hold no token that was typed, `command` SHALL be `null` unless the command was recognized, and the message SHALL give the reason text mode gives, with typed text left out.
+**Acceptance:** WHEN any argument list with `--json` fails THEN the result SHALL hold no token that failed validation or was not recognized (validated names and a recognized command stay, as today), `command` SHALL be `null` unless the command was recognized, and the message SHALL give the reason text mode gives, with typed text left out.
 **Verify:** the new test fails on its own commit and passes after; `KEYPROMPT_STORE_TEST=1 npm test`; text-mode output and exit codes of the same inputs unchanged.
 **Must not:** change any text-mode output or exit code; edit a locked test.
 
-### S-61 — `setup` passes over a multi-line value whatever its first line (bug B-29)
+### S-61 — `setup` reads dotenv's `KEY: value` form (bug B-29)
 
 **PR:** one.
 **Depends on:** nothing. **Blocks:** nothing.
-**Research:** none. **Model:** sonnet.
-**Senior review:** not required — it narrows what is read; the new test pins the names exactly.
-**Confidence:** 0.9.
-**Files:** `src/setup.mjs`, test/b29-setup-multiline.test.mjs (new).
+**Research:** none (dotenv's LINE regex, motdotla/dotenv lib/main.js line 8 at 4c54504, read live 2026-11-10). **Model:** sonnet.
+**Senior review:** not required — names only, never values; the new test pins the names exactly against dotenv's own reading.
+**Confidence:** 0.85.
+**Files:** `src/setup.mjs`, test/b29-setup-colon-form.test.mjs (new).
 **Locked tests:** every file in `test/` at the base commit.
-**Today:** a quoted value that opens on a line `exampleNames` does not read (`MY KEY="…`, `KEY: "…`) has its inner `NAME=` lines read as names.
-**Change:** on every line, read or not, check whether a quote opens after the first `=` (or dotenv's `: `) and pass over the value to its closing quote.
-**Acceptance:** WHEN a quoted value in the example file spans lines THEN no line inside it SHALL become a name, whatever its first line looks like.
-**Verify:** the new test fails on its own commit and passes after; `npm test`.
-**Must not:** show or return the text of any line; change the report's wording; edit a locked test.
+**Today:** `B_KEY: "start` / `INSIDE_VALUE_TWO=…` / `end"` gives the name `INSIDE_VALUE_TWO` and misses `B_KEY`.
+**Change:** read a `KEY: value` line the way dotenv's regex does (a key of letters, digits, `_`, `.` and `-`, then `: `): keep KEY when it is a keyprompt name, else report the line number, and pass over a quoted value that opens there to its closing quote. A line dotenv does not read as a key (`MY KEY="…`) stays unread, and the lines after it are read as dotenv reads them.
+**Acceptance:** WHEN the example file holds `KEY: value`, or `KEY: "…"` spanning lines, THEN setup SHALL read KEY as dotenv does and SHALL NOT read any line inside that value as a name; WHEN a line is not a key line for dotenv THEN setup SHALL NOT hide a name on a later line that dotenv reads as a key.
+**Verify:** the new test fails on its own commit and passes after; for each test file, the names setup reads match the keys dotenv's regex reads (keyprompt names only); `npm test`.
+**Must not:** show or return the text of any line; change the report's wording; add dotenv as a dependency; edit a locked test.
 
 ### S-62 — The activity log keeps only a program's own name (bug B-30)
 
@@ -1198,9 +1198,9 @@ Order and cadence are Abhishek's (D-10, D-13): one PR, then stop. S-38 and S-39 
 **Confidence:** 0.75 — the cause was read in keyprompt and cross-spawn, not run on Windows; the new CLI test on CI's Windows jobs settles it.
 **Files:** `src/activity.mjs`, test/b30-program-name.test.mjs (new).
 **Locked tests:** every file in `test/` at the base commit.
-**Today:** on Windows, `run K -- "curl https://h/v1?key=abc"` would log `program: "v1?key=abc"`.
-**Change:** when the command word holds whitespace, log only the text before the first whitespace, then drop its folder, unless the whole word names a file that exists (`C:\Program Files\nodejs\node.exe`).
-**Acceptance:** WHEN `run`'s command word holds whitespace followed by more text, and is not the path of a file that exists, THEN the run line SHALL hold no text from after that whitespace.
+**Today:** on Windows, `run K -- "curl https://h/v1?key=abc"` and `run K -- "https://h/v1?key=abc"` would both log `program: "v1?key=abc"`.
+**Change:** when the command word is the path of a file that exists, keep its name as today (`C:\Program Files\nodejs\node.exe` gives `node.exe`). Otherwise keep only its text up to the first character that is not a letter, digit, `.`, `_`, `-` or a path separator, then drop the folder: `curl https://h/v1?key=abc` gives `curl`, `https://h/v1?key=abc` gives `https`, `python -c print('x')` gives `python`.
+**Acceptance:** WHEN `run`'s command word is not the path of a file that exists THEN the run line's `program` SHALL hold no character from after the first one that is not a letter, digit, `.`, `_`, `-` or a path separator.
 **Verify:** the unit test fails on its own commit everywhere; the CLI test fails on CI's Windows jobs before the fix; both pass after; `KEYPROMPT_STORE_TEST=1 npm test`.
 **Must not:** write any argument; change the line's other fields; edit a locked test.
 
@@ -1222,14 +1222,14 @@ Order and cadence are Abhishek's (D-10, D-13): one PR, then stop. S-38 and S-39 
 ### S-64 — Tests for the v0.3 clauses no test pins
 
 **PR:** one (split by area if it passes about 400 lines).
-**Depends on:** nothing. **Blocks:** nothing.
+**Depends on:** S-57 to S-63 merged, so no new test locks a sentence or a behaviour a fix must change. **Blocks:** nothing.
 **Research:** none. **Model:** sonnet.
 **Senior review:** not required — new tests only; no code changes.
 **Confidence:** 0.85.
 **Files:** new test files only (for example test/s64-guard-coverage.test.mjs, test/s64-json-setup-coverage.test.mjs, test/s64-log-mcp-coverage.test.mjs).
 **Locked tests:** every file in `test/` at the base commit.
 **Today:** the audit lists about twenty clauses that the code meets but no test would miss if the code were removed (docs/audits/v0-3-feature-end.md, "Met in code, but no test would fail").
-**Change:** one test per item on that list, each written against main as it is.
+**Change:** one test per item on that list, each written against main as it then is, except G4's wording, which S-59's test covers.
 **Acceptance:** WHEN the code behind any item on that list is removed THEN at least one new test SHALL fail.
 **Verify:** a break test per item (remove the code, see the new test fail, restore it); `KEYPROMPT_STORE_TEST=1 npm test`; `git diff --name-only main -- src/ test/` lists only new test files.
 **Must not:** edit an existing test or any file under `src/`.

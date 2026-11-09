@@ -7,6 +7,7 @@ Every acceptance line in `docs/prd/v0-3.md`, judged against main at 2e50630 (the
 - Four fresh, read-only Opus reviewers, one per area: the guard (G1 to G4), `--json` and `setup` (J, F), the activity log (L), `keyprompt mcp` (M). None had built the code. Each was told not to read `docs/steps.md`, `docs/bugs.md` or `CHANGELOG.md`, to split its lines into clauses, to judge each from the code, the tests and the shipped docs, and to try inputs that should break it. Probes ran with a throwaway HOME and `KEYPROMPT_HOME`, a browser path that does not exist, and (for card flows) the test suite's in-memory store. Nothing touched the real password store, a real browser, `~/.keyprompt` or `~/.claude/settings.json`.
 - The session that ran the release (and built most of v0.3) did not judge alone. It re-ran or re-read every unmet clause below before writing it down, and spot-checked met ones: the deny and warning code, the JSON writer, `helperError`, every stdout write in `src/`, and the dependency list.
 - **The rule for a verdict.** A line is **unmet** when the person or the agent can reach, through keyprompt's own interface (arguments, the files it is asked to read, the settings file), an input where the code does not do what the line says. A file that another program running as the person plants at keyprompt's own paths is outside the threat model (`SECURITY.md`, "Malware or anything else running as you"); those cases are listed, not counted. So is a difference nobody can observe.
+- **G1 and G4 are judged differently, on purpose.** G1 asks what the guard must catch, and the PRD's "Honest limits" narrow it to "the obvious direct reads": so G1 counts a read whose tool, subcommand, option and keyprompt name are all written out as words in the command, and not one whose words come from a variable, a file, stdin or an encoding. G4 asks whether the shipped sentences are literally true, so it counts every form the guard lets through that the docs' named limits do not cover, including those.
 - **Reach** says how likely the gap is in use: **everyday** (a form agents or people write routinely), **unusual** (a mistake or a rare file), or **Windows** (seen only there).
 - `npm test` on 2e50630: 241 tests, 232 pass, 9 skipped (the real-store tests, which need `KEYPROMPT_STORE_TEST=1`), 0 fail.
 
@@ -20,11 +21,11 @@ Every acceptance line in `docs/prd/v0-3.md`, judged against main at 2e50630 (the
 | G3 — install-guard and uninstall-guard | met | — | — |
 | G4 — the guard's docs | **unmet** | everyday (follows from G1) | B-27 |
 | J — `--json` results | **unmet** | unusual | B-28 |
-| F — `keyprompt setup` | **unmet** | unusual | B-29 |
+| F — `keyprompt setup` | met | — | — |
 | L — the activity log | **unmet** | Windows | B-30 |
 | M — `keyprompt mcp` | met | — | — |
 
-Found on the way, not on an acceptance line: B-31 (the PRD's detail sections say five things the code does not do) and R-14 (MCP clients may give up on a card long before its 5 minutes).
+Found on the way, not on an acceptance line: B-29 (`setup` does not read dotenv's `KEY: value` form, and reads lines inside such a quoted value as names), B-31 (the PRD's detail sections say five things the code does not do) and R-14 (MCP clients may give up on a card long before its 5 minutes).
 
 ## G1 — a direct read is denied: unmet
 
@@ -46,13 +47,13 @@ Met:
 - `timeout 5 secret-tool lookup service keyprompt account X`
 - `nice -n 10 security find-generic-password -s keyprompt -w`, and `env -u FOO security …`
 - `security \` then a line break, then `find-generic-password -s keyprompt -w`
-- `security find-generic-password -skeyprompt -w` (the value written against its flag, which `security` accepts)
-- `keyprompt list | xargs -I{} security find-generic-password -s keyprompt -a {} -w`
+- `security find-generic-password -skeyprompt -w` and `security find-generic-password -wskeyprompt` (the value written against its flag, or bundled after `-w`; `security` reads options the getopt way)
+- `keyprompt list | xargs -I{} security find-generic-password -s keyprompt -a {} -w`, and `stdbuf -oL security find-generic-password -s keyprompt -w` (found by `/code-review`, re-run 2026-11-10)
 - PowerShell: `Set-Location "C:\proj\"; Get-StoredCredential -Target keyprompt:X`, and `CredentialManager\Get-StoredCredential -Target keyprompt:X`
 
-Causes: `timeout` and `xargs` are not in `WRAPPERS` (`src/guard.mjs:25`), and only `sudo` and `doas` options that take a value are skipped (`src/guard.mjs:192`), so `nice`'s `10` or `env`'s `FOO` is read as the command. `splitShell` (`src/guard.mjs:47-135`: a backslash at lines 89-92, `\"` inside double quotes at 104-106) keeps a backslash-newline as a character of the next word, and reads PowerShell text with POSIX escapes, where `\"` is an escaped quote (in PowerShell `\` is a plain character). A module-qualified cmdlet name is not matched. These are plain command text, not the "script file, encoded command or another tool" the limits name.
+Causes: `timeout`, `xargs` and `stdbuf` are not in `WRAPPERS` (`src/guard.mjs:25`), and only `sudo` and `doas` options that take a value are skipped (`src/guard.mjs:192`), so `nice`'s `10` or `env`'s `FOO` is read as the command. Option values are matched only as separate words. `splitShell` (`src/guard.mjs:47-135`: a backslash at lines 89-92, `\"` inside double quotes at 104-106) keeps a backslash-newline as a character of the next word, and reads PowerShell text with POSIX escapes: `\"` becomes an escaped quote, and `CredentialManager\Get-StoredCredential` loses its backslash, so the module prefix can no longer be cut off (`CredentialManager/Get-StoredCredential` is already denied). In PowerShell `\` is a plain character. A list of known wrappers can never be complete (`env -S`, `setsid`, `flock`, `find -exec` are more), which is why S-57 looks for the read anywhere among a command's words instead.
 
-Not counted, as the PRD's "Honest limits" allow: `echo "<read>" | bash`, `security -i` fed on stdin, a value in a shell variable (`S=keyprompt; … -s $S`), PowerShell string building (`('keyprompt:'+$n)`).
+Not counted for G1, as the PRD's "Honest limits" allow (but counted for G4): `echo "<read>" | bash`, `security -i` fed on stdin, a read built from a shell variable (`S=keyprompt; … -s $S`, seen to pass), PowerShell string building (`('keyprompt:'+$n)`).
 
 ## G1b — a mention passes: unmet
 
@@ -67,7 +68,7 @@ EOF
 )"
 ```
 
-The same happens when a line of the here-document starts with the read, and with `gh pr create --body "$(cat <<'EOF' …)"`. Cause: `splitShell` does not know here-documents, so it parses the body as shell, and backticks inside a quoted (`'EOF'`) body, which bash leaves as text, become a command. `README.md:285` admits a false refusal for "a `cat <<EOF` block written to a file", but G1b names commit messages, and this repo's own commit messages quote these reads.
+The same happens when a line of the here-document starts with the read, and with `gh pr create --body "$(cat <<'EOF' …)"`. Cause: `splitShell` does not know here-documents, so it parses the body as shell, and backticks inside a quoted (`'EOF'`) body, which bash leaves as text, become a command. The fix must keep one thing the same blindness gets right today: a here-document fed to a shell (`bash <<'EOF'` with a read in its body, quoted delimiter or not) is denied, and must stay denied. `README.md:285` admits a false refusal for "a `cat <<EOF` block written to a file", but G1b names commit messages, and this repo's own commit messages quote these reads.
 
 ## G2 — a key in a message gets a warning: met
 
@@ -90,13 +91,13 @@ Google (`AIza…`) and Hugging Face (`hf_…`) keys get no warning; R-12 leaves 
 | A second run adds nothing | `src/cli.mjs:985-988`, `src/install-guard.mjs:178-186` | `test/install-guard.test.mjs:65-67`, 137-150 |
 | Uninstall removes only those entries | `src/install-guard.mjs:130-154`, `src/cli.mjs:1010-1032` | unit tests `test/install-guard.test.mjs:53-63`, 75-83; at the CLI only the refusals (207-217) |
 
-Two edges, not counted: a pre-existing empty `"hooks": {}` or `"PreToolUse": []` is gone after install then uninstall (`src/install-guard.mjs:148-151`), which Claude Code reads the same (the PRD's wording is in B-31); and an integer above 2^53 anywhere in the file is rounded by `JSON.parse` on any rewrite (no Claude Code setting is known to hold one; not checked against a schema).
+Two edges, not counted: a pre-existing empty `"hooks": {}` or `"PreToolUse": []` is gone after install then uninstall (`src/install-guard.mjs:149-152`), which Claude Code reads the same (the PRD's wording is in B-31); and an integer above 2^53 anywhere in the file is rounded by `JSON.parse` on any rewrite (no Claude Code setting is known to hold one; not checked against a schema).
 
 ## G4 — the guard's docs: unmet
 
 Met: what it refuses, that it fails open and that it covers Claude Code only are in `SECURITY.md:19`, 21, 22 and `README.md:280`, 286, 237. "nothing stops it" is gone from both (`git grep` finds it only in the PRD's own history line).
 
-**Unmet: the new words are not literally true.** `SECURITY.md:19` and `README.md:280` say the guard refuses "a Bash or PowerShell command that runs the store's own read tool on a keyprompt item", and the limits they list (`SECURITY.md:20`, `README.md:285`) name only a script file, an encoded command and another tool. The G1 forms above run the store's read tool on a keyprompt item and are none of those. No test pins this wording.
+**Unmet: the new words are not literally true.** `SECURITY.md:19` and `README.md:280` say the guard refuses "a Bash or PowerShell command that runs the store's own read tool on a keyprompt item", and the limits they list (`SECURITY.md:20`, `README.md:285`) name only a script file, an encoded command and another tool. The G1 forms above run the store's read tool on a keyprompt item and are none of those, and neither are the forms G1 does not count: a read built from a shell variable, or text piped into a shell. No test pins this wording.
 
 ## J — `--json` results: unmet
 
@@ -116,23 +117,20 @@ Without `--json`, `has FOO --yes` now says "--yes works only with install-guard.
 - `keyprompt -sk_live_PASTEDKEY123 list --json` printed `{"command":"list","status":"invalid_usage","names":[],"exitCode":2,"message":"Unknown command \"-sk_live_PASTEDKEY123\". See keyprompt --help."}`. The typed token, which could be a pasted key, is in the result, and `command` names a command that was never recognized (the PRD says `null`). `setup --json` and `log --json` do the same. Cause: `jsonRequest` skips tokens that start with `-` when it picks the command (`src/cli.mjs:253`), `parseArgs` takes a single-dash token as the command (`src/cli.mjs:229-232`), and the "Unknown command" error (`src/cli.mjs:1044`) has no `jsonMessage`.
 - The message does not always say why. `has A1,…,A13 --json` says "A card can ask for at most 12 values at once." (`src/names.mjs:47`, through `src/cli.mjs:737`), though `has` opens no card and text mode calls the input an invalid name. `-x has FOO --json` says "A name is not a valid secret name", because the name check at `src/cli.mjs:737` reads `has` as a name. `check_secrets` with 13 names gets the same card sentence.
 
-## F — `keyprompt setup`: unmet
+## F — `keyprompt setup`: met
 
 | Clause | Code | Test |
 |---|---|---|
 | `.env.example`, or the file `--from` names | `src/setup.mjs:8`, 91 | `test/cli.test.mjs:975`, 1012 |
-| A name that is not a template (`.env`, `.env.local`, `dir/.env`, `.ENV.LOCAL`) is refused with exit 2 | `src/setup.mjs:23-32` | `test/setup.test.mjs:47`, `test/cli.test.mjs:995` |
+| A name that is not a template (`.env`, `.env.local`, a `.env` in a subfolder, `.ENV.LOCAL`) is refused with exit 2 | `src/setup.mjs:23-32` | `test/setup.test.mjs:47`, `test/cli.test.mjs:995` |
 | … before the file is opened (a `.env` with mode 000 gives exit 2, not EACCES) | `src/setup.mjs:92` runs before 97 and 100 | no test of the order |
 | One card, the first 12 unsaved, in file order, every box optional; saved names not asked | `src/cli.mjs:803-821`, `src/card-server.mjs:69-71` | `test/cli.test.mjs:975`, 1033 (skipped on Windows) |
 | The four report groups and the run line | `src/setup.mjs:136-158`, `src/cli.mjs:823-834` | `test/setup.test.mjs:76`, `test/cli.test.mjs:1033` |
 | Errors never quote a line or the path | `src/setup.mjs:98`, 105-114 | `test/setup.test.mjs:64` (a missing file only) |
 
-**Unmet: text from inside a value can come back as a name.** `exampleNames` (`src/setup.mjs:56-81`) skips a line its pattern rejects (lines 71-74) before it checks for an opening quote (line 79). A quoted value that opens on such a line is never passed over, so a `NAME=` line inside it is read as a name. Run 2026-11-09 against `exampleNames`:
+Nothing that follows an `=` in the file is ever shown, returned or stored: only the text before a line's first `=` is kept (`src/setup.mjs:71-81`), a quoted value that opens after `NAME=` is passed over to its closing quote (line 79), and every error names a line by its number (lines 73, 80). `test/setup.test.mjs:9`, 30.
 
-- `MY KEY="-----BEGIN` / `INSIDE_VALUE_ONE=sk_live_LEAK1` / `-----END"` gives the names `A_KEY, INSIDE_VALUE_ONE` (with `A_KEY=x` first).
-- dotenv's `KEY: value` form (accepted by motdotla/dotenv, lib/main.js line 8, read 2026-11-09 by the F reviewer) does the same: `B_KEY: "start` / `INSIDE_VALUE_TWO=…` / `end"` gives `INSIDE_VALUE_TWO`.
-
-Such a name is then reported, put in the run line and in `--json`'s `skipped`, or asked for on the card. Only name-shaped text before an inner `=` escapes; what follows that `=` never does. A normal `KEY="…"` multi-line value is passed over correctly.
+**Found, not on the line: B-29.** dotenv also accepts `KEY: value` (motdotla/dotenv lib/main.js line 8 at 4c54504, read live 2026-11-10; its default parser is still that regex, line 19). `setup` does not read that form: `B_KEY: "start` / `INSIDE_VALUE_TWO=…` / `end"` gives the name `INSIDE_VALUE_TWO` (from inside B_KEY's value) and misses `B_KEY`, where dotenv's own regex gives `B_KEY` alone. Run 2026-11-10 against `exampleNames` and dotenv's regex. What keyprompt shows does not follow an `=`, so F's words hold; the PRD's file format (`NAME=...` only) does not cover the form. The case the audit first counted, `MY KEY="…` with a `NAME=` line inside, is not one: dotenv reads that inner line as a key too, so keyprompt agrees with it (pointed out by `/code-review`).
 
 Not counted: a template-named symlink to `.env` is read (`src/setup.mjs:24` checks the path's text), which shows names only, never a value.
 
@@ -151,7 +149,7 @@ Not counted: a template-named symlink to `.env` is read (`src/setup.mjs:24` chec
 | `keyprompt log` shows the newest 50 (70 lines showed lines 20 to 69) | `src/cli.mjs:950-954` | no test of the slice |
 | A log that cannot be written changes nothing (`KEYPROMPT_HOME` a file, a read-only folder, `activity.jsonl` a folder, a busy lock) | `src/activity.mjs:160-191` | unit level: `test/activity.test.mjs:53-60`, `test/b23-activity-log.test.mjs:116`, 129 |
 
-**Unmet (Windows, by reading; confidence 0.7).** A `run` whose command is one word holding spaces logs that whole word as the program, so argument text can reach the file: `keyprompt run K -- "curl https://h/v1?key=abc"` would log `program: "v1?key=abc"`, and `"python -c print('x')"` would log all of it. Cause: `programName` (`src/activity.mjs:123-125`) only drops the folder, and on Windows cross-spawn 7.0.6 sends a command it cannot resolve, and that does not end in `.exe` or `.com`, through `cmd.exe` (cross-spawn lib/parse.js lines 36-58, read 2026-11-09 from the installed copy), so the spawn succeeds and the line is written (`src/cli.mjs:868-871`). On macOS the same input fails to spawn and writes no line (seen by the L reviewer). Not run on Windows.
+**Unmet (Windows, by reading; confidence 0.7).** A `run` whose command word is not a program Windows can find logs that whole word as the program, so argument text can reach the file: `keyprompt run K -- "curl https://h/v1?key=abc"` would log `program: "v1?key=abc"`, `"python -c print('x')"` would log all of it, and so would a word with no space at all, such as `"https://h/v1?key=abc"` (found by `/code-review`). Cause: `programName` (`src/activity.mjs:123-125`) only drops the folder, and on Windows cross-spawn 7.0.6 sends a command it cannot resolve, and that does not end in `.exe` or `.com`, through `cmd.exe` (cross-spawn lib/parse.js lines 36-58, read 2026-11-09 from the installed copy), so the spawn succeeds and the line is written (`src/cli.mjs:868-871`). On macOS the same input fails to spawn and writes no line (seen by the L reviewer). Not run on Windows.
 
 Listed, not counted: a FIFO planted at `activity.jsonl` makes the command hang until something reads it (seen); a lock path that is a folder, or a read-only home with a writable log, skips the trim every time so the file grows past 1,000 lines (seen: 1,025). The first needs a planted file; the second is in B-31 as PRD wording.
 
@@ -172,11 +170,11 @@ The M reviewer read the stdio transport rules live on 2026-11-09 (modelcontextpr
 
 ## Met in code, but no test would fail if the code were removed
 
-These are not bugs; they are the checks a later change could break silently. S-64 adds them, in new test files.
+These are not bugs; they are the checks a later change could break silently. S-64 adds them, in new test files, once the fix steps have merged (so it never locks a sentence or a behaviour a fix must change).
 
 - **G1/G2:** CredRead naming only a saved name; `secret-tool search` with a saved name; the agent-facing `additionalContext`; that the guard writes and sends nothing.
 - **G3:** the typed "y" confirm; `uninstall-guard`'s success path at the CLI (removing `writeSettings` at `src/cli.mjs:1029` fails no test); the npx-cache refusal at the CLI.
-- **G4:** the guard's wording in `SECURITY.md` and the README.
+- **G4:** the guard's wording in `SECURITY.md` and the README (S-59 adds this test with its rewrite, so S-64 leaves it out).
 - **J:** text and exit codes without `--json` against v0.2.2; a store helper's output left out on the save path end to end.
 - **F:** the name check running before the file is opened; the path never repeated in an EISDIR or EACCES message; nothing from the file reaching the catalog or the log.
 - **L:** `run`'s card save line; Later, Cancel and deadline lines for `setup`, `run` and `mcp`; the newest-50 slice; no reason, `--by` or output in the file; stdout, stderr and the exit code unchanged at the CLI when the log cannot be written.
@@ -190,3 +188,7 @@ These are not bugs; they are the checks a later change could break silently. S-6
 - A second `request_secret` sent while the first is still reading the store is told "A card is already open" a few milliseconds before one is (`src/cli.mjs:685-687`).
 - When a save under way fails after the deadline or a withdraw, the card ends as an error (exit 1) and writes no line; L names only a save, Later, Cancel and the deadline.
 - `security dump-keychain -d` is refused without naming keyprompt (it cannot name it); `Monitor` is accepted as a tool name (R-12 says it arrives as Bash).
+
+## What `/code-review` changed in this report
+
+A fresh `/code-review` of this PR (high effort) found ten points, all checked and taken: F was first marked unmet on a case dotenv itself parses the same way (now met, B-29 narrowed); the `CredentialManager\` cause was wrong; `stdbuf` and `-wskeyprompt` also pass; the B-30 case does not need a space; the G1 and G4 rules needed saying apart; and four plan defects in S-58, S-60, S-62 and S-64 (a here-document fed to a shell must stay denied; "no typed token" would forbid the names a result must carry; S-64 must come after the fixes) plus a line number, a backticked path from another repo, and the missing status row.

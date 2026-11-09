@@ -247,7 +247,7 @@ Keyprompt's design inference: use stable status identifiers plus its existing ex
 
 **Where:** v0.3 · S-45 / S-56 · `src/mcp.mjs:86` (the tool description says "at most 5 minutes") · `request_secret`
 **Find out:** each client's default time limit for one `tools/call` (Claude Code, VS Code, Cursor, Codex), whether progress notifications reset it, and whether a person can raise it. If a common client gives up after 60 seconds, a person who takes longer finds the card withdrawn (B-21's path) and the agent gets no answer. Depending on the answer: send progress notifications while the card is open, say the limit in the README and the tool description, or do nothing.
-**Confidence:** 0.4 (low). One fact read, by the S-56 audit's M reviewer: the official TypeScript SDK's default request timeout is 60 seconds and progress resets it only when the client opts in (typescript-sdk `packages/core-internal/src/shared/protocol.ts` lines 112 and 135-140 at 1e608ca, via `gh api`, live, 2026-11-09). Which clients keep that default, and Claude Code's own limit, are not checked.
+**Confidence:** 0.4 (low). One fact read, by the S-56 audit's M reviewer: the official TypeScript SDK's default request timeout is 60 seconds and progress resets it only when the client opts in (typescript-sdk packages/core-internal/src/shared/protocol.ts lines 112 and 135-140 at 1e608ca, via `gh api`, live, 2026-11-09). Which clients keep that default, and Claude Code's own limit, are not checked.
 **Review:** none yet; a higher model reads the answer if it leads to a protocol change.
 **Status:** open.
 **Answer:** —
