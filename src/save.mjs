@@ -29,9 +29,10 @@ export function assertFits(store, values) {
  * Only messages written for people are shown; anything else could carry
  * text nobody checked, so it is not repeated.
  * @param {unknown} error
+ * @param {'message' | 'jsonMessage'} [which] `jsonMessage` for a `--json` result (B-19).
  */
-function reasonOf(error) {
-  return error instanceof KeypromptError ? error.message.replace(/\.$/, '') : 'an unexpected error'
+function reasonOf(error, which = 'message') {
+  return error instanceof KeypromptError ? error[which].replace(/\.$/, '') : 'an unexpected error'
 }
 
 /**
@@ -75,12 +76,14 @@ export async function saveAll(store, values) {
       await store.write(name, value)
     } catch (error) {
       const stuck = await putBack(store, touched)
-      const failed = `Could not save ${name}: ${reasonOf(error)}.`
-      if (stuck.length === 0) throw new KeypromptError(`${failed} Nothing was changed.`)
       const one = stuck.length === 1
-      throw new KeypromptError(
-        `${failed} Undoing also failed for ${joinNames(stuck)}, so ${one ? 'it' : 'they'} may not hold what ${one ? 'it' : 'they'} held before. To fix ${one ? 'it' : 'them'}, run: keyprompt set ${stuck.join(' ')}`,
-      )
+      /** @param {'message' | 'jsonMessage'} which */
+      const text = (which) => {
+        const failed = `Could not save ${name}: ${reasonOf(error, which)}.`
+        if (stuck.length === 0) return `${failed} Nothing was changed.`
+        return `${failed} Undoing also failed for ${joinNames(stuck)}, so ${one ? 'it' : 'they'} may not hold what ${one ? 'it' : 'they'} held before. To fix ${one ? 'it' : 'them'}, run: keyprompt set ${stuck.join(' ')}`
+      }
+      throw new KeypromptError(text('message'), { jsonMessage: text('jsonMessage') })
     }
   }
 }

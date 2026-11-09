@@ -205,6 +205,6 @@ The deadline is the real-world path. Someone presses Save near the end of the 5 
 **Requirement:** J in `docs/prd/v0-3.md`, and the convention in `.claude/CLAUDE.md` that an error says what to do next.
 **Needs first:** nothing.
 **Blocks:** the `--json` docs step (README and skill examples).
-**Files:** `src/errors.mjs`, `src/cli.mjs`, `src/names.mjs`, `src/save.mjs`, `src/store/linux.mjs`, `src/store/windows.mjs`, `test/cli.test.mjs`, a new `test/errors.test.mjs`.
+**Files:** `src/errors.mjs`, `src/cli.mjs`, `src/names.mjs`, `src/save.mjs`, `src/store/linux.mjs`, `src/store/windows.mjs`, `test/cli.test.mjs`, `test/save.test.mjs`, a new `test/errors.test.mjs`.
 **Research:** none · **Model:** sonnet · **Confidence:** 0.95 that this is the cause (the code drops the message in `jsonFailure`, and the run above shows it).
 **Fix step:** S-47.

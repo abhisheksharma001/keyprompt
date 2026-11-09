@@ -9,10 +9,12 @@ export const NAME_PATTERN = /^[A-Z_][A-Z0-9_]{0,127}$/
  */
 export function assertName(name) {
   if (typeof name !== 'string' || !NAME_PATTERN.test(name)) {
-    throw new KeypromptError(
-      `"${String(name)}" is not a valid secret name. Use an environment-variable style name: capital letters, digits and _, starting with a letter or _ (for example OPENAI_API_KEY).`,
-      { exitCode: EXIT.USAGE },
-    )
+    const rule = 'Use an environment-variable style name: capital letters, digits and _, starting with a letter or _ (for example OPENAI_API_KEY).'
+    // The JSON message leaves the typed name out: it could be a pasted key (B-19).
+    throw new KeypromptError(`"${String(name)}" is not a valid secret name. ${rule}`, {
+      exitCode: EXIT.USAGE,
+      jsonMessage: `A name is not a valid secret name. ${rule}`,
+    })
   }
   return name
 }
@@ -51,6 +53,7 @@ export function parseFields(parts) {
         if (!HINTS.includes(hint)) {
           throw new KeypromptError(`Unknown hint "${hint}" on ${name}. Use visible, multiline or optional.`, {
             exitCode: EXIT.USAGE,
+            jsonMessage: `Unknown hint on ${name}. Use visible, multiline or optional.`,
           })
         }
         field[/** @type {'visible' | 'multiline' | 'optional'} */ (hint)] = true

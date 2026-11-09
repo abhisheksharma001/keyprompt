@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { KeypromptError } from '../src/errors.mjs'
+import { KeypromptError, helperError } from '../src/errors.mjs'
 import { joinNames, saveAll } from '../src/save.mjs'
 
 /**
@@ -108,4 +108,22 @@ test('an unexpected error is not repeated on the card', async () => {
   await assert.rejects(saveAll(store, values({ A: 'a' })), {
     message: 'Could not save A: an unexpected error. Nothing was changed.',
   })
+})
+
+test("a store helper's own line stays out of the --json message, also when undoing fails (B-19)", async () => {
+  for (const undoFails of [false, true]) {
+    const store = fakeStore({ A: 'old-a' })
+    const write = store.write
+    store.write = async (name, value) => {
+      if (name === 'B' || (undoFails && value === 'old-a')) throw helperError(`Could not save ${name} to the test store`, 'helper-line-47')
+      return write(name, value)
+    }
+    const error = await saveAll(store, values({ A: 'a', B: 'b' })).then(
+      () => assert.fail('the save should have failed'),
+      (e) => e,
+    )
+    assert.ok(error.message.includes('helper-line-47'), error.message)
+    assert.equal(error.message.includes('Undoing also failed for A'), undoFails, error.message)
+    assert.equal(error.jsonMessage, error.message.replace(': helper-line-47', ''))
+  }
 })

@@ -75,7 +75,8 @@ Exit codes:
 
 Options:
   --json          One names-only JSON result for set, has, list or delete.
-                  Failures are JSON too; existing exit codes stay the same.
+                  Failures are JSON too, with keyprompt's message; existing exit
+                  codes stay the same.
   --reason TEXT   Shown on the card: why the secret is needed.
   --by TEXT       Shown on the card: who is asking (default: detected agent and folder).
   --no-redact     Pass COMMAND's output through untouched (for full-screen tools).
@@ -207,7 +208,9 @@ export function parseArgs(argv) {
     else if (arg === '--json') parsed.json = true
     else if (arg === '--help' || arg === '-h') parsed.help = true
     else if (arg === '--version' || arg === '-v') parsed.version = true
-    else if (arg.startsWith('--')) throw new KeypromptError(`Unknown option ${arg}. See keyprompt --help.`, { exitCode: EXIT.USAGE })
+    else if (arg.startsWith('--')) {
+      throw new KeypromptError(`Unknown option ${arg}. See keyprompt --help.`, { exitCode: EXIT.USAGE, jsonMessage: 'Unknown option. See keyprompt --help.' })
+    }
     else parsed.positionals.push(arg)
   }
   return parsed
@@ -237,18 +240,24 @@ function jsonRequest(argv) {
   return { json, command }
 }
 
+/** The message of a `--json` failure that keyprompt did not expect: its own text could carry anything. */
+export const UNEXPECTED_JSON_MESSAGE =
+  'keyprompt hit an unexpected error. Its text is left out of JSON results; run the same command without --json to see it.'
+
 /**
- * Only validated names and an allowlisted outcome reach the JSON error.
- * Error messages can contain invalid arguments, paths or helper output.
+ * Only validated names, an allowlisted outcome and keyprompt's own words reach
+ * the JSON error. The message is the error's `jsonMessage`: the text-mode
+ * sentence with any typed argument or helper output left out (B-19).
  * @param {string | null} command
  * @param {string[]} names
  * @param {unknown} error
  */
 function jsonFailure(command, names, error) {
-  const code = error instanceof KeypromptError ? error.exitCode : EXIT.ERROR
+  const known = error instanceof KeypromptError
+  const code = known ? error.exitCode : EXIT.ERROR
   const statuses = { 1: 'error', 2: 'invalid_usage', 3: 'missing', 4: 'cancelled', 5: 'timed_out', 6: 'deferred' }
   const exitCode = Object.hasOwn(statuses, code) ? code : EXIT.ERROR
-  return { command, status: statuses[exitCode], names, exitCode }
+  return { command, status: statuses[exitCode], names, exitCode, message: known ? error.jsonMessage : UNEXPECTED_JSON_MESSAGE }
 }
 
 /** @param {object} result */
