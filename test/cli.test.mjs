@@ -782,9 +782,9 @@ store.remove = async (name) => {
 `)
   return {
     dir,
-    run(args, extra = {}) {
+    run(args, extra = {}, cwd = undefined) {
       return spawnSync(process.execPath, ['--import', pathToFileURL(preload).href, BIN, ...args], {
-        encoding: 'utf8', timeout: 15000,
+        encoding: 'utf8', timeout: 15000, cwd,
         env: { ...process.env, KEYPROMPT_HOME: dir, KEYPROMPT_BROWSER: join(dir, 'no-browser'), ...extra },
       })
     },
@@ -962,4 +962,131 @@ request({ hostname: url.hostname, port: url.port, path: url.pathname + '/' + act
     const r = f.run(args, { ...env, KP_JSON_ACTION: action })
     assert.deepEqual(jsonAnswer(r, code), { command: 'set', status, names: ['OLD', 'NEW', 'EMPTY'], exitCode: code, message })
   }
+})
+
+/** A project folder holding these files, for setup. */
+function project(f, files) {
+  const dir = join(f.dir, `project-${randomBytes(3).toString('hex')}`)
+  mkdirSync(dir)
+  for (const [name, text] of Object.entries(files)) writeFileSync(join(dir, name), text)
+  return dir
+}
+
+test('setup with nothing missing opens no card, asks for nothing and reports every name as saved, in text and JSON (S-42)', () => {
+  const f = jsonCliFixture()
+  const cwd = project(f, { '.env.example': '# keys\nA_KEY=dummy-example-value\nB_KEY=\n' })
+  // KEYPROMPT_BROWSER points at nothing, so a card would fail the command.
+  const env = { KP_JSON_VALUES: JSON.stringify({ A_KEY: 'dummy-sensitive-a', B_KEY: 'dummy-sensitive-b' }) }
+  const text = f.run(['setup'], env, cwd)
+  assert.equal(text.status, 0, text.stderr)
+  assert.equal(
+    text.stdout,
+    'Nothing to ask: every name in the example file is saved already.\nAlready saved, so not asked: A_KEY and B_KEY.\nUse them with: keyprompt run A_KEY,B_KEY -- <command>\n',
+  )
+  assert.equal(text.stderr, '')
+  const r = f.run(['setup', '--json'], env, cwd)
+  assert.deepEqual(jsonAnswer(r, 0), {
+    command: 'setup', status: 'saved', names: [], exitCode: 0,
+    replaced: [], empty: [], warnings: [], skipped: ['A_KEY', 'B_KEY'], remaining: [], ignoredLines: [],
+  })
+  assert.ok(!r.stdout.includes('dummy'), r.stdout)
+})
+
+test('setup refuses .env and .env.local with exit 2 before it reads them or the store (S-42)', () => {
+  const f = jsonCliFixture()
+  const cwd = project(f, { '.env': 'A_KEY=dummy-sensitive-env\n', '.env.local': 'B_KEY=dummy-sensitive-local\n' })
+  // Reading the store would fail with exit 1, so exit 2 shows it was not read.
+  const env = { KP_JSON_ERROR: 'must-not-read-the-store' }
+  for (const from of ['.env', '.env.local', join(cwd, '.env')]) {
+    const text = f.run(['setup', '--from', from], env, cwd)
+    assert.equal(text.status, 2, text.stderr)
+    assert.match(text.stderr, /^keyprompt: setup reads names only from an example file, never from a file that may hold real values/)
+    const r = f.run(['setup', '--json', '--from', from], env, cwd)
+    assert.deepEqual(jsonAnswer(r, 2), {
+      command: 'setup', status: 'invalid_usage', names: [], exitCode: 2, message: text.stderr.slice('keyprompt: '.length).trimEnd(),
+    })
+    for (const out of [text.stdout, text.stderr, r.stdout, r.stderr]) assert.ok(!/dummy|A_KEY|B_KEY|must-not/.test(out), out)
+  }
+})
+
+test('setup usage: no .env.example, --from with another command or without a value, names after setup (S-42)', () => {
+  const f = jsonCliFixture()
+  const empty = project(f, {})
+  const none = f.run(['setup'], {}, empty)
+  assert.equal(none.status, 2)
+  assert.equal(none.stderr, "keyprompt: There is no .env.example in this folder. Run keyprompt setup in the project's folder, or name its example file with --from FILE.\n")
+  for (const [args, message] of [
+    [['has', 'A_KEY', '--from', 'x.env.example'], '--from works only with setup.'],
+    [['setup', '--from'], '--from needs a value.'],
+    [['setup', 'A_KEY'], 'Usage: keyprompt setup [--from FILE] [--reason TEXT] [--by TEXT]'],
+  ]) {
+    const r = f.run(args, { KP_JSON_ERROR: 'must-not-read-the-store' }, empty)
+    assert.equal(r.status, 2, r.stderr)
+    assert.equal(r.stderr, `keyprompt: ${message}\n`)
+  }
+  // --from's value is never taken for the command, so the result names setup.
+  const json = jsonAnswer(f.run(['--from', 'x.env.example', 'setup', '--json'], {}, empty), 2)
+  assert.equal(json.command, 'setup')
+  assert.equal(json.message, "There is no file at the path given with --from. Run keyprompt setup in the project's folder, or name its example file with --from FILE.")
+})
+
+test('setup asks on one card for the first 12 missing names in file order, never a saved one, and reports the rest; Later exits 6 (S-42)', { skip: process.platform === 'win32' }, () => {
+  const f = jsonCliFixture()
+  const missing = Array.from({ length: 14 }, (_, i) => `NAME_${String(i + 1).padStart(2, '0')}`)
+  const lines = ['# saved already', 'SAVED_ONE=dummy-example-value', 'lower_case=dummy-example-value', ...missing.map((name) => `${name}=dummy-example-value`)]
+  const cwd = project(f, { '.env.example': `${lines.join('\n')}\n` })
+  const browser = join(f.dir, 'setup-card.mjs')
+  // Records the card page, then presses Save with two values, or Later.
+  writeFileSync(browser, `#!${process.execPath}
+import { writeFileSync } from 'node:fs'
+import { request } from 'node:http'
+const url = new URL(process.argv[2])
+request({ hostname: url.hostname, port: url.port, path: url.pathname, headers: { Host: url.host } }, (res) => {
+  const chunks = []
+  res.on('data', (c) => chunks.push(c))
+  res.on('end', () => {
+    writeFileSync(process.env.KP_PAGE, Buffer.concat(chunks))
+    const action = process.env.KP_JSON_ACTION || 'submit'
+    const body = action === 'submit' ? { values: { NAME_01: 'dummy-sensitive-01', NAME_05: 'dummy-sensitive-05' }, remember: true } : {}
+    request({ hostname: url.hostname, port: url.port, path: url.pathname + '/' + action, method: 'POST', headers: { Origin: url.origin, 'Content-Type': 'application/json' } }, (r) => r.resume()).end(JSON.stringify(body))
+  })
+}).end()
+`)
+  chmodSync(browser, 0o755)
+  const page = join(f.dir, 'page.html')
+  const env = { KP_JSON_VALUES: JSON.stringify({ SAVED_ONE: 'dummy-sensitive-saved' }), KEYPROMPT_BROWSER: browser, KP_PAGE: page }
+  const onCard = missing.slice(0, 12)
+  const empty = onCard.filter((name) => name !== 'NAME_01' && name !== 'NAME_05')
+
+  const r = f.run(['setup', '--json'], env, cwd)
+  assert.deepEqual(jsonAnswer(r, 0), {
+    command: 'setup', status: 'saved', names: ['NAME_01', 'NAME_05'], exitCode: 0,
+    replaced: [], empty, warnings: [], skipped: ['SAVED_ONE'], remaining: ['NAME_13', 'NAME_14'], ignoredLines: [3],
+  })
+  const html = readFileSync(page, 'utf8')
+  for (const name of onCard) assert.ok(html.includes(name), name)
+  for (const name of ['NAME_13', 'NAME_14', 'SAVED_ONE', 'lower_case', 'dummy']) assert.ok(!html.includes(name), name)
+  for (const out of [r.stdout, r.stderr]) assert.ok(!out.includes('dummy'), out)
+
+  const text = f.run(['setup'], env, cwd)
+  assert.equal(text.status, 0, text.stderr)
+  assert.equal(
+    text.stdout,
+    [
+      `Saved NAME_01 and NAME_05 in the ${getStore().label}. The values were not shown here.`,
+      `Left empty, so still not saved: ${empty.slice(0, -1).join(', ')} and NAME_12.`,
+      'Already saved, so not asked: SAVED_ONE.',
+      "Not asked yet, because one card holds at most 12: NAME_13 and NAME_14. Run keyprompt setup again: it asks for the first 12 names still missing, in the file's order.",
+      'Line 3 of the example file was not read: keyprompt reads lines like NAME=..., where NAME uses capital letters, digits and _.',
+      'Use them with: keyprompt run SAVED_ONE,NAME_01,NAME_05 -- <command>',
+      '',
+    ].join('\n'),
+  )
+  assert.ok(!text.stderr.includes('dummy'), text.stderr)
+
+  const later = f.run(['setup', '--json'], { ...env, KP_JSON_ACTION: 'later' }, cwd)
+  assert.deepEqual(jsonAnswer(later, 6), {
+    command: 'setup', status: 'deferred', names: onCard, exitCode: 6,
+    message: `The person chose Later for ${onCard.slice(0, -1).join(', ')} and NAME_12. Nothing was saved.`,
+  })
 })

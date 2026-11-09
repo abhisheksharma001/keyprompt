@@ -20,9 +20,10 @@ import {
   settingsPath,
   writeSettings,
 } from './install-guard.mjs'
-import { assertName, parseFields } from './names.mjs'
+import { assertName, MAX_FIELDS, parseFields } from './names.mjs'
 import { runWithSecrets } from './run.mjs'
 import { assertFits, joinNames, saveAll } from './save.mjs'
+import { readExampleNames, setupReport } from './setup.mjs'
 import { getStore } from './store/index.mjs'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -39,6 +40,13 @@ Usage:
       Run COMMAND with each secret in its environment as $NAME. Secrets that
       are not saved yet open one card first. Exact copies of the values are
       masked in COMMAND's output as [keyprompt:NAME].
+
+  keyprompt setup [--from FILE] [--reason TEXT] [--by TEXT]
+      Read the names a project needs from its .env.example (or FILE) and open
+      one card for the ones not saved yet. Every box may stay empty, but Save
+      needs at least one value. Only the names are used; values in the file are
+      ignored. One card asks for at most 12: the first ones missing, in the
+      file's order.
 
   keyprompt has NAME        Exit 0 if NAME is saved, 3 if not. Never shows the value.
   keyprompt list            Saved names, reasons and dates. Never values.
@@ -74,11 +82,14 @@ Exit codes:
   run exits with COMMAND's own code once COMMAND has started.
 
 Options:
-  --json          One names-only JSON result for set, has, list or delete.
+  --json          One names-only JSON result for set, has, list, delete or setup.
                   Failures are JSON too, with keyprompt's message; existing exit
                   codes stay the same.
   --reason TEXT   Shown on the card: why the secret is needed.
   --by TEXT       Shown on the card: who is asking (default: detected agent and folder).
+  --from FILE     For setup: the example file to read instead of .env.example. Its
+                  name must say it is one (example, sample, template, schema or
+                  dist); .env and .env.local are refused.
   --no-redact     Pass COMMAND's output through untouched (for full-screen tools).
                   Works only when the output goes straight to a terminal.
 `
@@ -183,7 +194,7 @@ async function savedNames() {
 
 /**
  * @param {string[]} argv
- * @returns {{ positionals: string[], command: string[], reason?: string, by?: string, redact: boolean, yes: boolean, help: boolean, version: boolean, json: boolean }}
+ * @returns {{ positionals: string[], command: string[], reason?: string, by?: string, from?: string, redact: boolean, yes: boolean, help: boolean, version: boolean, json: boolean }}
  */
 export function parseArgs(argv) {
   const dash = argv.indexOf('--')
@@ -203,6 +214,7 @@ export function parseArgs(argv) {
     }
     if (arg === '--reason') parsed.reason = takeValue()
     else if (arg === '--by') parsed.by = takeValue()
+    else if (arg === '--from') parsed.from = takeValue()
     else if (arg === '--no-redact') parsed.redact = false
     else if (arg === '--yes') parsed.yes = true
     else if (arg === '--json') parsed.json = true
@@ -216,7 +228,7 @@ export function parseArgs(argv) {
   return parsed
 }
 
-const JSON_COMMANDS = new Set(['set', 'has', 'list', 'delete'])
+const JSON_COMMANDS = new Set(['set', 'has', 'list', 'delete', 'setup'])
 
 /**
  * Recognize output mode even when argument parsing fails. Option values and
@@ -229,7 +241,7 @@ function jsonRequest(argv) {
   let foundVerb = false
   for (let i = 0; i < argv.length && argv[i] !== '--'; i++) {
     const arg = argv[i]
-    if (arg === '--reason' || arg === '--by') {
+    if (arg === '--reason' || arg === '--by' || arg === '--from') {
       if (argv[i + 1] !== undefined && !argv[i + 1].startsWith('--')) i++
     } else if (arg === '--json') json = true
     else if (!arg.startsWith('-') && !foundVerb) {
@@ -525,26 +537,30 @@ export function demoRequest() {
  */
 export async function main(argv) {
   const request = jsonRequest(argv)
-  let names = []
+  /** The names a JSON failure reports: validated ones only. setup fills them in once its card opens. */
+  const failure = { names: /** @type {string[]} */ ([]) }
   try {
     const args = parseArgs(argv)
     if (request.json && !request.command) {
-      throw new KeypromptError('--json works only with set, has, list and delete.', { exitCode: EXIT.USAGE })
+      throw new KeypromptError('--json works only with set, has, list, delete and setup.', { exitCode: EXIT.USAGE })
     }
     if (args.json && args.command.length > 0) throw new KeypromptError('These JSON commands do not take a child command.', { exitCode: EXIT.USAGE })
     // Invalid names never get reflected in an error result.
-    if (request.json && request.command !== 'list') names = parseFields(args.positionals.slice(1)).map((f) => f.name)
-    return await mainParsed(args)
+    if (request.json && request.command !== 'list' && request.command !== 'setup') failure.names = parseFields(args.positionals.slice(1)).map((f) => f.name)
+    return await mainParsed(args, failure)
   } catch (error) {
     if (!request.json) throw error
-    const result = jsonFailure(request.command, names, error)
+    const result = jsonFailure(request.command, failure.names, error)
     writeJson(result)
     return result.exitCode
   }
 }
 
-/** @param {ReturnType<typeof parseArgs>} args */
-async function mainParsed(args) {
+/**
+ * @param {ReturnType<typeof parseArgs>} args
+ * @param {{ names: string[] }} failure
+ */
+async function mainParsed(args, failure) {
   const [verb, ...rest] = args.positionals
 
   if (args.version) {
@@ -559,6 +575,9 @@ async function mainParsed(args) {
 
   if (args.yes && verb !== 'install-guard') {
     throw new KeypromptError('--yes works only with install-guard.', { exitCode: EXIT.USAGE })
+  }
+  if (args.from !== undefined && verb !== 'setup') {
+    throw new KeypromptError('--from works only with setup.', { exitCode: EXIT.USAGE })
   }
 
   if (verb === 'set') {
@@ -587,6 +606,51 @@ async function mainParsed(args) {
         warnings,
       })
     } else process.stdout.write(setReport(fields, values, store.label))
+    return EXIT.OK
+  }
+
+  if (verb === 'setup') {
+    if (rest.length > 0 || args.command.length > 0) {
+      throw new KeypromptError('Usage: keyprompt setup [--from FILE] [--reason TEXT] [--by TEXT]', { exitCode: EXIT.USAGE })
+    }
+    const { names, ignoredLines } = await readExampleNames(args.from)
+    const store = getStore()
+    /** @type {string[]} */
+    const skipped = []
+    /** @type {string[]} */
+    const missing = []
+    for (const name of names) ((await store.read(name)) === null ? missing : skipped).push(name)
+    /** @type {import('./card-server.mjs').CardField[]} */
+    const fields = missing.slice(0, MAX_FIELDS).map((name) => ({ name, visible: false, multiline: false, optional: true, saved: false }))
+    const remaining = missing.slice(MAX_FIELDS)
+    /** @type {string[]} */
+    const warnings = []
+    /** @type {Map<string, string>} */
+    let values = new Map()
+    if (fields.length > 0) {
+      failure.names = fields.map((f) => f.name)
+      ;({ values } = await askWithCard(store, fields, {
+        reason: args.reason,
+        by: args.by,
+        replacing: false,
+        allowSessionOnly: false,
+        warnings: args.json ? warnings : undefined,
+      }))
+    }
+    if (args.json) {
+      writeJson({
+        command: verb,
+        status: 'saved',
+        names: fields.filter((f) => values.has(f.name)).map((f) => f.name),
+        exitCode: EXIT.OK,
+        replaced: [],
+        empty: fields.filter((f) => !values.has(f.name)).map((f) => f.name),
+        warnings,
+        skipped,
+        remaining,
+        ignoredLines,
+      })
+    } else process.stdout.write(setupReport({ names, fields, values, skipped, remaining, ignoredLines, storeLabel: store.label }))
     return EXIT.OK
   }
 
