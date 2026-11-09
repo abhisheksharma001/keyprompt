@@ -570,6 +570,8 @@ export function demoRequest() {
  * @param {{ command: 'set' | 'mcp', reason?: string, by?: string, warnings?: string[] }} options
  */
 async function askToSet(parsed, options) {
+  // `[" "]` or `[","]` parses to nothing; a card with no boxes would say "Replace secret" (B-20).
+  if (parsed.length === 0) throw new KeypromptError('fields must name at least one secret, for example ["OPENAI_API_KEY"].', { exitCode: EXIT.USAGE })
   const store = getStore()
   /** @type {import('./card-server.mjs').CardField[]} */
   const fields = []
@@ -662,6 +664,7 @@ export function mcpTools() {
       let names = []
       try {
         names = parseNames(toolList(args, 'names'))
+        if (names.length === 0) throw new KeypromptError('names must name at least one secret, for example ["OPENAI_API_KEY"].', { exitCode: EXIT.USAGE })
         const store = getStore()
         /** @type {string[]} */
         const saved = []
