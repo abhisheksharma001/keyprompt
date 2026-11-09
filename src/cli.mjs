@@ -21,7 +21,8 @@ import {
   settingsPath,
   writeSettings,
 } from './install-guard.mjs'
-import { assertName, MAX_FIELDS, parseFields } from './names.mjs'
+import { serveMcp } from './mcp.mjs'
+import { assertName, MAX_FIELDS, parseFields, parseNames } from './names.mjs'
 import { runWithSecrets } from './run.mjs'
 import { assertFits, joinNames, saveAll } from './save.mjs'
 import { readExampleNames, setupReport } from './setup.mjs'
@@ -54,6 +55,8 @@ Usage:
   keyprompt delete NAME     Remove NAME from the password store.
   keyprompt log             The newest 50 lines of the activity log: when each name was
                             saved, given to which program, deleted or put off. Never values.
+  keyprompt mcp             An MCP server on stdin and stdout, for MCP clients: tools to ask for
+                            secrets on a card and to check which are saved. Never returns a value.
   keyprompt demo            Open a sample card to see how it looks. Nothing you type is saved.
   keyprompt install-skill   Teach Claude Code to use keyprompt (writes ~/.claude/skills/keyprompt).
   keyprompt install-guard [--yes]
@@ -347,7 +350,7 @@ function requesterLabel(/** @type {string | undefined} */ by) {
  * a failed save shows on the card. `remember: false` hands them to this run only.
  * @param {import('./store/index.mjs').SecretStore} store
  * @param {import('./card-server.mjs').CardField[]} fields
- * @param {{ command: 'set' | 'setup' | 'run', reason?: string, by?: string, replacing: boolean, allowSessionOnly: boolean, masked?: boolean, allowEmpty?: boolean, warnings?: string[] }} options
+ * @param {{ command: 'set' | 'setup' | 'run' | 'mcp', reason?: string, by?: string, replacing: boolean, allowSessionOnly: boolean, masked?: boolean, allowEmpty?: boolean, warnings?: string[] }} options
  */
 async function askWithCard(store, fields, options) {
   const names = fields.map((f) => f.name)
@@ -561,6 +564,119 @@ export function demoRequest() {
 }
 
 /**
+ * What `set` does, shared with the `request_secret` MCP tool: read which
+ * fields are saved, then ask for all of them on one card.
+ * @param {ReturnType<typeof parseFields>} parsed
+ * @param {{ command: 'set' | 'mcp', reason?: string, by?: string, warnings?: string[] }} options
+ */
+async function askToSet(parsed, options) {
+  const store = getStore()
+  /** @type {import('./card-server.mjs').CardField[]} */
+  const fields = []
+  for (const field of parsed) fields.push({ ...field, saved: (await store.read(field.name)) !== null })
+  const { values } = await askWithCard(store, fields, {
+    command: options.command,
+    reason: options.reason,
+    by: options.by,
+    replacing: fields.every((f) => f.saved),
+    allowSessionOnly: false,
+    warnings: options.warnings,
+  })
+  return { store, fields, values }
+}
+
+/**
+ * The names-only result of a save, as `set --json` prints it.
+ * @param {import('./card-server.mjs').CardField[]} fields
+ * @param {Map<string, string>} values
+ * @param {string[]} warnings
+ */
+function setResult(fields, values, warnings) {
+  return {
+    command: 'set',
+    status: 'saved',
+    names: fields.filter((f) => values.has(f.name)).map((f) => f.name),
+    exitCode: EXIT.OK,
+    replaced: fields.filter((f) => f.saved && values.has(f.name)).map((f) => f.name),
+    empty: fields.filter((f) => !values.has(f.name)).map((f) => f.name),
+    warnings,
+  }
+}
+
+/** A list of 1 to 12 strings from an MCP tool's arguments, or a usage error that does not repeat them. */
+function toolList(/** @type {unknown} */ args, /** @type {string} */ key) {
+  const list = args && typeof args === 'object' ? /** @type {Record<string, unknown>} */ (args)[key] : undefined
+  if (!Array.isArray(list) || list.length === 0 || list.length > MAX_FIELDS || !list.every((item) => typeof item === 'string')) {
+    throw new KeypromptError(`${key} must be a list of 1 to ${MAX_FIELDS} names.`, { exitCode: EXIT.USAGE })
+  }
+  return /** @type {string[]} */ (list)
+}
+
+/** The card's "who is asking" for an MCP client: its own name, as the agent's words. */
+function mcpRequester(/** @type {import('./mcp.mjs').ClientInfo} */ client) {
+  const name = client.title || client.name
+  return name ? `${name.slice(0, 60)} (MCP) in ${basename(process.cwd()) || process.cwd()}` : undefined
+}
+
+/**
+ * The two tools `keyprompt mcp` offers. Both answer with keyprompt's names-only
+ * JSON results; neither ever returns a value. Only one card is open at a time.
+ * @returns {import('./mcp.mjs').Tools}
+ */
+export function mcpTools() {
+  let cardOpen = false
+  /**
+   * @param {string} command
+   * @param {string[]} names
+   * @param {unknown} error
+   */
+  const failed = (command, names, error) => {
+    const result = jsonFailure(command, names, error)
+    // Cancel, a timeout and Later are answers from the person, not errors.
+    return { result, isError: ![EXIT.CANCELLED, EXIT.TIMED_OUT, EXIT.DEFERRED].includes(result.exitCode) }
+  }
+  return {
+    async request_secret(args, client) {
+      /** @type {string[]} */
+      let names = []
+      try {
+        const parsed = parseFields(toolList(args, 'fields'))
+        names = parsed.map((f) => f.name)
+        const reason = args && typeof args === 'object' ? /** @type {Record<string, unknown>} */ (args).reason : undefined
+        if (reason !== undefined && typeof reason !== 'string') throw new KeypromptError('reason must be text.', { exitCode: EXIT.USAGE })
+        if (cardOpen) throw new KeypromptError('A card is already open. Wait for its answer before asking again.', { exitCode: EXIT.USAGE })
+        cardOpen = true
+        try {
+          const warnings = []
+          const { fields, values } = await askToSet(parsed, { command: 'mcp', reason, by: mcpRequester(client), warnings })
+          return { result: setResult(fields, values, warnings), isError: false }
+        } finally {
+          cardOpen = false
+        }
+      } catch (error) {
+        return failed('set', names, error)
+      }
+    },
+    async check_secrets(args) {
+      /** @type {string[]} */
+      let names = []
+      try {
+        names = parseNames(toolList(args, 'names'))
+        const store = getStore()
+        /** @type {string[]} */
+        const saved = []
+        /** @type {string[]} */
+        const missing = []
+        for (const name of names) ((await store.read(name)) === null ? missing : saved).push(name)
+        return { result: { command: 'has', status: missing.length === 0 ? 'saved' : 'missing', names, exitCode: missing.length === 0 ? EXIT.OK : EXIT.NOT_FOUND, saved, missing }, isError: false }
+      } catch (error) {
+        return failed('has', names, error)
+      }
+    },
+  }
+}
+
+/**
  * @param {string[]} argv
  * @returns {Promise<number>} exit code
  */
@@ -612,30 +728,22 @@ async function mainParsed(args, failure) {
   if (verb === 'set') {
     const parsed = parseFields(rest)
     if (parsed.length === 0) throw new KeypromptError('Usage: keyprompt set NAME [NAME...] [--reason TEXT]', { exitCode: EXIT.USAGE })
-    const store = getStore()
-    /** @type {import('./card-server.mjs').CardField[]} */
-    const fields = []
-    for (const field of parsed) fields.push({ ...field, saved: (await store.read(field.name)) !== null })
     const warnings = []
-    const { values } = await askWithCard(store, fields, {
-      command: 'set',
-      reason: args.reason,
-      by: args.by,
-      replacing: fields.every((f) => f.saved),
-      allowSessionOnly: false,
-      warnings: args.json ? warnings : undefined,
-    })
-    if (args.json) {
-      writeJson({
-        command: verb,
-        status: 'saved',
-        names: fields.filter((f) => values.has(f.name)).map((f) => f.name),
-        exitCode: EXIT.OK,
-        replaced: fields.filter((f) => f.saved && values.has(f.name)).map((f) => f.name),
-        empty: fields.filter((f) => !values.has(f.name)).map((f) => f.name),
-        warnings,
-      })
-    } else process.stdout.write(setReport(fields, values, store.label))
+    const { store, fields, values } = await askToSet(parsed, { command: 'set', reason: args.reason, by: args.by, warnings: args.json ? warnings : undefined })
+    if (args.json) writeJson(setResult(fields, values, warnings))
+    else process.stdout.write(setReport(fields, values, store.label))
+    return EXIT.OK
+  }
+
+  if (verb === 'mcp') {
+    if (rest.length > 0 || args.command.length > 0 || args.reason !== undefined || args.by !== undefined) {
+      throw new KeypromptError('Usage: keyprompt mcp (an MCP client starts it and talks to it on stdin and stdout)', { exitCode: EXIT.USAGE })
+    }
+    if (process.stdin.isTTY) {
+      process.stderr.write("keyprompt: keyprompt mcp speaks MCP on stdin and stdout. Add it to your agent's MCP servers instead of running it here (Ctrl+C to stop).\n")
+    }
+    const pkg = JSON.parse(await readFile(join(ROOT, 'package.json'), 'utf8'))
+    await serveMcp({ input: process.stdin, output: process.stdout, version: pkg.version, tools: mcpTools() })
     return EXIT.OK
   }
 

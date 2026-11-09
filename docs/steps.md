@@ -16,7 +16,7 @@ Plan: `docs/prd/card-v2.md` (0.2.x) and `docs/prd/v0-3.md` (0.3). Rules: `.claud
 | Fixes | S-20, S-21, S-25, S-26, S-27, S-28, S-30, S-31, S-32, S-33, S-35 | B-6 (the card never ends while a save is under way), B-7 (one true sentence for an ended card), B-12 (masking finds a key's base64 inside longer base64), B-3 (a failed update of the list of names no longer fails a save that worked), B-13 (the same for a delete that worked), B-4 (on `run`, every optional box may be left empty), B-14 (the Save button says plain "Save" when any box is optional), B-8 (with Remember unticked, the penguin holds an envelope and the vault stays shut), B-15 (the README's two demo pictures match the card again), B-16 (the README's picture links pin a commit on main) and B-17 (the S-29 row says its tag and release exist) |
 | 5 Release | S-29, S-34 | 0.2.1 on npm: the six steps since 0.2.0; 0.2.2: the four since (S-30 to S-33) |
 | Research | S-36 | R-9 answered: what keymask, the closest rival, is and is not |
-| 6 v0.3 | S-37 → S-38 → S-39 → S-40, then S-41 → S-47, S-42 → S-48, S-43 → S-49, then S-44 → S-45, then S-46 | The plan; the Claude Code guard (its check, its installer, its docs); `--json` results, and a reason when one fails (B-19); `keyprompt setup`, then the docs for both; a names-only activity log; research on MCP (R-6), then `keyprompt mcp`; release 0.3.0 |
+| 6 v0.3 | S-37 → S-38 → S-39 → S-40, then S-41 → S-47, S-42 → S-48, S-43 → S-49, then S-44 → S-45 → S-50, then S-46 | The plan; the Claude Code guard (its check, its installer, its docs); `--json` results, and a reason when one fails (B-19); `keyprompt setup`, then the docs for both; a names-only activity log; research on MCP (R-6), then `keyprompt mcp`; release 0.3.0 |
 
 Order: S-3, S-7, S-15 and S-18 touch different files from the S-2 → S-4 chain, so they can be built in parallel by separate sessions. Everything else follows the arrows.
 
@@ -71,7 +71,8 @@ Order: S-3, S-7, S-15 and S-18 touch different files from the S-2 → S-4 chain,
 | S-43 | done 2026-11-09 (PR #48) | The activity log, from the grill's four recommended answers (D-20). `src/activity.mjs` appends one JSON line to `activity.jsonl` beside the catalog for a save (by `set`, `setup` or `run`'s card), a hand-over to a command (`run`, written when it ends, with the program's own name and its exit code), a delete, and a card that ended with Later, Cancel or a timeout; it keeps the newest 1,000 and never fails a command. `keyprompt log [--json]` shows the newest 50. 210 of 210 with the real store, and the real `~/.keyprompt` gained no file. Break test: keeping the whole command line in the `run` line failed exactly the "never its arguments" test. **Surprise:** my first break test broke two places at once and failed two tests; redone with one change, it failed one. A fake browser that sent a value for a name not on the card hung the test until its 15-second timeout, because the card refuses unknown names; each call now sends only its own names. **Learned:** catching the card's outcome in one place (`askWithCard`) covers `set`, `setup` and `run` with no per-command code. Docs follow in S-49. |
 | S-49 | done 2026-11-09 (PR #49) | The docs for `keyprompt log`: a commands-table row and an "Activity log" section in the README (real output, what writes a line, what it holds and never holds, the cap, on and silent, a real `--json` entry), `log` and `entries` in the JSON results table and the skill, and the CHANGELOG entry. **Proved:** the output was captured from `bin/keyprompt.mjs` with the test-only fake store and fake browser; only the scratch folder was replaced with `/Users/you`, as the README says; a scratch check matched all 13 example lines and the inline entry; 210 of 210. **Learned:** an example with a real folder in it cannot be copied as is, so the README says which part will differ instead of pretending the paths are real. |
 | S-44 | done 2026-11-09 (PR #50) | R-6 answered from live primary sources, and S-45 now names the choice. **Found:** the 2026-07-28 spec dropped the handshake and asks during a tool call through an `input_required` answer and a retry, while VS Code still speaks 2025-11-25, so a server must speak both. URL mode reaches Claude Code (interactive only) and VS Code; Codex declines any non-https URL, so it would decline the card; Gemini CLI, Zed and Cline have none; Cursor and Windsurf are unconfirmed. The spec's MUST NOT on "pre-authenticated" URLs may catch the card's one-time-token URL. SDK v2 brings 3 packages, about 14.5 MB and a Node 20 floor; SDK v1 brings 17 dependencies. **How:** a research subagent read everything live; I re-checked four claims myself (both SDKs on npm, Codex's URL check at its tag, Claude Code's changelog) and all four matched. **Surprise:** two of R-6's 2026-11-05 assumptions no longer hold: one way of asking, and "Codex unconfirmed" (it is confirmed, and it declines). **Learned:** a client that "supports URL mode" can still refuse the URL keyprompt would send; check the client's own URL rules, not just its capability list. |
-| S-45, S-46 | todo | — |
+| S-45 | done 2026-11-09 (PR #51) | `keyprompt mcp`, from Abhishek's option (b) and the grill (D-22): a hand-written stdio MCP server with no new dependency. It speaks the 2025-11-25 handshake (and three earlier versions), answers the 2026-07-28 `server/discover` probe with -32601 so a client that speaks both eras falls back to `initialize`, and never answers a cancelled request. `request_secret` shares `set`'s card flow (`askToSet`, `setResult`) and answers with `set --json`'s result; `check_secrets` answers like `has`; neither returns a value or the card's URL. 216 of 216 with the real store. Break test: dropping the cancelled check failed exactly that test. **Surprise:** a server that speaks only the older handshake still works with a client that prefers 2026-07-28, because the spec tells such clients to probe and fall back; that made the server half the size of a dual-era one. **Learned:** writing the protocol as a module that takes its tools as input let every protocol rule be tested on in-memory streams, without a card. |
+| S-46, S-50 | todo | — |
 
 ---
 
@@ -978,19 +979,31 @@ Order and cadence are Abhishek's (D-10, D-13): one PR, then stop. S-38 and S-39 
 **Acceptance:** WHEN S-44 is done THEN R-6 SHALL be answered with sources, and S-45 SHALL name the dependency choice Abhishek has to make.
 **Must not:** write code; install or add an MCP SDK.
 
-### S-45 — `keyprompt mcp` (waits on Abhishek's choice)
+### S-45 — `keyprompt mcp`: a hand-written MCP server with two tools
 
-**Depends on:** S-44 done (R-6 answered 2026-11-09) and Abhishek's choice among four options. The facts behind each are in R-6.
-  - **(a) Park it.** Ship 0.3.0 without MCP and look again when Codex or Cursor can open a local card. Today URL mode reaches only Claude Code (interactive) and VS Code, and both can already run `keyprompt` through a shell.
-  - **(b) Tools only, hand-written, no new dependency.** A stdio server with one `request_secret` tool that opens the card itself, as `keyprompt set` does, and returns names only. It works in any MCP client that has tools, but the key is still used only through `keyprompt run`, which needs a shell.
-  - **(c) URL mode with SDK v2.** `@modelcontextprotocol/server` 2.4.0 brings three new packages, about 14.5 MB, and raises keyprompt's Node floor from 18.17 to 20 (invariant 7).
-  - **(d) URL mode, hand-written, both protocol versions.** No new dependency, but the most code: the message list in R-6.
+**PR:** one.
+**Depends on:** S-44 done (R-6); Abhishek chose option (b), "Tools only, by hand", then answered the S-45 grill (D-22, 2026-11-09). **Blocks:** S-50.
+**Research:** lookup, done. The 2025-11-25 lifecycle and schema, and the 2026-07-28 stdio binding and versioning pages, saved live on 2026-11-09 by the S-44 research (modelcontextprotocol/modelcontextprotocol@222640c). A client that speaks both eras probes with `server/discover` and falls back to `initialize` on any error that is not a modern one.
+**Model:** opus in this session. R-6 asked for a higher model before any build: this step was designed and reviewed by Opus.
+**Confidence:** 0.8. The messages follow the spec, a scripted client following the spec's dual-era steps worked end to end, and the tools reuse `set` and `has`. Not yet seen with a real MCP client (the S-45 PR asks Abhishek's go for one real Claude Code check).
+**Files:** src/mcp.mjs (new), `src/cli.mjs`, `src/activity.mjs` (the `mcp` command), test/mcp.test.mjs (new), `test/cli.test.mjs`, `docs/prd/v0-3.md`, this register.
+**Today:** an MCP-only agent cannot ask for a key through keyprompt; it must run `keyprompt set` in a shell.
+**Change:** what the PRD's "MCP server (S-45)" says. `set`'s card flow moved into `askToSet` and `setResult`, so `set` and `request_secret` share it and `set`'s output is unchanged.
+**Acceptance:** M in `docs/prd/v0-3.md`.
+**Verify:** `KEYPROMPT_STORE_TEST=1 npm test`, and `ls ~/.keyprompt` shows no new file. Unit (`test/mcp.test.mjs`): the discover probe gets -32601 and then the handshake, list, ping and a call work; version negotiation; text and `structuredContent` by version; unknown tool and method; parse errors that never repeat the line; no answer to notifications or client responses; a cancelled request is never answered. CLI: the real `keyprompt mcp` with the fake store and fake browser (not on Windows): every stdout line is JSON-RPC, `check_secrets` and `request_secret` give names only, a bad name is refused without being repeated, the save is logged as `mcp`, and `mcp EXTRA` is a usage error. Break test (after the commit): drop the "cancelled" check and watch exactly one test fail; restore with `git checkout`.
+**Must not:** return a value or the card's URL through MCP (invariant 1); write anything but JSON-RPC to stdout; add a dependency (invariant 7); open more than one card at a time; change the output of `set` or any other command; change the README, `skill/SKILL.md` or the CHANGELOG (S-50).
 
-**Blocks:** S-46, only if it ships in 0.3.0.
-**Research:** R-6. Before (c) or (d) are built, two things must be settled: a hands-on test of whether Claude Code and VS Code open an `http://127.0.0.1` URL (Codex does not), and whether the card's one-time-token URL breaks the spec's MUST NOT on "pre-authenticated" URLs.
-**Model:** opus.
-**Confidence:** 0.9 for (a). 0.6 (low) for (b), (c) or (d) as written: each needs its own grill and, for (c) and (d), the two checks above. Not ready to build until then.
-**Must not:** return a value through MCP (invariant 1); put the card's URL in a tool result, where it would pass through the model; add a dependency without Abhishek's yes.
+### S-50 — Docs for `keyprompt mcp`: README, the skill, the CHANGELOG (outline)
+
+**PR:** one.
+**Depends on:** S-45 done. **Blocks:** S-46.
+**Research:** lookup. Each client's way to add a stdio MCP server, read live from its own docs right before writing (Claude Code `claude mcp add`, VS Code's mcp.json, Cursor's mcp.json, Codex's config.toml), with URL and date.
+**Model:** sonnet.
+**Confidence:** 0.8. These are words only; the client lines must be checked live.
+**Files:** `README.md`, `skill/SKILL.md`, `CHANGELOG.md`.
+**Change:** the README gets a `keyprompt mcp` row and a short "MCP" section: the two tools, that neither returns a value, that a key is still used through `keyprompt run` in a shell, one line or block per client, and that `request_secret` waits up to 5 minutes (a client with a shorter tool timeout gives up first). The skill says that in an MCP client the tools do what `set` and `has` do. CHANGELOG "Unreleased": under Added.
+**Acceptance:** WHEN a person reads the README THEN they SHALL find how to add `keyprompt mcp` to Claude Code, VS Code, Cursor and Codex, what the two tools do, and that no tool returns a value.
+**Must not:** change any file under `src/`, `bin/` or `test/`; claim a client works without a source or a run.
 
 ### S-46 — Release 0.3.0 (owner step)
 

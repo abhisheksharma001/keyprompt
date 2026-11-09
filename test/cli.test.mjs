@@ -1157,3 +1157,53 @@ request({ hostname: url.hostname, port: url.port, path: url.pathname + '/' + act
   ])
   assert.ok(!readFileSync(join(f.dir, 'activity.jsonl'), 'utf8').includes('sensitive'))
 })
+
+test('keyprompt mcp answers an MCP client with names-only results, writes only JSON-RPC to stdout and logs a save as mcp (S-45)', { skip: process.platform === 'win32' }, () => {
+  const f = jsonCliFixture()
+  const browser = join(f.dir, 'card.mjs')
+  writeFileSync(browser, `#!${process.execPath}
+import { request } from 'node:http'
+const url = new URL(process.argv[2])
+const body = { values: { NEW: 'dummy-sensitive-new-45' }, remember: true }
+request({ hostname: url.hostname, port: url.port, path: url.pathname + '/submit', method: 'POST', headers: { Origin: url.origin, 'Content-Type': 'application/json' } }, res => res.resume()).end(JSON.stringify(body))
+`)
+  chmodSync(browser, 0o755)
+  const rpc = (id, method, params) => JSON.stringify({ jsonrpc: '2.0', id, method, params })
+  const input = [
+    rpc(1, 'server/discover', {}),
+    rpc(2, 'initialize', { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'test-client', version: '1' } }),
+    JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }),
+    rpc(3, 'tools/call', { name: 'check_secrets', arguments: { names: ['TOKEN', 'ABSENT'] } }),
+    rpc(4, 'tools/call', { name: 'check_secrets', arguments: { names: ['dummy-sensitive-name-45'] } }),
+    rpc(5, 'tools/call', { name: 'request_secret', arguments: { fields: ['NEW', 'EMPTY:optional'], reason: 'Run the tests' } }),
+  ].join('\n')
+  const r = spawnSync(process.execPath, ['--import', pathToFileURL(join(f.dir, 'store.mjs')).href, BIN, 'mcp'], {
+    input: `${input}\n`,
+    encoding: 'utf8',
+    timeout: 15000,
+    env: { ...process.env, KEYPROMPT_HOME: f.dir, KEYPROMPT_BROWSER: browser, KP_JSON_VALUES: JSON.stringify({ TOKEN: 'dummy-sensitive-value-45' }) },
+  })
+  assert.equal(r.status, 0, r.stderr)
+  const answers = new Map(r.stdout.trim().split('\n').map((line) => {
+    const message = JSON.parse(line)
+    assert.equal(message.jsonrpc, '2.0')
+    return [message.id, message]
+  }))
+  assert.deepEqual([...answers.keys()].sort(), [1, 2, 3, 4, 5])
+  assert.equal(answers.get(1).error.code, -32601)
+  assert.equal(answers.get(2).result.serverInfo.name, 'keyprompt')
+  assert.deepEqual(answers.get(3).result.structuredContent, { command: 'has', status: 'missing', names: ['TOKEN', 'ABSENT'], exitCode: 3, saved: ['TOKEN'], missing: ['ABSENT'] })
+  assert.equal(answers.get(3).result.isError, false)
+  assert.equal(answers.get(4).result.isError, true)
+  assert.equal(answers.get(4).result.structuredContent.status, 'invalid_usage')
+  assert.deepEqual(answers.get(5).result.structuredContent, {
+    command: 'set', status: 'saved', names: ['NEW'], exitCode: 0, replaced: [], empty: ['EMPTY'], warnings: [],
+  })
+  assert.ok(!r.stdout.includes('sensitive'), r.stdout)
+  assert.ok(!r.stderr.includes('sensitive'), r.stderr)
+  const log = readFileSync(join(f.dir, 'activity.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line))
+  assert.deepEqual(log.map((e) => [e.event, e.command, e.names]), [['saved', 'mcp', ['NEW']]])
+  const usage = f.run(['mcp', 'EXTRA'])
+  assert.equal(usage.status, 2)
+  assert.match(usage.stderr, /^keyprompt: Usage: keyprompt mcp/)
+})
