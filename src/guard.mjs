@@ -23,12 +23,20 @@ const RUN_INSTEAD =
 
 /** Words that come before the real command without changing which command runs. */
 const WRAPPERS = new Set(['sudo', 'doas', 'env', 'command', 'builtin', 'exec', 'time', 'nohup', 'nice', 'rtk', '{', '}', '!', 'if', 'then', 'else', 'elif', 'do', 'while', 'until'])
+/**
+ * Commands that only print, search or store text and cannot run another
+ * command from their words, so a read they mention is text (S-57). `git` and
+ * `gh` are not here: `git bisect run` or `git rebase --exec` runs a command,
+ * and a mention in a commit message or a pull request body is one quoted word,
+ * which the read check never matches anyway.
+ */
+const TEXT_ONLY = new Set(['echo', 'printf', 'cat', 'tee', 'grep', 'egrep', 'fgrep', 'rg', 'write-output', 'write-host'])
 /** Shells whose `-c` argument is a script that runs. */
 const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'fish', 'pwsh', 'powershell', 'powershell.exe', 'pwsh.exe'])
-/** Commands whose words after `--` are another command (`keyprompt run X -- COMMAND`). */
-const LAUNCHERS = new Set(['keyprompt', 'keyprompt.mjs', 'npx', 'node'])
 /** Tools whose `tool_input.command` is shell text (R-12: PowerShell has the same fields as Bash). */
 const SHELL_TOOLS = new Set(['Bash', 'PowerShell', 'Monitor'])
+/** `security find-generic-password` options that take a value (`man security`, macOS 27.0). */
+const SECURITY_VALUES = new Set(['a', 'c', 'C', 'D', 'G', 'j', 'l', 's'])
 
 /** @param {string} word */
 function base(word) {
@@ -39,12 +47,21 @@ function base(word) {
  * Split shell text into simple commands (lists of words, quotes removed) at
  * `;`, `&`, `|`, newlines and parentheses. Text inside `$(...)` or backticks,
  * even within double quotes, comes back as a nested script, because the shell
- * runs it; a single- or double-quoted string otherwise stays one word.
+ * runs it; a single- or double-quoted string otherwise stays one word. A `#`
+ * that starts a word comments out the rest of the line, and a line
+ * continuation joins two lines.
+ *
+ * With `powershell`, the text is read the way PowerShell reads it
+ * (about_Quoting_Rules, about_Parsing): the backtick is the escape character
+ * and `\` is a plain character, a doubled quote inside quotes is a quote,
+ * braces also end a command, and backticks run nothing.
  *
  * @param {string} text
+ * @param {boolean} [powershell]
  * @returns {{ commands: string[][], nested: string[] }}
  */
-export function splitShell(text) {
+export function splitShell(text, powershell = false) {
+  const escape = powershell ? '`' : '\\'
   /** @type {string[][]} */
   const commands = []
   /** @type {string[]} */
@@ -68,7 +85,7 @@ export function splitShell(text) {
     let depth = 1
     let j = start
     while (j < text.length && depth > 0) {
-      if (text[j] === '\\') j++
+      if (text[j] === escape) j++
       else if (text[j] === '(') depth++
       else if (text[j] === ')') depth--
       j++
@@ -84,26 +101,49 @@ export function splitShell(text) {
     return stop + 1
   }
 
+  /**
+   * A line continuation: Bash drops a backslash-newline, PowerShell a backtick at the end of a line.
+   * @param {number} at index of the escape character @returns {number} characters to skip, or 0
+   */
+  const continuation = (at) => {
+    if (text[at + 1] === '\n') return 2
+    return powershell && text.startsWith('\r\n', at + 1) ? 3 : 0
+  }
+  const separators = powershell ? ';&|\n(){}' : ';&|\n()'
+
   let i = 0
   while (i < text.length) {
     const c = text[i]
-    if (c === '\\') {
-      word += text[i + 1] ?? ''
-      inWord = true
-      i += 2
+    if (c === escape) {
+      const skip = continuation(i)
+      if (skip === 0) {
+        word += text[i + 1] ?? ''
+        inWord = true
+      }
+      i += skip || 2
+    } else if (c === '#' && !inWord) {
+      const end = text.indexOf('\n', i)
+      i = end === -1 ? text.length : end
     } else if (c === "'") {
-      const end = text.indexOf("'", i + 1)
-      const stop = end === -1 ? text.length : end
-      word += text.slice(i + 1, stop)
       inWord = true
-      i = stop + 1
+      i++
+      while (i < text.length && (text[i] !== "'" || (powershell && text[i + 1] === "'"))) {
+        word += text[i]
+        i += text[i] === "'" ? 2 : 1
+      }
+      i++
     } else if (c === '"') {
       inWord = true
       i++
-      while (i < text.length && text[i] !== '"') {
-        if (text[i] === '\\' && i + 1 < text.length) {
-          word += text[i + 1]
+      while (i < text.length && (text[i] !== '"' || (powershell && text[i + 1] === '"'))) {
+        if (text[i] === '"') {
+          word += '"'
           i += 2
+        } else if (text[i] === escape && i + 1 < text.length) {
+          // In Bash a backslash inside double quotes escapes only $ ` " \ and a newline; before anything else it stays.
+          const skip = continuation(i)
+          if (skip === 0) word += powershell || '$`"\\'.includes(text[i + 1]) ? text[i + 1] : text[i] + text[i + 1]
+          i += skip || 2
         } else if (text[i] === '$' && text[i + 1] === '(') {
           i = subshell(i + 2)
         } else if (text[i] === '`') {
@@ -118,7 +158,7 @@ export function splitShell(text) {
       i = subshell(i + 2)
     } else if (c === '`') {
       i = backtick(i + 1)
-    } else if (';&|\n()'.includes(c)) {
+    } else if (separators.includes(c)) {
       endCommand()
       i++
     } else if (c === ' ' || c === '\t' || c === '\r') {
@@ -155,8 +195,24 @@ function securityRead(args, names) {
   if (sub === -1) return null
   const rest = args.slice(sub + 1)
   if (args[sub] === 'find-generic-password') {
-    const prints = rest.some((w) => /^-[A-Za-z]*[gw][A-Za-z]*$/.test(w))
-    return prints && rest.some((w) => namesKeyprompt(w, names)) ? READS : null
+    // `security` reads options the getopt way: `-wskeyprompt` is `-w -s keyprompt`, and `-skeyprompt` is `-s keyprompt`.
+    let prints = false
+    let named = false
+    for (let k = 0; k < rest.length; k++) {
+      const w = rest[k]
+      if (!/^-[^-]/.test(w)) {
+        named ||= namesKeyprompt(w, names)
+        continue
+      }
+      for (let j = 1; j < w.length; j++) {
+        if (SECURITY_VALUES.has(w[j])) {
+          named ||= namesKeyprompt(j + 1 < w.length ? w.slice(j + 1) : (rest[++k] ?? ''), names)
+          break
+        }
+        if (w[j] === 'g' || w[j] === 'w') prints = true
+      }
+    }
+    return prints && named ? READS : null
   }
   if (args[sub] === 'dump-keychain') return rest.some((w) => /^-[A-Za-z]*d[A-Za-z]*$/.test(w)) ? DUMPS : null
   return null
@@ -197,32 +253,47 @@ function commandStart(words) {
 }
 
 /**
+ * A read starting at one word of a command: the store's read tool and what
+ * follows it, or a shell or `eval` given a script.
+ *
+ * @param {string} command the word, as `base` returns it
+ * @param {string[]} args the words after it
+ * @param {Set<string>} names
+ * @param {number} depth
+ * @returns {string | null}
+ */
+function readAt(command, args, names, depth) {
+  if (command === 'security') return securityRead(args, names)
+  if (command === 'secret-tool') return secretToolRead(args, names)
+  // Windows: the CredentialManager module's cmdlet, naming a keyprompt target or a saved name (R-12).
+  if (command === 'get-storedcredential') return args.some((w) => namesKeyprompt(w, names)) ? READS : null
+  if (command === 'eval') return readInShell(args.join(' '), names, depth + 1, false)
+  if (SHELLS.has(command)) {
+    // PowerShell: everything after -Command (or -c) is the script. Other shells: the one word after -c (or -lc, -ec ...).
+    const powershell = command.startsWith('pwsh') || command.startsWith('powershell')
+    const flag = args.findIndex((w) => (powershell ? /^-c(ommand)?$/i.test(w) : /^-[a-z]{0,3}c[a-z]{0,3}$/.test(w)))
+    if (flag === -1 || args[flag + 1] === undefined) return null
+    return readInShell(powershell ? args.slice(flag + 1).join(' ') : args[flag + 1], names, depth + 1, powershell)
+  }
+  return null
+}
+
+/**
+ * A read anywhere among a command's words, so that no list of wrappers is
+ * needed (`timeout 5 …`, `xargs …`, `find … -exec …`), unless the command only
+ * prints, searches or stores text (S-57).
+ *
  * @param {string[]} words one simple command
  * @param {Set<string>} names
  * @param {number} depth
  * @returns {string | null} the reason, when the command is a direct read
  */
 function readInWords(words, names, depth) {
-  const i = commandStart(words)
-  if (i >= words.length) return null
-  const command = base(words[i])
-  const args = words.slice(i + 1)
-
-  if (command === 'security') return securityRead(args, names)
-  if (command === 'secret-tool') return secretToolRead(args, names)
-  // Windows: the CredentialManager module's cmdlet, naming a keyprompt target or a saved name (R-12).
-  if (command === 'get-storedcredential') return args.some((w) => namesKeyprompt(w, names)) ? READS : null
-  if (command === 'eval') return readInShell(args.join(' '), names, depth + 1)
-  if (SHELLS.has(command)) {
-    // PowerShell: everything after -Command (or -c) is the script. Other shells: the one word after -c (or -lc, -ec ...).
-    const powershell = command.startsWith('pwsh') || command.startsWith('powershell')
-    const flag = args.findIndex((w) => (powershell ? /^-c(ommand)?$/i.test(w) : /^-[a-z]{0,3}c[a-z]{0,3}$/.test(w)))
-    if (flag === -1 || args[flag + 1] === undefined) return null
-    return readInShell(powershell ? args.slice(flag + 1).join(' ') : args[flag + 1], names, depth + 1)
-  }
-  if (LAUNCHERS.has(command)) {
-    const dash = args.indexOf('--')
-    if (dash !== -1) return readInWords(args.slice(dash + 1), names, depth)
+  const start = commandStart(words)
+  if (start >= words.length || TEXT_ONLY.has(base(words[start]))) return null
+  for (let i = 0; i < words.length; i++) {
+    const found = readAt(base(words[i]), words.slice(i + 1), names, depth)
+    if (found) return found
   }
   return null
 }
@@ -231,11 +302,12 @@ function readInWords(words, names, depth) {
  * @param {string} text
  * @param {Set<string>} names
  * @param {number} depth
+ * @param {boolean} powershell read the text as PowerShell, not as a POSIX shell
  * @returns {string | null}
  */
-function readInShell(text, names, depth) {
+function readInShell(text, names, depth, powershell) {
   if (depth > 4) return null
-  const { commands, nested } = splitShell(text)
+  const { commands, nested } = splitShell(text, powershell)
   for (const words of commands) {
     const found = readInWords(words, names, depth)
     if (found) return found
@@ -247,7 +319,7 @@ function readInShell(text, names, depth) {
     if (lower.includes(`${SERVICE}:`) || [...names].some((name) => wordIn(text, name))) return READS
   }
   for (const script of nested) {
-    const found = readInShell(script, names, depth + 1)
+    const found = readInShell(script, names, depth + 1, powershell)
     if (found) return found
   }
   return null
@@ -265,10 +337,13 @@ function wordIn(text, word) {
 /**
  * @param {string} command shell text from a Bash or PowerShell tool call
  * @param {Iterable<string>} [savedNames] names from the catalog (never values)
+ * @param {'bash' | 'powershell'} [shell] which shell runs the text; when not known, it is read both ways
  * @returns {{ reason: string } | null}
  */
-export function checkCommand(command, savedNames = []) {
-  const found = readInShell(command, new Set(savedNames), 0)
+export function checkCommand(command, savedNames = [], shell) {
+  const names = new Set(savedNames)
+  const found =
+    (shell !== 'powershell' && readInShell(command, names, 0, false)) || (shell !== 'bash' && readInShell(command, names, 0, true))
   return found ? { reason: `${found} ${RUN_INSTEAD}` } : null
 }
 
@@ -313,7 +388,9 @@ export function preToolUse(input, savedNames = []) {
   if (!SHELL_TOOLS.has(input?.tool_name)) return null
   const command = input?.tool_input?.command
   if (typeof command !== 'string') return null
-  const found = checkCommand(command, savedNames)
+  // The Bash tool runs Bash and the PowerShell tool PowerShell; a Monitor command is read both ways.
+  const shell = input.tool_name === 'Bash' ? 'bash' : input.tool_name === 'PowerShell' ? 'powershell' : undefined
+  const found = checkCommand(command, savedNames, shell)
   if (!found) return null
   return {
     hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: found.reason },
