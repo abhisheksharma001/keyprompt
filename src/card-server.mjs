@@ -92,6 +92,13 @@ function sameString(a, b) {
  * @param {CardRequest} request
  * @returns {Promise<{ remembered: boolean, values: Map<string, string> }>}
  */
+/** The card ended because its caller withdrew the request (an MCP client's cancel), not because the person cancelled (B-21). */
+export class CardWithdrawnError extends KeypromptError {
+  constructor() {
+    super('The request was cancelled, so keyprompt closed the secret card. Nothing was saved.', { exitCode: EXIT.CANCELLED })
+  }
+}
+
 export function requestSecretWithCard(request) {
   const token = randomBytes(32).toString('base64url')
   const timeoutMs = request.timeoutMs ?? DEFAULT_CARD_TIMEOUT_MS
@@ -99,10 +106,8 @@ export function requestSecretWithCard(request) {
   const expiresAt = Date.now() + timeoutMs
 
   return new Promise((resolve, reject) => {
-    const withdrawn = () =>
-      new KeypromptError('The request was cancelled, so keyprompt closed the secret card. Nothing was saved.', { exitCode: EXIT.CANCELLED })
     if (request.signal?.aborted) {
-      reject(withdrawn())
+      reject(new CardWithdrawnError())
       return
     }
     let settled = false
@@ -274,7 +279,7 @@ export function requestSecretWithCard(request) {
         expired = true
         return
       }
-      finish(() => reject(withdrawn()))
+      finish(() => reject(new CardWithdrawnError()))
     }
     request.signal?.addEventListener('abort', onAbort, { once: true })
 

@@ -128,15 +128,19 @@ export async function serveMcp({ input, output, version, tools }) {
       case 'tools/call': {
         const name = params.name
         if (name !== 'request_secret' && name !== 'check_secrets') return fail(id, ERROR.INVALID_PARAMS, 'Unknown tool. keyprompt has request_secret and check_secrets.')
-        const controller = new AbortController()
-        inFlight.set(id, controller)
         /** @type {import('./mcp.mjs').ToolAnswer} */
         let answered
-        try {
-          answered = name === 'request_secret' ? await tools.request_secret(params.arguments, client, controller.signal) : await tools.check_secrets(params.arguments)
-        } finally {
-          inFlight.delete(id)
-        }
+        if (name === 'request_secret') {
+          // One abort per card, so a cancel reaches the right one; an id still in flight cannot be reused.
+          if (inFlight.has(id)) return fail(id, ERROR.INVALID_REQUEST, 'Request id already in use.')
+          const controller = new AbortController()
+          inFlight.set(id, controller)
+          try {
+            answered = await tools.request_secret(params.arguments, client, controller.signal)
+          } finally {
+            inFlight.delete(id)
+          }
+        } else answered = await tools.check_secrets(params.arguments)
         const { result, isError } = answered
         // structuredContent exists from 2025-06-18; older clients get the same JSON as text only.
         const structured = (protocolVersion ?? PROTOCOL_VERSIONS[0]) >= '2025-06-18' ? { structuredContent: result } : {}
