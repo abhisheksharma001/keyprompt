@@ -16,7 +16,7 @@ Plan: `docs/prd/card-v2.md` (0.2.x) and `docs/prd/v0-3.md` (0.3). Rules: `.claud
 | Fixes | S-20, S-21, S-25, S-26, S-27, S-28, S-30, S-31, S-32, S-33, S-35 | B-6 (the card never ends while a save is under way), B-7 (one true sentence for an ended card), B-12 (masking finds a key's base64 inside longer base64), B-3 (a failed update of the list of names no longer fails a save that worked), B-13 (the same for a delete that worked), B-4 (on `run`, every optional box may be left empty), B-14 (the Save button says plain "Save" when any box is optional), B-8 (with Remember unticked, the penguin holds an envelope and the vault stays shut), B-15 (the README's two demo pictures match the card again), B-16 (the README's picture links pin a commit on main) and B-17 (the S-29 row says its tag and release exist) |
 | 5 Release | S-29, S-34 | 0.2.1 on npm: the six steps since 0.2.0; 0.2.2: the four since (S-30 to S-33) |
 | Research | S-36 | R-9 answered: what keymask, the closest rival, is and is not |
-| 6 v0.3 | S-37 → S-38 → S-39 → S-40, then S-41 → S-47, S-42, S-43, then S-44 → S-45, then S-46 | The plan; the Claude Code guard (its check, its installer, its docs); `--json` results, and a reason when one fails (B-19); `keyprompt setup`; a names-only activity log; research on MCP (R-6), then `keyprompt mcp`; release 0.3.0 |
+| 6 v0.3 | S-37 → S-38 → S-39 → S-40, then S-41 → S-47, S-42 → S-48, S-43, then S-44 → S-45, then S-46 | The plan; the Claude Code guard (its check, its installer, its docs); `--json` results, and a reason when one fails (B-19); `keyprompt setup`, then the docs for both; a names-only activity log; research on MCP (R-6), then `keyprompt mcp`; release 0.3.0 |
 
 Order: S-3, S-7, S-15 and S-18 touch different files from the S-2 → S-4 chain, so they can be built in parallel by separate sessions. Everything else follows the arrows.
 
@@ -900,7 +900,7 @@ Order and cadence are Abhishek's (D-10, D-13): one PR, then stop. S-38 and S-39 
 ### S-47 — A `--json` failure says why, in keyprompt's own words (fixes B-19)
 
 **PR:** one.
-**Depends on:** S-41 done; D-18. **Blocks:** the `--json` docs step (README and skill examples).
+**Depends on:** S-41 done; D-18. **Blocks:** S-48, the `--json` docs (README and skill examples).
 **Research:** none — every message is in this repo; the call sites that add text keyprompt did not write were found with `grep -n 'new KeypromptError(' src/` and read one by one.
 **Model:** sonnet.
 **Confidence:** 0.85 — the change is small and local; the one judgment is which messages hold text keyprompt did not write, and a test pins each one found.
@@ -911,15 +911,31 @@ Order and cadence are Abhishek's (D-10, D-13): one PR, then stop. S-38 and S-39 
 **Verify:** `KEYPROMPT_STORE_TEST=1 npm test`. After committing, make `helperError` leave the helper's line in `jsonMessage` and see the JSON failure test fail; restore with `git checkout`.
 **Must not:** change any text-mode output; change a status, an exit code or the shape S-41 merged, beyond the added `message`; put a value in any result.
 
-### S-42 — `keyprompt setup`: ask for a project's missing names on one card (outline: grill first)
+### S-42 — `keyprompt setup`: ask for a project's missing names on one card
 
-**Depends on:** S-41 done (D-10's order); the S-42 grill. **Blocks:** nothing.
-**Research:** none expected.
-**Model:** sonnet once the grill is done.
-**Confidence:** 0.5 (low) — not ready. Open: where the names come from (`.env.example` only, or a keyprompt file too); what an example value or a comment in it means (`:optional`?); more than 12 missing names (the card's limit); whether `setup` writes anything into the project (the PRD's default: no).
-**Files:** `src/cli.mjs`, a new test file; docs after.
-**Acceptance:** written at the grill.
-**Must not:** read `.env` or any file that may hold values (names only, from the example file); write into the project; open more than one card at a time.
+**PR:** one.
+**Depends on:** S-41 and S-47 done (D-10's order); the S-42 grill, answered 2026-11-09 (D-19). **Blocks:** S-48.
+**Research:** lookup, done at the grill. `.env.example` is the usual list of the names a project needs; dotenv-safe treats every name in it as required (unpkg.com/dotenv-safe@9.1.0/README.markdown, cached 2026-05-25); varlock's `.env.schema` treats an empty value as optional (varlock.dev/reference/root-decorators, cached 2026-04-25); env-drift flags real-looking keys in example files (github.com/tirthkparikh/env-drift, cached 2026-11-07), so setup ignores every value.
+**Model:** opus in this session; sonnet could build it from the PRD's "Setup (S-42)".
+**Confidence:** 0.8 — the four open questions are answered; the card, the save and the JSON result are reused from `set`. The new judgment is reading an example file: what counts as a name line, and the quoted values that run over several lines.
+**Files:** src/setup.mjs (new), `src/cli.mjs`, `src/names.mjs` (exports `MAX_FIELDS`), test/setup.test.mjs (new), `test/cli.test.mjs`, `docs/prd/v0-3.md`, this register.
+**Today:** an agent that clones a project must read its `.env.example` itself and call `keyprompt set` with the names, and `set` asks again for names that are already saved. `run` asks only for missing names, but only once a command is about to run.
+**Change:** what the PRD's "Setup (S-42)" says. `src/setup.mjs` holds the pure parts: the template-name check, reading names from the file's text, and the text report. `src/cli.mjs` adds the `setup` verb, the `--from FILE` option (its value is skipped when `--json` is looked for, like `--reason`), `setup` in the `--json` commands, and help lines. A JSON failure's `names` become the card's names once a card opens.
+**Acceptance:** F in `docs/prd/v0-3.md`.
+**Verify:** `KEYPROMPT_STORE_TEST=1 npm test`. Unit: names from comments, `export`, spaces, CRLF, duplicates, lowercase and broken lines (line numbers only), and a quoted value over several lines whose inner lines look like `NAME=`; no value from the file appears in any result. The template check accepts `.env.example`, `.env.sample`, `.env.template`, `.env.schema`, `.env.dist`, `example.env`, `.env.local.example` and refuses `.env`, `.env.local`, `.env.production`, `secrets.env`, `.envrc`. CLI, with the fake store: nothing missing (no card, all skipped); `--from .env` refused with exit 2 before the store is read; no `.env.example`; `--from` with another command; `setup NAME`. With the fake browser (not on Windows): 14 missing and 1 saved, the card shows the first 12 in file order and not the saved one, Save with two values reports names, empty, skipped and remaining, in JSON and in text, with no value in any output; Later exits 6 with the card's names. Break test (after the commit): remove the template-name check from `readExampleNames` and watch exactly one test fail; restore with `git checkout`.
+**Must not:** read `.env` or any file whose name does not say it is a template; show, return or store anything after `=` in the file; write into the project; open more than one card at a time; change the output of `set`, `run`, `has`, `list` or `delete`; change README, `skill/SKILL.md` or the CHANGELOG (S-48); add a dependency.
+
+### S-48 — Docs for `--json` and `setup`: README, the skill, the CHANGELOG (outline)
+
+**PR:** one.
+**Depends on:** S-42 done. **Blocks:** S-46.
+**Research:** none — the words come from the PRD's "JSON results (S-41)" and "Setup (S-42)", and the real output of both.
+**Model:** sonnet.
+**Confidence:** 0.8 — words only; every example must be real output.
+**Files:** `README.md`, `skill/SKILL.md`, `CHANGELOG.md`.
+**Change:** the README gets `--json` (the shape, statuses, one example result and one failure) and `setup` (what it reads, what it refuses, the 12-box limit, the report). The skill tells the agent to run `keyprompt setup` at the start of a project that has a `.env.example`, and that `--json` exists. CHANGELOG "Unreleased": both under Added.
+**Acceptance:** WHEN an agent reads `skill/SKILL.md` THEN it SHALL find when to use `setup` and what `--json` returns, and every example output in the README SHALL be what the command prints today.
+**Must not:** change any file under `src/`, `bin/` or `test/`; claim more than the PRD says.
 
 ### S-43 — A names-only activity log (outline: grill first)
 
