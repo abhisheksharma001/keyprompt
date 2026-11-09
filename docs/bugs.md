@@ -273,3 +273,99 @@ The deadline is the real-world path. Someone presses Save near the end of the 5 
 **Escaped past:** the docs steps S-49 and S-50, whose files did not include `SECURITY.md`.
 **New check:** none possible as a test of meaning; S-55's Verify greps `SECURITY.md` for each limit.
 **Fix step:** S-55.
+
+### B-25 — The guard lets plain forms of a direct read through
+
+**Seen:** 2026-11-09, by the v0.3 feature-end audit (S-56, `docs/audits/v0-3-feature-end.md`), re-run through `node bin/keyprompt.mjs guard pre-tool-use` at 23:50 IST. Each of these printed nothing and exited 0, so Claude Code would run it: `timeout 5 secret-tool lookup service keyprompt account X`; `nice -n 10 security find-generic-password -s keyprompt -w`; `env -u FOO security …`; `security \` plus a line break plus `find-generic-password -s keyprompt -w`; `security find-generic-password -skeyprompt -w`; `keyprompt list | xargs -I{} security find-generic-password -s keyprompt -a {} -w`; in PowerShell, `Set-Location "C:\proj\"; Get-StoredCredential -Target keyprompt:X` and `CredentialManager\Get-StoredCredential -Target keyprompt:X`. The plain read was denied in the same run. Causes: `timeout` and `xargs` are not in `WRAPPERS` (`src/guard.mjs:25`); only `sudo` and `doas` options that take a value are skipped (`src/guard.mjs:192`); `splitShell` (`src/guard.mjs:47-135`) keeps a backslash-newline inside the next word and reads PowerShell text with POSIX escapes, where `\"` is an escaped quote; a module-qualified cmdlet name is not matched.
+**Requirement:** G1 in `docs/prd/v0-3.md`.
+**Needs first:** nothing.
+**Blocks:** B-27 (the docs can only be made true once the refused forms are settled).
+**Files:** `src/guard.mjs`; a new test file.
+**Research:** lookup (which wrappers take a value: `timeout`, `nice`, `env`, `xargs`, `stdbuf`; PowerShell's escape and module-qualified name rules, from Microsoft's about_Quoting_Rules and about_Command_Precedence pages, read live) · **Model:** opus · **Confidence:** 0.95 that these forms pass (re-run); 0.8 that a PowerShell-aware split is the right fix rather than a narrower one.
+**Introduced by:** PR #41, bc20dbe (S-38).
+**Escaped past:** the step's tests: they covered the forms R-12 listed and `sudo -u`, not wrappers whose options take a value, line continuations, attached option values or PowerShell's own quoting.
+**New check:** test/b25-guard-plain-forms.test.mjs, one case per form above (must fail on main before the fix).
+**Fix step:** S-57.
+
+### B-26 — The guard refuses a commit message written with a here-document
+
+**Seen:** 2026-11-09, S-56 audit, re-run at 23:50 IST. `git commit -m "$(cat <<'EOF'` / a line quoting `security find-generic-password -s keyprompt -w` in backticks / `EOF` / `)"` is denied, and so is a here-document line that starts with the read, and `gh pr create --body "$(cat <<'EOF' …)"`. A plain `git commit -m "…"` with the same words passes. Cause: `splitShell` (`src/guard.mjs:47-135`) does not know here-documents, so it parses the body as shell; backticks inside a quoted (`'EOF'`) body, which bash leaves as text, become a command. `README.md:285` already says the guard can refuse "a `cat <<EOF` block written to a file", but G1b names commit messages, and this repo's own commit messages quote these reads. Also seen, rarer: the CredRead rule matches anywhere in the text (`src/guard.mjs:243-248`), so `Select-String -Pattern 'CredRead'` next to `Add-Type` and a `keyprompt:` string is refused, and a `#` comment is parsed as a command.
+**Requirement:** G1b in `docs/prd/v0-3.md`.
+**Needs first:** S-57 (same file).
+**Blocks:** B-27.
+**Files:** `src/guard.mjs`; a new test file.
+**Research:** none (bash's here-document rules: a quoted delimiter leaves the body as text; an unquoted one still runs `$( )` and backticks, which must stay refused) · **Model:** opus · **Confidence:** 0.95 that it happens (re-run); 0.85 on the fix.
+**Introduced by:** PR #41, bc20dbe (S-38).
+**Escaped past:** the step's tests: the commit-message case was tested only as `-m "…"`.
+**New check:** test/b26-guard-heredoc.test.mjs: a quoted-delimiter body passes; an unquoted body with a backtick read is still denied (must fail on main before the fix).
+**Fix step:** S-58.
+
+### B-27 — `SECURITY.md` and the README say the guard refuses more than it does
+
+**Seen:** 2026-11-09, S-56 audit. `SECURITY.md:19` and `README.md:280` say the guard refuses "a Bash or PowerShell command that runs the store's own read tool on a keyprompt item", and the limits they list (`SECURITY.md:20`, `README.md:285`) name only a script file, an encoded command and another tool. The B-25 forms run the store's read tool on a keyprompt item and are none of those, so the sentence is not literally true.
+**Requirement:** G4 in `docs/prd/v0-3.md`; invariant 9.
+**Needs first:** S-57 and S-58 merged, so the words describe what the guard then refuses and what it still misses.
+**Blocks:** nothing.
+**Files:** `SECURITY.md`, `README.md`, `skill/SKILL.md` if it repeats the sentence; a new test file.
+**Research:** none · **Model:** sonnet · **Confidence:** 0.9.
+**Introduced by:** PR #43, f031f76 (S-40).
+**Escaped past:** the docs step's review: the sentence was checked against the list of reads, not against the guard's parser.
+**New check:** test/b27-guard-docs.test.mjs: the limits sentence names "a form the guard does not parse" (or whatever words S-59 settles), the way test/b24-security-limits.test.mjs pins the log's limits.
+**Fix step:** S-59.
+
+### B-28 — A `--json` failure can repeat a typed token, and its message does not always say why
+
+**Seen:** 2026-11-09, S-56 audit, re-run at 23:52 IST in a throwaway home. (1) `keyprompt -sk_live_PASTEDKEY123 list --json` printed `{"command":"list","status":"invalid_usage","names":[],"exitCode":2,"message":"Unknown command \"-sk_live_PASTEDKEY123\". See keyprompt --help."}`: the typed token, which could be a pasted key, is in the result, and `command` names a command that was never recognized (the PRD says `null`). `setup --json` and `log --json` do the same. Cause: `jsonRequest` skips tokens starting with `-` when it picks the command (`src/cli.mjs:253`), `parseArgs` takes a single-dash token as the command (`src/cli.mjs:229-232`), and the "Unknown command" error (`src/cli.mjs:1044`) has no `jsonMessage`. (2) `has A1,…,A13 --json` says "A card can ask for at most 12 values at once." (`src/names.mjs:47`, reached through `src/cli.mjs:737`), though `has` opens no card and text mode calls the input an invalid name; `check_secrets` with 13 names gets the same sentence; `-x has FOO --json` says "A name is not a valid secret name", because the name check at `src/cli.mjs:737` reads `has` as a name.
+**Requirement:** J in `docs/prd/v0-3.md` ("without anything keyprompt did not write itself", "a message … that says why"); invariant 9.
+**Needs first:** nothing.
+**Blocks:** nothing.
+**Files:** `src/cli.mjs`, `src/names.mjs`; a new test file.
+**Research:** none · **Model:** sonnet · **Confidence:** 0.95 (re-run).
+**Introduced by:** (1) PR #44, 87611bb (S-41: how `jsonRequest` picks the command) and PR #45, c8e1ea1 (S-47: the `message` field, without a `jsonMessage` for an unknown command); (2) PR #45, c8e1ea1.
+**Escaped past:** S-47's tests: they covered an unknown option, hint and name after the command, not a token before it, and not a list over 12.
+**New check:** test/b28-json-messages.test.mjs (must fail on main before the fix).
+**Fix step:** S-60.
+
+### B-29 — `setup` can read a name from inside a multi-line value
+
+**Seen:** 2026-11-09, S-56 audit, run against `exampleNames`. `exampleNames` (`src/setup.mjs:56-81`) skips a line its pattern rejects (lines 71-74) before it checks for an opening quote (line 79), so a quoted value that opens on such a line is never passed over and a `NAME=` line inside it is read as a name. `A_KEY=x` / `MY KEY="-----BEGIN` / `INSIDE_VALUE_ONE=sk_live_LEAK1` / `-----END"` gives `A_KEY, INSIDE_VALUE_ONE`; dotenv's `KEY: value` form (accepted by motdotla/dotenv, lib/main.js line 8, read 2026-11-09) gives the same for `B_KEY: "start` / `INSIDE_VALUE_TWO=…` / `end"`. Such a name is reported, put in the run line and `--json`'s `skipped`, or asked for on the card. Only name-shaped text before an inner `=` escapes; what follows that `=` never does. A normal `KEY="…"` multi-line value is passed over correctly.
+**Requirement:** F in `docs/prd/v0-3.md` ("SHALL never show, return or store anything that follows `=` in the file").
+**Needs first:** nothing.
+**Blocks:** nothing.
+**Files:** `src/setup.mjs`; a new test file.
+**Research:** none · **Model:** sonnet · **Confidence:** 0.95 (run).
+**Introduced by:** PR #46, cee769b (S-42).
+**Escaped past:** the step's tests: multi-line values were tested only after a valid `NAME=` line.
+**New check:** test/b29-setup-multiline.test.mjs (must fail on main before the fix).
+**Fix step:** S-61.
+
+### B-30 — On Windows, a `run` whose command is one word with spaces logs its arguments as the program
+
+**Seen:** 2026-11-09, S-56 audit, by reading (not run on Windows). `keyprompt run K -- "curl https://h/v1?key=abc"` would log `program: "v1?key=abc"`, and `"python -c print('x')"` would log all of it. `programName` (`src/activity.mjs:123-125`) only drops the folder. On Windows, cross-spawn 7.0.6 sends a command it cannot resolve, and that does not end in `.exe` or `.com`, through `cmd.exe` (cross-spawn lib/parse.js lines 36-58, read 2026-11-09 from the installed copy), so the spawn succeeds, `cmd.exe` exits 1, and the run line is written (`src/cli.mjs:868-871`). On macOS the same input fails to spawn and writes no line (seen by the audit's L reviewer).
+**Requirement:** L in `docs/prd/v0-3.md` ("SHALL NOT write … a command's arguments"), D-20.
+**Needs first:** nothing.
+**Blocks:** nothing.
+**Files:** `src/activity.mjs`; a new test file (a unit test of `programName` runs everywhere; a CLI test runs on CI's Windows jobs).
+**Research:** none · **Model:** sonnet · **Confidence:** 0.7 — read in both codebases, not run on Windows; the fix step's first test, on CI's Windows jobs, settles it.
+**Introduced by:** PR #48, 12b9e7b (S-43).
+**Escaped past:** the grill and the spec: "the program's own name" assumed the first word is a program; the tests ran it on POSIX only.
+**New check:** test/b30-program-name.test.mjs (must fail on main before the fix).
+**Fix step:** S-62.
+
+### B-31 — The v0.3 PRD's detail sections say five things the code does not do
+
+**Seen:** 2026-11-09, S-56 audit. Not on an acceptance line, but the PRD is what later steps are written from:
+1. "Setup (S-42)" says the run line names "every name that is saved now"; it also names those already saved (`src/setup.mjs:157`, pinned by `test/cli.test.mjs:1081`).
+2. "Activity log (S-43)" says "a folder that cannot be written costs no wait"; a stale lock in a read-only folder costs about 2 seconds per command (`src/activity.mjs:82-89`, seen by the L reviewer).
+3. The same section says a lock path that is not a file "stops the waiting"; it does not say that the trim is then skipped every time, so the file grows past 1,000 lines (seen: 1,025), as it also does in a read-only home with a writable log.
+4. G3 says that on uninstall "only those entries SHALL go"; a pre-existing empty `"hooks": {}` or event array is removed too (`src/install-guard.mjs:148-151`). Claude Code reads no difference.
+5. "MCP server (S-45)" says the card's "who is asking" is the client's own name; with no `clientInfo` name it falls back to "Claude Code in <folder>" (when `CLAUDECODE` is set) or "a command in <folder>" (`src/cli.mjs:351`, 653-655).
+**Requirement:** the standard's rule that the spec is corrected where it is wrong (mystandard section 5).
+**Needs first:** Abhishek's choice on item 3 (say so, or trim without the lock when the lock path is not a file); the others are words.
+**Blocks:** nothing.
+**Files:** `docs/prd/v0-3.md`; `src/activity.mjs` only if item 3 changes code.
+**Research:** none · **Model:** sonnet · **Confidence:** 0.9.
+**Introduced by:** S-42 (PR #46), S-54 (PR #56), S-39 (PR #42), S-45 (PR #51).
+**Escaped past:** the review of each step's spec against its own code.
+**New check:** none possible as a test of meaning; S-63's Verify quotes each corrected sentence next to the code line it describes.
+**Fix step:** S-63.

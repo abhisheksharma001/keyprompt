@@ -17,6 +17,7 @@ Plan: `docs/prd/card-v2.md` (0.2.x) and `docs/prd/v0-3.md` (0.3). Rules: `.claud
 | 5 Release | S-29, S-34 | 0.2.1 on npm: the six steps since 0.2.0; 0.2.2: the four since (S-30 to S-33) |
 | Research | S-36 | R-9 answered: what keymask, the closest rival, is and is not |
 | 6 v0.3 | S-37 → S-38 → S-39 → S-40, then S-41 → S-47, S-42 → S-48, S-43 → S-49, then S-44 → S-45 → S-50, then the review fixes S-51 → S-52 → S-53, S-54 → S-55, then S-46 | The plan; the Claude Code guard (its check, its installer, its docs); `--json` results, and a reason when one fails (B-19); `keyprompt setup`, then the docs for both; a names-only activity log; research on MCP (R-6), then `keyprompt mcp`; release 0.3.0 |
+| 7 v0.3 audit | S-56, then S-57 → S-58 → S-59, S-60, S-61, S-62, S-63, S-64 | The feature-end audit (`docs/audits/v0-3-feature-end.md`): G2, G3 and M met; G1, G1b, G4, J, F and L unmet. Then the fixes B-25 to B-31 and tests for the clauses no test pins |
 
 Order: S-3, S-7, S-15 and S-18 touch different files from the S-2 → S-4 chain, so they can be built in parallel by separate sessions. Everything else follows the arrows.
 
@@ -1095,6 +1096,143 @@ Order and cadence are Abhishek's (D-10, D-13): one PR, then stop. S-38 and S-39 
 **Files:** `package.json`, `package-lock.json`, `CHANGELOG.md`, `docs/steps.md`.
 **Acceptance:** WHEN someone runs `npx -y keyprompt --version` on a clean machine THEN it SHALL print 0.3.0.
 **Must not:** publish without the go or with CI red; tag or create the GitHub release without his go; type or ask for a password or a 2FA code.
+
+### S-56 — Feature-end audit of v0.3: every acceptance line met or unmet, with evidence
+
+**PR:** one.
+**Depends on:** S-46 merged (2e50630). **Blocks:** nothing; a fix step for each unmet line follows it.
+**Research:** none (a lookup only where a line rests on an outside fact). **Model:** opus, high effort — a read that judges the builders' work.
+**Senior review:** not required — read-only: no code, test or stored data changes. The report and the bug entries are words, and each unmet clause is re-checked against the code before it is logged.
+**Confidence:** 0.85 that this method finds the real gaps: four independent reviewers, then a re-check of every unmet clause.
+**Files:** docs/audits/v0-3-feature-end.md (new), `docs/bugs.md` (one entry per unmet line), `docs/steps.md` (this entry, its status row, and a fix step per bug), `docs/research.md` (a flag for any unknown the audit finds).
+**Locked tests:** every test file on main at 2e50630; this step changes no test.
+**Today:** the register marks S-38 to S-55 done. Nobody has checked the PRD's acceptance lines against main as a whole while ignoring those ticks (mystandard section 22: completion claims are not evidence).
+**Change:** four fresh, read-only Opus reviewers, one per area (the guard: G1 to G4; J and F; L; M), told not to read `docs/steps.md`, `docs/bugs.md` or `CHANGELOG.md`. Each splits its lines into clauses and judges each from the code, the tests and the shipped docs, trying inputs that should break it. The session that ran the release built most of v0.3, so it does not judge alone: it re-checks every unmet or partial clause by reading the cited code and running a probe where that is safe, and spot-checks met ones.
+**Acceptance:** WHEN this PR merges THEN docs/audits/v0-3-feature-end.md SHALL give every acceptance line in `docs/prd/v0-3.md` (G1, G1b, G2, G3, G4, J, F, L, M) a verdict, met or unmet, with file:line evidence from 2e50630, and every unmet line SHALL have a bug in `docs/bugs.md` with Introduced by, Escaped past and New check.
+**Verify:** `git diff --name-only main` lists only those docs files; every backticked repo path in them exists; `npm test` passes unchanged.
+**Must not:** change `src/`, `bin/`, `test/`, `skill/`, `README.md`, `SECURITY.md` or `package.json`; fix a bug it finds (each fix is its own step); run anything that writes the real password store, `~/.claude/settings.json` or `~/.keyprompt`.
+
+### S-57 — The guard refuses plain forms of a direct read (bug B-25)
+
+**PR:** one.
+**Depends on:** nothing. **Blocks:** S-58 (same file), S-59.
+**Research:** lookup — which options of `timeout`, `nice`, `env`, `xargs` and `stdbuf` take a value (their man pages), and PowerShell's escape character and module-qualified command names (Microsoft's about_Quoting_Rules and about_Command_Precedence), read live.
+**Model:** opus — it changes what the guard refuses.
+**Senior review:** required — it changes a security boundary (what reaches the password store).
+**Confidence:** 0.8 — every miss is reproduced; how far PowerShell parsing should go is a judgment.
+**Files:** `src/guard.mjs`, test/b25-guard-plain-forms.test.mjs (new).
+**Locked tests:** every file in `test/` at the base commit; new tests go in the new file.
+**Today:** the forms in B-25 print nothing and exit 0, so Claude Code runs them.
+**Change:** add `timeout` and `xargs` to the wrappers, and skip the value of each wrapper option that takes one (`nice -n`, `env -u`, `timeout`'s duration and its options, `xargs -I`/`-n`/`-L`); drop a backslash-newline the way bash does; match an option value written against its flag (`-skeyprompt`, `-aNAME`); read the text of a PowerShell call with PowerShell's escape (the backtick, not the backslash) and match a module-qualified cmdlet name (`CredentialManager\Get-StoredCredential`).
+**Acceptance:** WHEN the guard checks any command listed in B-25 THEN it SHALL answer `deny` with the `keyprompt run` reason; every case in `test/guard.test.mjs` SHALL still pass.
+**Verify:** the new test fails on its own commit and passes after the fix; a break test (remove one wrapper) fails exactly one test; `KEYPROMPT_STORE_TEST=1 npm test`; `git diff --name-only main -- test/` lists only the new file.
+**Must not:** edit a locked test; refuse a command that only mentions a read; add a dependency.
+
+### S-58 — A here-document in a commit message passes the guard (bug B-26)
+
+**PR:** one.
+**Depends on:** S-57 merged (same file). **Blocks:** S-59.
+**Research:** none (bash's here-document rules: a quoted delimiter leaves the body as text; an unquoted one still runs `$( )` and backticks).
+**Model:** opus — it changes what the guard lets through.
+**Senior review:** required — loosening a guard is an access change.
+**Confidence:** 0.85.
+**Files:** `src/guard.mjs`, test/b26-guard-heredoc.test.mjs (new).
+**Locked tests:** every file in `test/` at the base commit.
+**Today:** `git commit -m "$(cat <<'EOF' … EOF)"` whose body quotes a read is denied.
+**Change:** teach `splitShell` here-documents: with a quoted delimiter (`<<'EOF'`, `<<"EOF"`, `<<\EOF`) the body is text; with an unquoted one only `$( )` and backticks inside it are commands; `<<-` strips leading tabs. A `#` that starts a word comments out the rest of the line. The CredRead rule matches inside one PowerShell command, not anywhere in the text.
+**Acceptance:** WHEN a commit message or pull request body written with a quoted here-document quotes a read THEN the guard SHALL print nothing and exit 0; WHEN an unquoted here-document runs a read in backticks or `$( )` THEN the guard SHALL still deny it.
+**Verify:** as S-57, with the new file.
+**Must not:** let an unquoted here-document's command substitution through; edit a locked test.
+
+### S-59 — The guard's docs say what it refuses and what it misses (bug B-27)
+
+**PR:** one.
+**Depends on:** S-57 and S-58 merged. **Blocks:** nothing.
+**Research:** none. **Model:** sonnet.
+**Senior review:** not required — words only, each checked against the merged guard.
+**Confidence:** 0.85.
+**Files:** `SECURITY.md`, `README.md`, `skill/SKILL.md` (if it repeats the sentence), `CHANGELOG.md`, test/b27-guard-docs.test.mjs (new).
+**Locked tests:** every file in `test/` at the base commit.
+**Today:** `SECURITY.md:19` and `README.md:280` say every command that runs a read on a keyprompt item is refused; the limits name only a script file, an encoded command and another tool.
+**Change:** keep "the obvious direct reads", and add to the limits the kinds of command text the guard still does not parse after S-57 and S-58 (for example a read built from a shell variable, or piped into a shell), so every word is true. The new test pins the limit sentence, as test/b24-security-limits.test.mjs does for the log.
+**Acceptance:** WHEN a person reads `SECURITY.md` or the README THEN every form the guard lets through that runs a read SHALL fall under a limit those files name.
+**Verify:** run each B-25 form and each documented limit through the guard and match it to a sentence; `npm test`.
+**Must not:** change `src/` or `bin/`; edit a locked test.
+
+### S-60 — A `--json` failure repeats no typed token and gives the real reason (bug B-28)
+
+**PR:** one.
+**Depends on:** nothing. **Blocks:** nothing.
+**Research:** none. **Model:** sonnet.
+**Senior review:** not required — it only removes typed text from a message; the new test pins the exact results.
+**Confidence:** 0.9.
+**Files:** `src/cli.mjs`, `src/names.mjs`, test/b28-json-messages.test.mjs (new).
+**Locked tests:** every file in `test/` at the base commit.
+**Today:** `keyprompt -sk_live_X list --json` answers `command: "list"` and a message holding the token; `has` with 13 names says "A card can ask for at most 12 values at once."; `-x has FOO --json` says a name is invalid.
+**Change:** `jsonRequest` picks the command the way `parseArgs` does; the "Unknown command" error gets a `jsonMessage` without the token, and `command` is `null`; the JSON message for `has` is text mode's reason with the typed text left out; `check_secrets` over 12 names says "at most 12 names", not "a card".
+**Acceptance:** WHEN any argument list with `--json` fails THEN the result SHALL hold no token that was typed, `command` SHALL be `null` unless the command was recognized, and the message SHALL give the reason text mode gives, with typed text left out.
+**Verify:** the new test fails on its own commit and passes after; `KEYPROMPT_STORE_TEST=1 npm test`; text-mode output and exit codes of the same inputs unchanged.
+**Must not:** change any text-mode output or exit code; edit a locked test.
+
+### S-61 — `setup` passes over a multi-line value whatever its first line (bug B-29)
+
+**PR:** one.
+**Depends on:** nothing. **Blocks:** nothing.
+**Research:** none. **Model:** sonnet.
+**Senior review:** not required — it narrows what is read; the new test pins the names exactly.
+**Confidence:** 0.9.
+**Files:** `src/setup.mjs`, test/b29-setup-multiline.test.mjs (new).
+**Locked tests:** every file in `test/` at the base commit.
+**Today:** a quoted value that opens on a line `exampleNames` does not read (`MY KEY="…`, `KEY: "…`) has its inner `NAME=` lines read as names.
+**Change:** on every line, read or not, check whether a quote opens after the first `=` (or dotenv's `: `) and pass over the value to its closing quote.
+**Acceptance:** WHEN a quoted value in the example file spans lines THEN no line inside it SHALL become a name, whatever its first line looks like.
+**Verify:** the new test fails on its own commit and passes after; `npm test`.
+**Must not:** show or return the text of any line; change the report's wording; edit a locked test.
+
+### S-62 — The activity log keeps only a program's own name (bug B-30)
+
+**PR:** one.
+**Depends on:** nothing. **Blocks:** nothing.
+**Research:** none. **Model:** sonnet.
+**Senior review:** not required — it narrows what is written; the new test pins it.
+**Confidence:** 0.75 — the cause was read in keyprompt and cross-spawn, not run on Windows; the new CLI test on CI's Windows jobs settles it.
+**Files:** `src/activity.mjs`, test/b30-program-name.test.mjs (new).
+**Locked tests:** every file in `test/` at the base commit.
+**Today:** on Windows, `run K -- "curl https://h/v1?key=abc"` would log `program: "v1?key=abc"`.
+**Change:** when the command word holds whitespace, log only the text before the first whitespace, then drop its folder, unless the whole word names a file that exists (`C:\Program Files\nodejs\node.exe`).
+**Acceptance:** WHEN `run`'s command word holds whitespace followed by more text, and is not the path of a file that exists, THEN the run line SHALL hold no text from after that whitespace.
+**Verify:** the unit test fails on its own commit everywhere; the CLI test fails on CI's Windows jobs before the fix; both pass after; `KEYPROMPT_STORE_TEST=1 npm test`.
+**Must not:** write any argument; change the line's other fields; edit a locked test.
+
+### S-63 — The v0.3 PRD says what the code does (bug B-31)
+
+**PR:** one.
+**Depends on:** Abhishek's choice on B-31 item 3 (say that the cap stops holding while the lock cannot be made, or trim without the lock when the lock path is not a file). **Blocks:** nothing.
+**Research:** none. **Model:** sonnet.
+**Senior review:** not required — words, plus at most one small change to the trim that the existing tests cover.
+**Confidence:** 0.85.
+**Files:** `docs/prd/v0-3.md`; `src/activity.mjs` and a new test file only if item 3 changes code.
+**Locked tests:** every file in `test/` at the base commit.
+**Today:** five sentences in the PRD's detail sections and G3 say things the code does not do (B-31).
+**Change:** correct each sentence to what the code does, or, for item 3 if Abhishek chooses so, change the code.
+**Acceptance:** WHEN someone reads the five places B-31 lists THEN each SHALL describe what the code on main does.
+**Verify:** the PR quotes each corrected sentence next to the code line it describes; `npm test`.
+**Must not:** change any acceptance line's meaning without Abhishek's yes; edit a locked test.
+
+### S-64 — Tests for the v0.3 clauses no test pins
+
+**PR:** one (split by area if it passes about 400 lines).
+**Depends on:** nothing. **Blocks:** nothing.
+**Research:** none. **Model:** sonnet.
+**Senior review:** not required — new tests only; no code changes.
+**Confidence:** 0.85.
+**Files:** new test files only (for example test/s64-guard-coverage.test.mjs, test/s64-json-setup-coverage.test.mjs, test/s64-log-mcp-coverage.test.mjs).
+**Locked tests:** every file in `test/` at the base commit.
+**Today:** the audit lists about twenty clauses that the code meets but no test would miss if the code were removed (docs/audits/v0-3-feature-end.md, "Met in code, but no test would fail").
+**Change:** one test per item on that list, each written against main as it is.
+**Acceptance:** WHEN the code behind any item on that list is removed THEN at least one new test SHALL fail.
+**Verify:** a break test per item (remove the code, see the new test fail, restore it); `KEYPROMPT_STORE_TEST=1 npm test`; `git diff --name-only main -- src/ test/` lists only new test files.
+**Must not:** edit an existing test or any file under `src/`.
 
 ---
 
