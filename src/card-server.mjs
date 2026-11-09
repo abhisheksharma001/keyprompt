@@ -36,6 +36,7 @@ const CARD_ENDED = 'This card is no longer active. Close this tab.'
  * @property {(values: Map<string, string>, remember: boolean) => Promise<void>} onSubmit Store (or hold) the non-empty values; throw to show the error on the card.
  * @property {(url: string) => Promise<boolean>} open Open the card for the person. Resolves false if nothing could be opened.
  * @property {number} [timeoutMs]
+ * @property {AbortSignal} [signal] Ends the card the way Cancel does, for a caller that no longer wants the answer (an MCP client's cancel, B-21). A save already under way finishes first.
  */
 
 /**
@@ -98,6 +99,12 @@ export function requestSecretWithCard(request) {
   const expiresAt = Date.now() + timeoutMs
 
   return new Promise((resolve, reject) => {
+    const withdrawn = () =>
+      new KeypromptError('The request was cancelled, so keyprompt closed the secret card. Nothing was saved.', { exitCode: EXIT.CANCELLED })
+    if (request.signal?.aborted) {
+      reject(withdrawn())
+      return
+    }
     let settled = false
     let busy = false
     // The deadline passed while a save was under way, so that save's result ends the card.
@@ -261,11 +268,22 @@ export function requestSecretWithCard(request) {
       )
     }, timeoutMs)
 
+    const onAbort = () => {
+      // A save under way may still succeed, and then "Nothing was saved" would be false: that save ends the card.
+      if (busy) {
+        expired = true
+        return
+      }
+      finish(() => reject(withdrawn()))
+    }
+    request.signal?.addEventListener('abort', onAbort, { once: true })
+
     /** @param {() => void} settle */
     function finish(settle) {
       if (settled) return
       settled = true
       clearTimeout(timer)
+      request.signal?.removeEventListener('abort', onAbort)
       // Let the page receive its response before the server goes away.
       setTimeout(() => server.close(), 500).unref()
       server.closeIdleConnections?.()
@@ -274,6 +292,8 @@ export function requestSecretWithCard(request) {
 
     server.on('error', (error) => finish(() => reject(error)))
     server.listen(0, '127.0.0.1', async () => {
+      // Aborted before the server was ready: open nothing.
+      if (settled) return
       const address = server.address()
       if (address === null || typeof address === 'string') {
         finish(() => reject(new KeypromptError('Could not start the local secret card.')))

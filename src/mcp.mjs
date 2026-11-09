@@ -17,6 +17,13 @@ import { createInterface } from 'node:readline'
 /** Newest first. Tools work the same way in all four. */
 export const PROTOCOL_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05']
 
+/**
+ * After stdin closes, calls still in flight get this long to finish (a card
+ * being saved), then any card still open is closed, so the server exits
+ * within seconds instead of waiting out a card's 5 minutes (B-21).
+ */
+export const END_GRACE_MS = 5000
+
 /** A line longer than this is not read. */
 export const MAX_LINE = 1024 * 1024
 
@@ -71,7 +78,7 @@ export const TOOLS = [
 /**
  * @typedef {{ name?: string, title?: string }} ClientInfo
  * @typedef {{ result: object, isError: boolean }} ToolAnswer
- * @typedef {{ request_secret(args: unknown, client: ClientInfo): Promise<ToolAnswer>, check_secrets(args: unknown): Promise<ToolAnswer> }} Tools
+ * @typedef {{ request_secret(args: unknown, client: ClientInfo, signal: AbortSignal): Promise<ToolAnswer>, check_secrets(args: unknown): Promise<ToolAnswer> }} Tools
  */
 
 /**
@@ -87,6 +94,8 @@ export async function serveMcp({ input, output, version, tools }) {
   let client = {}
   /** Requests the client cancelled: their answers are never sent. */
   const cancelled = new Set()
+  /** One abort per tool call in flight, so a cancel or the end of input closes its card (B-21). */
+  const inFlight = new Map()
   /** @type {Promise<void>[]} */
   const pending = []
 
@@ -119,7 +128,16 @@ export async function serveMcp({ input, output, version, tools }) {
       case 'tools/call': {
         const name = params.name
         if (name !== 'request_secret' && name !== 'check_secrets') return fail(id, ERROR.INVALID_PARAMS, 'Unknown tool. keyprompt has request_secret and check_secrets.')
-        const { result, isError } = name === 'request_secret' ? await tools.request_secret(params.arguments, client) : await tools.check_secrets(params.arguments)
+        const controller = new AbortController()
+        inFlight.set(id, controller)
+        /** @type {import('./mcp.mjs').ToolAnswer} */
+        let answered
+        try {
+          answered = name === 'request_secret' ? await tools.request_secret(params.arguments, client, controller.signal) : await tools.check_secrets(params.arguments)
+        } finally {
+          inFlight.delete(id)
+        }
+        const { result, isError } = answered
         // structuredContent exists from 2025-06-18; older clients get the same JSON as text only.
         const structured = (protocolVersion ?? PROTOCOL_VERSIONS[0]) >= '2025-06-18' ? { structuredContent: result } : {}
         return reply({ content: [{ type: 'text', text: JSON.stringify(result) }], ...structured, isError })
@@ -160,6 +178,7 @@ export async function serveMcp({ input, output, version, tools }) {
       if (m.method === 'notifications/cancelled') {
         const p = m.params && typeof m.params === 'object' ? /** @type {Record<string, unknown>} */ (m.params) : {}
         cancelled.add(p.requestId)
+        inFlight.get(p.requestId)?.abort()
       }
       // notifications/initialized and any other notification need no answer.
       continue
@@ -170,5 +189,10 @@ export async function serveMcp({ input, output, version, tools }) {
       }),
     )
   }
+  // The client is gone: give calls in flight a moment, then close any card still open.
+  const grace = setTimeout(() => {
+    for (const controller of inFlight.values()) controller.abort()
+  }, END_GRACE_MS)
   await Promise.allSettled(pending.splice(0))
+  clearTimeout(grace)
 }

@@ -125,14 +125,14 @@ store.write = async () => { throw new Error('no save expected') }
     const outcome = await Promise.race([second.then(() => 'card'), answer(3).then((m) => `answer: ${JSON.stringify(m)}`)])
     assert.equal(outcome, 'card')
     assert.equal(cards, 2)
-    // Closing stdin with a card open: the process ends promptly, not after the 5-minute deadline.
+    // Closing stdin with a card open: the process ends after the short grace, not after the 5-minute deadline.
     const started = Date.now()
     child.stdin.end()
-    const timer = setTimeout(() => child.kill('SIGKILL'), 8000)
+    const timer = setTimeout(() => child.kill('SIGKILL'), 20000)
     const code = await exited
     clearTimeout(timer)
     assert.equal(code, 0, 'exited by itself')
-    assert.ok(Date.now() - started < 8000)
+    assert.ok(Date.now() - started < 20000, `exited after ${Date.now() - started} ms`)
     assert.equal(answers.has(2), false, 'a cancelled request gets no answer')
     const log = readFileSync(join(dir, 'activity.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line))
     assert.deepEqual(log.map((e) => [e.event, e.command, e.names]), [['withdrawn', 'mcp', ['A_KEY']], ['withdrawn', 'mcp', ['B_KEY']]])

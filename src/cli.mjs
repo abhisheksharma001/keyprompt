@@ -350,7 +350,7 @@ function requesterLabel(/** @type {string | undefined} */ by) {
  * a failed save shows on the card. `remember: false` hands them to this run only.
  * @param {import('./store/index.mjs').SecretStore} store
  * @param {import('./card-server.mjs').CardField[]} fields
- * @param {{ command: 'set' | 'setup' | 'run' | 'mcp', reason?: string, by?: string, replacing: boolean, allowSessionOnly: boolean, masked?: boolean, allowEmpty?: boolean, warnings?: string[] }} options
+ * @param {{ command: 'set' | 'setup' | 'run' | 'mcp', reason?: string, by?: string, replacing: boolean, allowSessionOnly: boolean, masked?: boolean, allowEmpty?: boolean, warnings?: string[], signal?: AbortSignal }} options
  */
 async function askWithCard(store, fields, options) {
   // Every caller checks this first; a card with no boxes would say things that are not true (B-20).
@@ -365,7 +365,8 @@ async function askWithCard(store, fields, options) {
     }
     return answer
   } catch (error) {
-    const closed = error instanceof KeypromptError ? CARD_CLOSED[error.exitCode] : undefined
+    // A cancel by the MCP client is not the person's Cancel: the log says who ended the card (B-21).
+    const closed = options.signal?.aborted ? 'withdrawn' : error instanceof KeypromptError ? CARD_CLOSED[error.exitCode] : undefined
     if (closed) await recordActivity(activityEntry({ event: closed, command: options.command, names, exitCode: error.exitCode }))
     throw error
   }
@@ -393,6 +394,7 @@ function openCard(store, fields, options) {
     allowSessionOnly: options.allowSessionOnly,
     masked: options.masked,
     allowEmpty: options.allowEmpty,
+    signal: options.signal,
     open: openInBrowser,
     onSubmit: async (values, remember) => {
       if (!remember) {
@@ -569,7 +571,7 @@ export function demoRequest() {
  * What `set` does, shared with the `request_secret` MCP tool: read which
  * fields are saved, then ask for all of them on one card.
  * @param {ReturnType<typeof parseFields>} parsed
- * @param {{ command: 'set' | 'mcp', reason?: string, by?: string, warnings?: string[] }} options
+ * @param {{ command: 'set' | 'mcp', reason?: string, by?: string, warnings?: string[], signal?: AbortSignal }} options
  */
 async function askToSet(parsed, options) {
   const store = getStore()
@@ -583,6 +585,7 @@ async function askToSet(parsed, options) {
     replacing: fields.every((f) => f.saved),
     allowSessionOnly: false,
     warnings: options.warnings,
+    signal: options.signal,
   })
   return { store, fields, values }
 }
@@ -642,7 +645,8 @@ function mcpRequester(/** @type {import('./mcp.mjs').ClientInfo} */ client) {
  * @returns {import('./mcp.mjs').Tools}
  */
 export function mcpTools() {
-  let cardOpen = false
+  /** The call whose card is open, or null. A token, so a cancelled call never frees a later call's card. */
+  let cardOwner = /** @type {object | null} */ (null)
   /**
    * @param {string} command
    * @param {string[]} names
@@ -654,7 +658,7 @@ export function mcpTools() {
     return { result, isError: ![EXIT.CANCELLED, EXIT.TIMED_OUT, EXIT.DEFERRED].includes(result.exitCode) }
   }
   return {
-    async request_secret(args, client) {
+    async request_secret(args, client, signal) {
       /** @type {string[]} */
       let names = []
       try {
@@ -662,14 +666,21 @@ export function mcpTools() {
         names = parsed.map((f) => f.name)
         const reason = args && typeof args === 'object' ? /** @type {Record<string, unknown>} */ (args).reason : undefined
         if (reason !== undefined && typeof reason !== 'string') throw new KeypromptError('reason must be text.', { exitCode: EXIT.USAGE })
-        if (cardOpen) throw new KeypromptError('A card is already open. Wait for its answer before asking again.', { exitCode: EXIT.USAGE })
-        cardOpen = true
+        if (cardOwner !== null) throw new KeypromptError('A card is already open. Wait for its answer before asking again.', { exitCode: EXIT.USAGE })
+        const owner = {}
+        cardOwner = owner
+        const release = () => {
+          if (cardOwner === owner) cardOwner = null
+        }
+        // On a cancel the card stops taking saves at once, so the next call may open its own (B-21).
+        signal?.addEventListener('abort', release, { once: true })
         try {
           const warnings = []
-          const { fields, values } = await askToSet(parsed, { command: 'mcp', reason, by: mcpRequester(client), warnings })
+          const { fields, values } = await askToSet(parsed, { command: 'mcp', reason, by: mcpRequester(client), warnings, signal })
           return { result: setResult(fields, values, warnings), isError: false }
         } finally {
-          cardOpen = false
+          signal?.removeEventListener('abort', release)
+          release()
         }
       } catch (error) {
         return failed('set', names, error)
