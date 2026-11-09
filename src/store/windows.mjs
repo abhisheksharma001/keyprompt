@@ -1,4 +1,4 @@
-import { KeypromptError } from '../errors.mjs'
+import { helperError } from '../errors.mjs'
 import { runHelper } from '../exec.mjs'
 
 /**
@@ -115,12 +115,6 @@ function credential(op, name, input) {
   )
 }
 
-/** @param {Buffer} stderr */
-function detail(stderr) {
-  const text = stderr.toString('utf8').trim().split('\n')[0] ?? ''
-  return text.length > 0 ? `: ${text}` : ''
-}
-
 /** @type {import('./index.mjs').SecretStore} */
 export const windowsStore = {
   id: 'windows-credential-manager',
@@ -131,19 +125,19 @@ export const windowsStore = {
   async read(name) {
     const { code, stdout, stderr } = await credential('read', name)
     if (code === 3) return null
-    if (code !== 0) throw new KeypromptError(`Could not read ${name} from Windows Credential Manager${detail(stderr)}`)
+    if (code !== 0) throw helperError(`Could not read ${name} from Windows Credential Manager`, stderr)
     return stdout.toString('utf8')
   },
 
   async write(name, value) {
     const { code, stderr } = await credential('write', name, value)
-    if (code !== 0) throw new KeypromptError(`Could not save ${name} to Windows Credential Manager${detail(stderr)}`)
+    if (code !== 0) throw helperError(`Could not save ${name} to Windows Credential Manager`, stderr)
   },
 
   async remove(name) {
     const { code, stderr } = await credential('delete', name)
     if (code === 3) return false
-    if (code !== 0) throw new KeypromptError(`Could not delete ${name} from Windows Credential Manager${detail(stderr)}`)
+    if (code !== 0) throw helperError(`Could not delete ${name} from Windows Credential Manager`, stderr)
     return true
   },
 }

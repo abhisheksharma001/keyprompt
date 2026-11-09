@@ -20,6 +20,7 @@ import {
   saveAndRecord,
   secretsInCommand,
   setReport,
+  UNEXPECTED_JSON_MESSAGE,
   valueInCommandError,
 } from '../src/cli.mjs'
 import { EXIT, KeypromptError } from '../src/errors.mjs'
@@ -761,11 +762,16 @@ function jsonCliFixture() {
   const errorsUrl = new URL('../src/errors.mjs', import.meta.url).href
   writeFileSync(preload, `
 import { getStore } from ${JSON.stringify(storeUrl)}
-import { KeypromptError } from ${JSON.stringify(errorsUrl)}
+import { KeypromptError, helperError } from ${JSON.stringify(errorsUrl)}
 const store = getStore()
 const values = new Map(Object.entries(JSON.parse(process.env.KP_JSON_VALUES || '{}')))
 store.read = async (name) => {
-  if (process.env.KP_JSON_ERROR) throw new KeypromptError(process.env.KP_JSON_ERROR, { exitCode: Number(process.env.KP_JSON_CODE || 1) })
+  if (process.env.KP_JSON_ERROR) {
+    const code = Number(process.env.KP_JSON_CODE || 1)
+    // Like the Linux and Windows stores: keyprompt's sentence, then the helper's first line (B-19).
+    if (code === 1) throw helperError('Could not read ' + name + ' from the test store', process.env.KP_JSON_ERROR)
+    throw new KeypromptError(process.env.KP_JSON_ERROR, { exitCode: code })
+  }
   return values.get(name) ?? null
 }
 store.write = async (name, value) => { values.set(name, value) }
@@ -831,29 +837,64 @@ test('JSON failures never echo a helper error, invalid argument, unknown verb or
     ['set', 'TOKEN', '--reason', '--json'], ['--json'], ['list', sensitive, '--json'],
   ]) {
     const r = f.run(args)
-    assert.equal(jsonAnswer(r, 2).status, 'invalid_usage')
+    const answer = jsonAnswer(r, 2)
+    assert.equal(answer.status, 'invalid_usage')
+    assert.ok(typeof answer.message === 'string' && answer.message.length > 0, r.stdout)
     assert.ok(!r.stdout.includes(sensitive), r.stdout)
     assert.equal(r.stderr, '')
   }
-  for (const verb of ['has', 'delete']) {
+  for (const [verb, message] of [['has', 'Could not read TOKEN from the test store.'], ['delete', UNEXPECTED_JSON_MESSAGE]]) {
     const r = f.run([verb, 'TOKEN', '--json'], { KP_JSON_ERROR: sensitive })
-    assert.deepEqual(jsonAnswer(r, 1), { command: verb, status: 'error', names: ['TOKEN'], exitCode: 1 })
+    assert.deepEqual(jsonAnswer(r, 1), { command: verb, status: 'error', names: ['TOKEN'], exitCode: 1, message })
     assert.equal(r.stderr, '')
     assert.ok(!r.stdout.includes(sensitive))
   }
   writeFileSync(join(f.dir, 'catalog.json'), `{ ${sensitive}`)
-  assert.deepEqual(jsonAnswer(f.run(['list', '--json']), 1), { command: 'list', status: 'error', names: [], exitCode: 1 })
+  assert.deepEqual(jsonAnswer(f.run(['list', '--json']), 1), {
+    command: 'list', status: 'error', names: [], exitCode: 1, message: UNEXPECTED_JSON_MESSAGE,
+  })
   writeFileSync(join(f.dir, 'catalog.json'), JSON.stringify({ [sensitive]: {} }))
   const badCatalog = f.run(['list', '--json'])
-  assert.deepEqual(jsonAnswer(badCatalog, 1), { command: 'list', status: 'error', names: [], exitCode: 1 })
+  assert.deepEqual(jsonAnswer(badCatalog, 1), {
+    command: 'list', status: 'error', names: [], exitCode: 1, message: 'The catalog contains an invalid name.',
+  })
   assert.equal(badCatalog.stderr, '')
 })
 
-test('JSON cancellation, timeout and deferral keep their exit codes without raw messages (S-41)', () => {
+test("JSON cancellation, timeout and deferral keep their exit codes and carry keyprompt's message (S-41, B-19)", () => {
   const f = jsonCliFixture()
   for (const [code, status] of [[4, 'cancelled'], [5, 'timed_out'], [6, 'deferred']]) {
-    const r = f.run(['set', 'TOKEN', '--json'], { KP_JSON_ERROR: 'dummy-do-not-print-this', KP_JSON_CODE: String(code) })
-    assert.deepEqual(jsonAnswer(r, code), { command: 'set', status, names: ['TOKEN'], exitCode: code })
+    const message = `Test outcome ${code}. Nothing was saved.`
+    const r = f.run(['set', 'TOKEN', '--json'], { KP_JSON_ERROR: message, KP_JSON_CODE: String(code) })
+    assert.deepEqual(jsonAnswer(r, code), { command: 'set', status, names: ['TOKEN'], exitCode: code, message })
+    assert.equal(r.stderr, '')
+  }
+})
+
+test("a JSON failure says why in keyprompt's own words: the text-mode sentence, without what was typed or what a helper printed (B-19)", () => {
+  const f = jsonCliFixture()
+  // keyprompt wrote every word: the JSON message is the sentence text mode prints after "keyprompt: ".
+  for (const args of [['set'], ['has', 'A', 'B'], ['delete']]) {
+    const text = f.run(args)
+    assert.equal(text.status, 2)
+    assert.match(text.stderr, /^keyprompt: /)
+    assert.equal(jsonAnswer(f.run([...args, '--json']), 2).message, text.stderr.slice('keyprompt: '.length).trimEnd())
+  }
+  // Text mode repeats what was typed or what a helper printed; the JSON message leaves it out.
+  const typed = 'dummy-typed-47'
+  for (const [args, extra, code, message] of [
+    [['has', typed], {}, 2, 'A name is not a valid secret name. Use an environment-variable style name: capital letters, digits and _, starting with a letter or _ (for example OPENAI_API_KEY).'],
+    [['set', `TOKEN:${typed}`], {}, 2, 'Unknown hint on TOKEN. Use visible, multiline or optional.'],
+    [['has', 'TOKEN', `--${typed}`], {}, 2, 'Unknown option. See keyprompt --help.'],
+    [['has', 'TOKEN'], { KP_JSON_ERROR: typed }, 1, 'Could not read TOKEN from the test store.'],
+    [['delete', 'TOKEN'], { KP_JSON_ERROR: typed }, 1, UNEXPECTED_JSON_MESSAGE],
+  ]) {
+    const text = f.run(args, extra)
+    assert.equal(text.status, code)
+    assert.ok(text.stderr.includes(typed), text.stderr)
+    const r = f.run([...args, '--json'], extra)
+    assert.equal(jsonAnswer(r, code).message, message)
+    assert.ok(!r.stdout.includes(typed), r.stdout)
     assert.equal(r.stderr, '')
   }
 })
@@ -914,8 +955,11 @@ request({ hostname: url.hostname, port: url.port, path: url.pathname + '/' + act
     assert.ok(!r.stdout.includes('sensitive'), r.stdout)
     assert.ok(!r.stderr.includes('sensitive'), r.stderr)
   }
-  for (const [action, code, status] of [['cancel', 4, 'cancelled'], ['later', 6, 'deferred']]) {
+  for (const [action, code, status, message] of [
+    ['cancel', 4, 'cancelled', 'The person closed the secret card without saving.'],
+    ['later', 6, 'deferred', 'The person chose Later for OLD, NEW and EMPTY. Nothing was saved.'],
+  ]) {
     const r = f.run(args, { ...env, KP_JSON_ACTION: action })
-    assert.deepEqual(jsonAnswer(r, code), { command: 'set', status, names: ['OLD', 'NEW', 'EMPTY'], exitCode: code })
+    assert.deepEqual(jsonAnswer(r, code), { command: 'set', status, names: ['OLD', 'NEW', 'EMPTY'], exitCode: code, message })
   }
 })

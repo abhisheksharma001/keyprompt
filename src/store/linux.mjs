@@ -1,4 +1,4 @@
-import { KeypromptError } from '../errors.mjs'
+import { KeypromptError, helperError } from '../errors.mjs'
 import { runHelper } from '../exec.mjs'
 
 /**
@@ -19,12 +19,6 @@ function missingTool(error) {
   return error
 }
 
-/** @param {Buffer} stderr */
-function detail(stderr) {
-  const text = stderr.toString('utf8').trim().split('\n')[0] ?? ''
-  return text.length > 0 ? `: ${text}` : ''
-}
-
 /** @type {import('./index.mjs').SecretStore} */
 export const linuxStore = {
   id: 'linux-secret-service',
@@ -37,7 +31,7 @@ export const linuxStore = {
     })
     // secret-tool exits 1 with no output when nothing matches.
     if (result.code === 1 && result.stdout.length === 0 && result.stderr.length === 0) return null
-    if (result.code !== 0) throw new KeypromptError(`Could not read ${name} from the Linux keyring${detail(result.stderr)}`)
+    if (result.code !== 0) throw helperError(`Could not read ${name} from the Linux keyring`, result.stderr)
     return result.stdout.toString('utf8')
   },
 
@@ -47,7 +41,7 @@ export const linuxStore = {
     }).catch((e) => {
       throw missingTool(e)
     })
-    if (result.code !== 0) throw new KeypromptError(`Could not save ${name} to the Linux keyring${detail(result.stderr)}`)
+    if (result.code !== 0) throw helperError(`Could not save ${name} to the Linux keyring`, result.stderr)
   },
 
   async remove(name) {
@@ -55,7 +49,7 @@ export const linuxStore = {
     const result = await runHelper('secret-tool', ['clear', ...ATTRS(name)]).catch((e) => {
       throw missingTool(e)
     })
-    if (result.code !== 0) throw new KeypromptError(`Could not delete ${name} from the Linux keyring${detail(result.stderr)}`)
+    if (result.code !== 0) throw helperError(`Could not delete ${name} from the Linux keyring`, result.stderr)
     return true
   },
 }

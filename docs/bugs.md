@@ -198,3 +198,13 @@ The deadline is the real-world path. Someone presses Save near the end of the 5 
 **Files:** `docs/research.md`, `docs/steps.md`.
 **Research:** none · **Model:** sonnet · **Confidence:** 0.9 that these three are the only ones (the check matches tokens shaped like a/b/c or name.ext; a bare word without an extension is not tested).
 **Fix step:** not planned yet. The fix writes the Infisical path in plain text, card-script.mjs as `src/card-script.mjs`, and the bare catalog.json as `~/.keyprompt/catalog.json` or plain text.
+
+### B-19 — A `--json` failure does not say why it failed
+
+**Seen:** 2026-11-09, running main at 87611bb (S-41, PR #44) in a scratch home. `keyprompt has A_KEY --json` on a system with no password store printed `{"command":"has","status":"error","names":["A_KEY"],"exitCode":1}` and nothing on stderr; without `--json` the same command says why ("keyprompt does not support freebsd yet ..."). `keyprompt list --json --bogus` printed only `"status":"invalid_usage"`. So an agent cannot tell "no desktop to open the card" from "the store failed", and cannot follow keyprompt's advice on what to do next. Running again without `--json` to read the reason reopens the card for `set`. S-41 left the message out on purpose, because some messages repeat text keyprompt did not write: a typed argument (an unknown option, an unknown hint, an invalid name, which could be a pasted key) or the first line of a store helper's error on Linux and Windows. Two sessions worked on S-41 at once: one built and merged PR #44, while a grill in a second session, which #44 never saw, had chosen to include the message (Abhishek, 2026-11-07: "JSON error on stdout").
+**Requirement:** J in `docs/prd/v0-3.md`, and the convention in `.claude/CLAUDE.md` that an error says what to do next.
+**Needs first:** nothing.
+**Blocks:** the `--json` docs step (README and skill examples).
+**Files:** `src/errors.mjs`, `src/cli.mjs`, `src/names.mjs`, `src/save.mjs`, `src/store/linux.mjs`, `src/store/windows.mjs`, `test/cli.test.mjs`, `test/save.test.mjs`, a new `test/errors.test.mjs`.
+**Research:** none · **Model:** sonnet · **Confidence:** 0.95 that this is the cause (the code drops the message in `jsonFailure`, and the run above shows it).
+**Fix step:** S-47.
