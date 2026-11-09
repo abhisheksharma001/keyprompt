@@ -116,6 +116,10 @@ keyprompt has OPENAI_API_KEY --json
 - A failure adds `message`: why, in keyprompt's own words.
 - It never holds a value. `run` does not take `--json`, because its stdout is the command's own output.
 
+## In an MCP client
+
+If keyprompt's MCP tools are available (`request_secret` and `check_secrets`, from `keyprompt mcp`), you may use them in place of `keyprompt set` and `keyprompt has`: the same card, and the same names-only results as `--json`. `request_secret` waits for the user like `set` does; tell them a card opened. No tool returns a value. To use a key, you still run `keyprompt run NAME -- COMMAND` in a shell.
+
 ## See what keyprompt did
 
 `keyprompt log` shows the newest 50 lines of a names-only record: when each name was saved, given to which program (and its exit code), deleted, or put off with Later, Cancel or no answer. Use it to see, for example, that the user already chose Later for a name today, before you ask again. A line holds names, the program's own name and the folder; never a value or a command's arguments.
