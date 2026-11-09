@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { test } from 'node:test'
 import { renderCard } from '../src/card-page.mjs'
@@ -1089,4 +1089,71 @@ request({ hostname: url.hostname, port: url.port, path: url.pathname, headers: {
     command: 'setup', status: 'deferred', names: onCard, exitCode: 6,
     message: `The person chose Later for ${onCard.slice(0, -1).join(', ')} and NAME_12. Nothing was saved.`,
   })
+})
+
+/** The activity log's lines, as `keyprompt log --json` returns them. */
+function logEntries(f, cwd) {
+  const answer = jsonAnswer(f.run(['log', '--json'], {}, cwd), 0)
+  assert.equal(answer.command, 'log')
+  assert.equal(answer.status, 'listed')
+  return answer
+}
+
+test('run and delete write one names-only line each, with the program but never its arguments; has, list and a delete of an unsaved name write none (S-43)', () => {
+  const f = jsonCliFixture()
+  const cwd = project(f, {})
+  const env = { KP_JSON_VALUES: JSON.stringify({ TOKEN: 'dummy-sensitive-value-43' }) }
+  assert.deepEqual(logEntries(f, cwd), { command: 'log', status: 'listed', names: [], exitCode: 0, entries: [] })
+  const ran = f.run(['run', 'TOKEN', '--', process.execPath, '-e', 'process.exit(3)', 'dummy-sensitive-arg-43'], env, cwd)
+  assert.equal(ran.status, 3, ran.stderr)
+  for (const args of [['has', 'TOKEN'], ['list'], ['delete', 'ABSENT'], ['run', 'ABSENT:optional', '--', process.execPath, '-e', '']]) f.run(args, env, cwd)
+  assert.equal(f.run(['delete', 'TOKEN'], env, cwd).status, 0)
+  const answer = logEntries(f, cwd)
+  const folder = realpathSync(cwd)
+  assert.deepEqual(answer.names, ['TOKEN'])
+  assert.deepEqual(answer.entries.map(({ time, ...rest }) => rest), [
+    { event: 'run', command: 'run', names: ['TOKEN'], exitCode: 3, program: basename(process.execPath), folder },
+    { event: 'deleted', command: 'delete', names: ['TOKEN'], exitCode: 0, folder },
+  ])
+  for (const entry of answer.entries) assert.ok(!Number.isNaN(Date.parse(entry.time)))
+  const file = readFileSync(join(f.dir, 'activity.jsonl'), 'utf8')
+  assert.ok(!file.includes('sensitive'), file)
+  const text = f.run(['log'], {}, cwd)
+  assert.equal(text.status, 0, text.stderr)
+  assert.match(text.stdout, new RegExp(`  Gave TOKEN to ${basename(process.execPath).replace('.', '\\.')}, which exited with 3, in `))
+  assert.match(text.stdout, /  Deleted TOKEN, in /)
+  assert.match(text.stdout, /Shown: all 2 lines\. The log is .*activity\.jsonl; it keeps the newest 1000 and never a value\.\n$/)
+  const usage = f.run(['log', 'TOKEN'], {}, cwd)
+  assert.equal(usage.status, 2)
+  assert.equal(usage.stderr, 'keyprompt: Usage: keyprompt log [--json]\n')
+})
+
+test('a save, Later and Cancel on a card each write one line naming the keyprompt command; values never reach the log (S-43)', { skip: process.platform === 'win32' }, () => {
+  const f = jsonCliFixture()
+  const cwd = project(f, { '.env.example': 'SETUP_KEY=\n' })
+  const browser = join(f.dir, 'card.mjs')
+  writeFileSync(browser, `#!${process.execPath}
+import { request } from 'node:http'
+const url = new URL(process.argv[2])
+const action = process.env.KP_JSON_ACTION || 'submit'
+const body = action === 'submit' ? { values: JSON.parse(process.env.KP_VALUES), remember: process.env.KP_REMEMBER !== 'no' } : {}
+request({ hostname: url.hostname, port: url.port, path: url.pathname + '/' + action, method: 'POST', headers: { Origin: url.origin, 'Content-Type': 'application/json' } }, res => res.resume()).end(JSON.stringify(body))
+`)
+  chmodSync(browser, 0o755)
+  const env = { KEYPROMPT_BROWSER: browser, KP_VALUES: '{"NEW":"dummy-sensitive-new-43"}' }
+  assert.equal(f.run(['set', 'NEW', 'EMPTY:optional'], env, cwd).status, 0)
+  assert.equal(f.run(['setup'], { ...env, KP_VALUES: '{"SETUP_KEY":"dummy-sensitive-setup-43"}' }, cwd).status, 0)
+  assert.equal(f.run(['set', 'NEW'], { ...env, KP_JSON_ACTION: 'later' }, cwd).status, 6)
+  assert.equal(f.run(['run', 'NEW', '--', process.execPath, '-e', ''], { ...env, KP_JSON_ACTION: 'cancel' }, cwd).status, 4)
+  // Remember unticked: nothing is saved, so only the run line is written.
+  assert.equal(f.run(['run', 'NEW', '--', process.execPath, '-e', ''], { ...env, KP_REMEMBER: 'no' }, cwd).status, 0)
+  const answer = logEntries(f, cwd)
+  assert.deepEqual(answer.entries.map((e) => [e.event, e.command, e.names, e.exitCode]), [
+    ['saved', 'set', ['NEW'], 0],
+    ['saved', 'setup', ['SETUP_KEY'], 0],
+    ['deferred', 'set', ['NEW'], 6],
+    ['cancelled', 'run', ['NEW'], 4],
+    ['run', 'run', ['NEW'], 0],
+  ])
+  assert.ok(!readFileSync(join(f.dir, 'activity.jsonl'), 'utf8').includes('sensitive'))
 })
