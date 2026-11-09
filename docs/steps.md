@@ -70,7 +70,8 @@ Order: S-3, S-7, S-15 and S-18 touch different files from the S-2 → S-4 chain,
 | S-48 | done 2026-11-09 (PR #47) | The docs for `--json` and `setup`. The README has "Set up a project" and, under "For agents", "JSON results" (every field and status, one success, one failure, `setup --json`, why `run` takes no `--json`); the commands table, the options line, exit code 2 and the AGENTS.md block mention both. The skill says when to run `setup` and how to read `--json`. CHANGELOG Unreleased has both, and exit 2 under Changed. **Proved:** every example line was captured from `bin/keyprompt.mjs` with a test-only fake store and fake browser, and a scratch check matched 9 of 9 lines; changing one README example failed exactly that line; 204 of 204 tests. **Judgment:** the outline said "at the start of a project", which clashes with the skill's "never ask for a key you don't need yet"; the skill says to run `setup` when the user asks to set up, run or deploy a project that has a `.env.example`. **Cadence:** Abhishek said "next (do all remaining now)" on 2026-11-09: the remaining steps run one after another, each still its own PR with its own merge yes, and the release still needs his go. |
 | S-43 | done 2026-11-09 (PR #48) | The activity log, from the grill's four recommended answers (D-20). `src/activity.mjs` appends one JSON line to `activity.jsonl` beside the catalog for a save (by `set`, `setup` or `run`'s card), a hand-over to a command (`run`, written when it ends, with the program's own name and its exit code), a delete, and a card that ended with Later, Cancel or a timeout; it keeps the newest 1,000 and never fails a command. `keyprompt log [--json]` shows the newest 50. 210 of 210 with the real store, and the real `~/.keyprompt` gained no file. Break test: keeping the whole command line in the `run` line failed exactly the "never its arguments" test. **Surprise:** my first break test broke two places at once and failed two tests; redone with one change, it failed one. A fake browser that sent a value for a name not on the card hung the test until its 15-second timeout, because the card refuses unknown names; each call now sends only its own names. **Learned:** catching the card's outcome in one place (`askWithCard`) covers `set`, `setup` and `run` with no per-command code. Docs follow in S-49. |
 | S-49 | done 2026-11-09 (PR #49) | The docs for `keyprompt log`: a commands-table row and an "Activity log" section in the README (real output, what writes a line, what it holds and never holds, the cap, on and silent, a real `--json` entry), `log` and `entries` in the JSON results table and the skill, and the CHANGELOG entry. **Proved:** the output was captured from `bin/keyprompt.mjs` with the test-only fake store and fake browser; only the scratch folder was replaced with `/Users/you`, as the README says; a scratch check matched all 13 example lines and the inline entry; 210 of 210. **Learned:** an example with a real folder in it cannot be copied as is, so the README says which part will differ instead of pretending the paths are real. |
-| S-44 … S-46 | todo | — |
+| S-44 | done 2026-11-09 (PR #50) | R-6 answered from live primary sources, and S-45 now names the choice. **Found:** the 2026-07-28 spec dropped the handshake and asks during a tool call through an `input_required` answer and a retry, while VS Code still speaks 2025-11-25, so a server must speak both. URL mode reaches Claude Code (interactive only) and VS Code; Codex declines any non-https URL, so it would decline the card; Gemini CLI, Zed and Cline have none; Cursor and Windsurf are unconfirmed. The spec's MUST NOT on "pre-authenticated" URLs may catch the card's one-time-token URL. SDK v2 brings 3 packages, about 14.5 MB and a Node 20 floor; SDK v1 brings 17 dependencies. **How:** a research subagent read everything live; I re-checked four claims myself (both SDKs on npm, Codex's URL check at its tag, Claude Code's changelog) and all four matched. **Surprise:** two of R-6's 2026-11-05 assumptions no longer hold: one way of asking, and "Codex unconfirmed" (it is confirmed, and it declines). **Learned:** a client that "supports URL mode" can still refuse the URL keyprompt would send; check the client's own URL rules, not just its capability list. |
+| S-45, S-46 | todo | — |
 
 ---
 
@@ -977,12 +978,19 @@ Order and cadence are Abhishek's (D-10, D-13): one PR, then stop. S-38 and S-39 
 **Acceptance:** WHEN S-44 is done THEN R-6 SHALL be answered with sources, and S-45 SHALL name the dependency choice Abhishek has to make.
 **Must not:** write code; install or add an MCP SDK.
 
-### S-45 — `keyprompt mcp` (outline: waits on S-44)
+### S-45 — `keyprompt mcp` (waits on Abhishek's choice)
 
-**Depends on:** S-44 done; Abhishek's yes or no on a dependency (an MCP SDK, or JSON-RPC over stdio written by hand; invariant 7). **Blocks:** S-46 if it ships in 0.3.0.
-**Research:** from S-44. **Model:** opus.
-**Confidence:** 0.3 (low) — nothing is known enough to build.
-**Must not:** return a value through MCP (invariant 1); add a dependency without Abhishek's yes.
+**Depends on:** S-44 done (R-6 answered 2026-11-09) and Abhishek's choice among four options. The facts behind each are in R-6.
+  - **(a) Park it.** Ship 0.3.0 without MCP and look again when Codex or Cursor can open a local card. Today URL mode reaches only Claude Code (interactive) and VS Code, and both can already run `keyprompt` through a shell.
+  - **(b) Tools only, hand-written, no new dependency.** A stdio server with one `request_secret` tool that opens the card itself, as `keyprompt set` does, and returns names only. It works in any MCP client that has tools, but the key is still used only through `keyprompt run`, which needs a shell.
+  - **(c) URL mode with SDK v2.** `@modelcontextprotocol/server` 2.4.0 brings three new packages, about 14.5 MB, and raises keyprompt's Node floor from 18.17 to 20 (invariant 7).
+  - **(d) URL mode, hand-written, both protocol versions.** No new dependency, but the most code: the message list in R-6.
+
+**Blocks:** S-46, only if it ships in 0.3.0.
+**Research:** R-6. Before (c) or (d) are built, two things must be settled: a hands-on test of whether Claude Code and VS Code open an `http://127.0.0.1` URL (Codex does not), and whether the card's one-time-token URL breaks the spec's MUST NOT on "pre-authenticated" URLs.
+**Model:** opus.
+**Confidence:** 0.9 for (a). 0.6 (low) for (b), (c) or (d) as written: each needs its own grill and, for (c) and (d), the two checks above. Not ready to build until then.
+**Must not:** return a value through MCP (invariant 1); put the card's URL in a tool result, where it would pass through the model; add a dependency without Abhishek's yes.
 
 ### S-46 — Release 0.3.0 (owner step)
 
