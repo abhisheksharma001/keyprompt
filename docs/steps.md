@@ -1029,7 +1029,7 @@ Order and cadence are Abhishek's (D-10, D-13): one PR, then stop. S-38 and S-39 
 **Research:** none. **Model:** opus — the card server is security-sensitive (invariant 4).
 **Senior review:** required — it changes the card server's lifecycle (how a card that collects a secret ends); Opus in a fresh session reads the PR before merge.
 **Confidence:** 0.8 — the abort path is new code in the card server.
-**Files:** `src/card-server.mjs`, `src/mcp.mjs`, `src/cli.mjs`, test/b21-cancel-closes-card.test.mjs (new).
+**Files:** `src/card-server.mjs`, `src/mcp.mjs`, `src/cli.mjs`, `src/activity.mjs` (the `withdrawn` event), `docs/prd/v0-3.md`, test/b21-cancel-closes-card.test.mjs (new). Found while building: the log's "The person cancelled" would be false for a client's cancel, so a new event says who did it; the README's event list follows in S-55.
 **Locked tests:** the same list as S-51.
 **Today:** a cancelled `request_secret` keeps its card open and the one-card lock for up to 5 minutes; an open card keeps `keyprompt mcp` alive after stdin closes.
 **Change:** `requestSecretWithCard` takes an optional `signal` (an AbortSignal). On abort it ends the card the way Cancel does: no submit is accepted after that, the server closes, and the promise rejects with exit code 4 and a message that the client cancelled. A submit already being saved finishes first, as the deadline already does. `serveMcp` keeps one AbortController per in-flight `tools/call`, aborts it on `notifications/cancelled` for that id, and aborts all of them when the input ends. `mcpTools().request_secret` passes the signal through `askToSet` and `askWithCard`.
@@ -1077,7 +1077,7 @@ Order and cadence are Abhishek's (D-10, D-13): one PR, then stop. S-38 and S-39 
 **Files:** `SECURITY.md`, `README.md` (if a sentence there claims more than the code).
 **Locked tests:** the same list as S-51.
 **Today:** `SECURITY.md` does not mention either feature.
-**Change:** add to "What it does not protect against": the log is not tamper-proof and its folders can name a client; a `run` line is written when the command ends, so a killed keyprompt leaves none; the MCP card's "who is asking" is the client's own claim; MCP tools still need `keyprompt run` to use a key.
+**Change:** in the README's activity log section, add `withdrawn` to the list of events (S-52). Add to "What it does not protect against": the log is not tamper-proof and its folders can name a client; a `run` line is written when the command ends, so a killed keyprompt leaves none; the MCP card's "who is asking" is the client's own claim; MCP tools still need `keyprompt run` to use a key.
 **Acceptance:** WHEN a person reads `SECURITY.md` THEN they SHALL find each of those four limits.
 **Verify:** `grep -n` for each limit in `SECURITY.md`; `KEYPROMPT_STORE_TEST=1 npm test`.
 **Must not:** change any file under `src/`, `bin/` or `test/`.
