@@ -98,3 +98,54 @@ test('B-22: a cancel for a request that is not in flight does not silence a late
   assert.deepEqual(await c.next(), { jsonrpc: '2.0', id: 5, result: {} })
   await c.end()
 })
+
+test('B-22: an id still in flight cannot be reused by any method, so a later cancel still reaches its card', async () => {
+  const input = new PassThrough()
+  /** @type {object[]} */
+  const out = []
+  let aborted = false
+  /** @type {() => void} */
+  let finish = () => {}
+  const served = serveMcp({
+    input,
+    output: { write: (text) => out.push(JSON.parse(text)) },
+    version: '9.9.9',
+    tools: {
+      request_secret: (_args, _client, signal) =>
+        new Promise((done) => {
+          finish = () => done({ result: { status: 'saved' }, isError: false })
+          signal.addEventListener('abort', () => {
+            aborted = true
+            done({ result: { status: 'cancelled' }, isError: false })
+          })
+        }),
+      check_secrets: async () => ({ result: { status: 'saved' }, isError: false }),
+    },
+  })
+  const send = (message) => input.write(`${JSON.stringify(message)}\n`)
+  const settle = () => new Promise((done) => setTimeout(done, 50))
+  send(rpc(7, 'tools/call', { name: 'request_secret', arguments: { fields: ['A_KEY'] } }))
+  send(rpc(7, 'ping'))
+  await settle()
+  assert.deepEqual(out, [{ jsonrpc: '2.0', id: 7, error: { code: -32600, message: 'Request id already in use.' } }])
+  send({ jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: 7 } })
+  await settle()
+  assert.equal(aborted, true, 'the cancel reached the card')
+  finish()
+  input.end()
+  await served
+  assert.equal(out.length, 1, 'the cancelled request got no answer')
+})
+
+test('B-22: initialize inside a 2025-03-26 batch is refused, and the version does not change', async () => {
+  const c = connect()
+  c.send(rpc(1, 'initialize', { protocolVersion: '2025-03-26' }))
+  await c.next()
+  c.send([rpc(2, 'initialize', { protocolVersion: '2025-11-25' }), rpc(3, 'ping')])
+  const batch = await c.next()
+  assert.deepEqual(batch.find((m) => m.id === 2), { jsonrpc: '2.0', id: 2, error: { code: -32600, message: 'Invalid request.' } })
+  // Still 2025-03-26: a batch is still accepted.
+  c.send([rpc(4, 'ping')])
+  assert.deepEqual(await c.next(), [{ jsonrpc: '2.0', id: 4, result: {} }])
+  await c.end()
+})

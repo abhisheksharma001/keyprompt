@@ -24,7 +24,7 @@ export const PROTOCOL_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26', '202
  */
 export const END_GRACE_MS = 5000
 
-/** A line longer than this is not kept: it is refused as soon as it passes this size (B-22). */
+/** A line longer than this many characters is not kept: it is refused as soon as it passes this size (B-22). */
 export const MAX_LINE = 1024 * 1024
 
 /**
@@ -40,18 +40,19 @@ export async function* boundedLines(input, max) {
   let line = ''
   let dropping = false
   for await (const chunk of input) {
-    let text = typeof chunk === 'string' ? chunk : decoder.write(chunk)
-    while (text.length > 0) {
-      const end = text.indexOf('\n')
+    const text = typeof chunk === 'string' ? chunk : decoder.write(chunk)
+    // Scan by index: each line is copied once, not the rest of the chunk once per line.
+    let start = 0
+    while (start < text.length) {
+      const end = text.indexOf('\n', start)
       if (dropping) {
         if (end === -1) break
         dropping = false
-        text = text.slice(end + 1)
+        start = end + 1
         continue
       }
       if (end === -1) {
-        line += text
-        text = ''
+        line += text.slice(start)
         if (line.length > max) {
           yield null
           line = ''
@@ -59,9 +60,9 @@ export async function* boundedLines(input, max) {
         }
         break
       }
-      const whole = line + text.slice(0, end)
+      const whole = line + text.slice(start, end)
       line = ''
-      text = text.slice(end + 1)
+      start = end + 1
       yield whole.length > max ? null : whole.endsWith('\r') ? whole.slice(0, -1) : whole
     }
   }
@@ -143,7 +144,8 @@ export async function serveMcp({ input, output, version, tools }) {
   const pending = []
 
   const send = (/** @type {object} */ message) => output.write(`${JSON.stringify(message)}\n`)
-  const fail = (/** @type {unknown} */ id, /** @type {number} */ code, /** @type {string} */ message) => send({ jsonrpc: '2.0', id, error: { code, message } })
+  /** The one shape of a JSON-RPC error response. */
+  const errorResponse = (/** @type {unknown} */ id, /** @type {number} */ code, /** @type {string} */ message) => ({ jsonrpc: '2.0', id, error: { code, message } })
 
   /**
    * The response to one request.
@@ -155,7 +157,7 @@ export async function serveMcp({ input, output, version, tools }) {
     const params = message.params && typeof message.params === 'object' ? /** @type {Record<string, any>} */ (message.params) : {}
     /** @param {object} result */
     const reply = (result) => ({ jsonrpc: '2.0', id, result })
-    const fail = (/** @type {number} */ code, /** @type {string} */ text) => ({ jsonrpc: '2.0', id, error: { code, message: text } })
+    const error = (/** @type {number} */ code, /** @type {string} */ text) => errorResponse(id, code, text)
     switch (method) {
       case 'initialize': {
         const asked = typeof params.protocolVersion === 'string' ? params.protocolVersion : ''
@@ -173,12 +175,11 @@ export async function serveMcp({ input, output, version, tools }) {
         return reply({ tools: TOOLS })
       case 'tools/call': {
         const name = params.name
-        if (name !== 'request_secret' && name !== 'check_secrets') return fail(ERROR.INVALID_PARAMS, 'Unknown tool. keyprompt has request_secret and check_secrets.')
+        if (name !== 'request_secret' && name !== 'check_secrets') return error(ERROR.INVALID_PARAMS, 'Unknown tool. keyprompt has request_secret and check_secrets.')
         /** @type {import('./mcp.mjs').ToolAnswer} */
         let answered
         if (name === 'request_secret') {
-          // One abort per card, so a cancel reaches the right one; an id still in flight cannot be reused.
-          if (inFlight.has(id)) return fail(ERROR.INVALID_REQUEST, 'Request id already in use.')
+          // One abort per card, so a cancel reaches the right one.
           const controller = new AbortController()
           inFlight.set(id, controller)
           try {
@@ -194,26 +195,27 @@ export async function serveMcp({ input, output, version, tools }) {
       }
       default:
         // Also the answer to the 2026-07-28 probe `server/discover`, which makes a dual-era client fall back to `initialize`.
-        return fail(ERROR.METHOD_NOT_FOUND, 'Method not found.')
+        return error(ERROR.METHOD_NOT_FOUND, 'Method not found.')
     }
   }
 
-  const invalid = { jsonrpc: '2.0', id: null, error: { code: ERROR.INVALID_REQUEST, message: 'Invalid request.' } }
+  const invalid = errorResponse(null, ERROR.INVALID_REQUEST, 'Invalid request.')
 
   /**
    * One message, answered: the response to send, or null for a notification,
    * a client's response or a request the client cancelled.
    * @param {unknown} message
+   * @param {boolean} [inBatch]
    * @returns {Promise<object | null>}
    */
-  async function handle(message) {
+  async function handle(message, inBatch = false) {
     if (message === null || typeof message !== 'object' || Array.isArray(message)) return invalid
     const m = /** @type {Record<string, unknown>} */ (message)
     const isRequest = 'id' in m && (typeof m.id === 'string' || typeof m.id === 'number')
     if (typeof m.method !== 'string') {
       // A response from the client: this server sends no requests, so there is nothing to match.
       if ('result' in m || 'error' in m) return null
-      return isRequest ? { ...invalid, id: m.id } : invalid
+      return isRequest ? errorResponse(m.id, ERROR.INVALID_REQUEST, 'Invalid request.') : invalid
     }
     if (!isRequest) {
       if (m.method === 'notifications/cancelled') {
@@ -227,9 +229,13 @@ export async function serveMcp({ input, output, version, tools }) {
       // notifications/initialized and any other notification need no answer.
       return null
     }
+    // An id still in flight cannot be reused, whatever the method, so a cancel always reaches the right request.
+    if (active.has(m.id)) return errorResponse(m.id, ERROR.INVALID_REQUEST, 'Request id already in use.')
+    // 2025-03-26: "the initialize request MUST NOT be part of a JSON-RPC batch".
+    if (inBatch && m.method === 'initialize') return errorResponse(m.id, ERROR.INVALID_REQUEST, 'Invalid request.')
     active.add(m.id)
     try {
-      const response = await answer(m).catch(() => ({ jsonrpc: '2.0', id: m.id, error: { code: -32603, message: 'Internal error.' } }))
+      const response = await answer(m).catch(() => errorResponse(m.id, -32603, 'Internal error.'))
       return cancelled.has(m.id) ? null : response
     } finally {
       active.delete(m.id)
@@ -239,7 +245,7 @@ export async function serveMcp({ input, output, version, tools }) {
 
   for await (const line of boundedLines(input, MAX_LINE)) {
     if (line === null) {
-      fail(null, ERROR.INVALID_REQUEST, 'Message too long.')
+      send(errorResponse(null, ERROR.INVALID_REQUEST, 'Message too long.'))
       continue
     }
     if (line.trim().length === 0) continue
@@ -248,7 +254,7 @@ export async function serveMcp({ input, output, version, tools }) {
     try {
       message = JSON.parse(line)
     } catch {
-      fail(null, ERROR.PARSE, 'Parse error.')
+      send(errorResponse(null, ERROR.PARSE, 'Parse error.'))
       continue
     }
     // JSON-RPC batches exist only in 2025-03-26, which requires them; every other version refuses an array (B-22).
@@ -258,7 +264,8 @@ export async function serveMcp({ input, output, version, tools }) {
         continue
       }
       pending.push(
-        Promise.all(message.map((item) => handle(item))).then((responses) => {
+        // One array, sent once every item is done: JSON-RPC 2.0 answers a batch after all of it has been processed.
+        Promise.all(message.map((item) => handle(item, true))).then((responses) => {
           const answered = responses.filter((r) => r !== null)
           if (answered.length > 0) send(answered)
         }),
