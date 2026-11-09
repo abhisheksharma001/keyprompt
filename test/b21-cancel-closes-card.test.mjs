@@ -136,6 +136,8 @@ store.write = async () => { throw new Error('no save expected') }
     // Once the cancelled call has finished its own cleanup (its log line is written), it must not free B's lock.
     const logPath = join(dir, 'activity.jsonl')
     for (let i = 0; i < 100 && !(existsSync(logPath) && readFileSync(logPath, 'utf8').includes('A_KEY')); i++) await new Promise((done) => setTimeout(done, 20))
+    // Its last cleanup runs just after the log line lands; give it a moment so a wrong release would already have happened.
+    await new Promise((done) => setTimeout(done, 200))
     send({ jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'request_secret', arguments: { fields: ['C_KEY'] } } })
     const refused = await answer(4)
     assert.equal(refused.result.structuredContent.message, 'A card is already open. Wait for its answer before asking again.')
