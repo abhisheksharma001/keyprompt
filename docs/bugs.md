@@ -273,3 +273,99 @@ The deadline is the real-world path. Someone presses Save near the end of the 5 
 **Escaped past:** the docs steps S-49 and S-50, whose files did not include `SECURITY.md`.
 **New check:** none possible as a test of meaning; S-55's Verify greps `SECURITY.md` for each limit.
 **Fix step:** S-55.
+
+### B-25 — The guard lets plain forms of a direct read through
+
+**Seen:** 2026-11-09, by the v0.3 feature-end audit (S-56, `docs/audits/v0-3-feature-end.md`), re-run through `node bin/keyprompt.mjs guard pre-tool-use` at 23:50 IST. Each of these printed nothing and exited 0, so Claude Code would run it: `timeout 5 secret-tool lookup service keyprompt account X`; `nice -n 10 security find-generic-password -s keyprompt -w`; `env -u FOO security …`; `security \` plus a line break plus `find-generic-password -s keyprompt -w`; `security find-generic-password -skeyprompt -w`; `keyprompt list | xargs -I{} security find-generic-password -s keyprompt -a {} -w`; in PowerShell, `Set-Location "C:\proj\"; Get-StoredCredential -Target keyprompt:X` and `CredentialManager\Get-StoredCredential -Target keyprompt:X`. The plain read was denied in the same run. Found by the PR's `/code-review` and re-run 2026-11-10: `stdbuf -oL security find-generic-password -s keyprompt -w` and `security find-generic-password -wskeyprompt` pass too. Causes: `timeout`, `xargs` and `stdbuf` are not in `WRAPPERS` (`src/guard.mjs:25`), and no list of wrappers can be complete (`env -S`, `setsid`, `flock`, `find -exec`); only `sudo` and `doas` options that take a value are skipped (`src/guard.mjs:192`); option values are matched only as separate words, not getopt-style clusters; `splitShell` (`src/guard.mjs:47-135`) keeps a backslash-newline inside the next word and reads PowerShell text with POSIX escapes, so `\"` becomes an escaped quote and `CredentialManager\Get-StoredCredential` loses its backslash, leaving no separator for the module prefix to be cut at (`CredentialManager/Get-StoredCredential` is already denied).
+**Requirement:** G1 in `docs/prd/v0-3.md`.
+**Needs first:** nothing.
+**Blocks:** B-27 (the docs can only be made true once the refused forms are settled).
+**Files:** `src/guard.mjs`; a new test file.
+**Research:** lookup (PowerShell's escape character, from Microsoft's about_Quoting_Rules page, read live; `security`'s option parsing, from its man page) · **Model:** opus · **Confidence:** 0.95 that these forms pass (re-run); 0.75 on the fix S-57 names (find the read anywhere among a command's words unless that command only prints text), because it trades a wrapper list for a list of text-only commands.
+**Introduced by:** PR #41, bc20dbe (S-38).
+**Escaped past:** the step's tests: they covered the forms R-12 listed and `sudo -u`, not wrappers whose options take a value, line continuations, attached option values or PowerShell's own quoting.
+**New check:** test/b25-guard-plain-forms.test.mjs, one case per form above (must fail on main before the fix).
+**Fix step:** S-57.
+
+### B-26 — The guard refuses a commit message written with a here-document
+
+**Seen:** 2026-11-09, S-56 audit, re-run at 23:50 IST. `git commit -m "$(cat <<'EOF'` / a line quoting `security find-generic-password -s keyprompt -w` in backticks / `EOF` / `)"` is denied, and so is a here-document line that starts with the read, and `gh pr create --body "$(cat <<'EOF' …)"`. A plain `git commit -m "…"` with the same words passes. Cause: `splitShell` (`src/guard.mjs:47-135`) does not know here-documents, so it parses the body as shell; backticks inside a quoted (`'EOF'`) body, which bash leaves as text, become a command. `README.md:285` already says the guard can refuse "a `cat <<EOF` block written to a file", but G1b names commit messages, and this repo's own commit messages quote these reads. Also seen, rarer: the CredRead rule matches anywhere in the text (`src/guard.mjs:243-248`), so `Select-String -Pattern 'CredRead'` next to `Add-Type` and a `keyprompt:` string is refused, and a `#` comment is parsed as a command.
+**Requirement:** G1b in `docs/prd/v0-3.md`.
+**Needs first:** S-57 (same file).
+**Blocks:** B-27.
+**Files:** `src/guard.mjs`; a new test file.
+**Research:** none (bash's here-document rules: a quoted delimiter leaves the body as text; an unquoted one still runs `$( )` and backticks, which must stay refused) · **Model:** opus · **Confidence:** 0.95 that it happens (re-run); 0.8 on the fix. The PR's `/code-review` showed a trap: a here-document fed to a shell (`bash <<'EOF'` with a read in its body) is denied today only because of this same blindness (re-run 2026-11-10), so the fix may treat a body as text only when the command it feeds just prints or stores it.
+**Introduced by:** PR #41, bc20dbe (S-38).
+**Escaped past:** the step's tests: the commit-message case was tested only as `-m "…"`.
+**New check:** test/b26-guard-heredoc.test.mjs: a quoted-delimiter body fed to `cat` passes; an unquoted body with a backtick read is still denied; a body fed to `bash`, `sh`, `zsh`, `pwsh`, `python`, `node` or `eval`, with either delimiter, is still denied (must fail on main before the fix).
+**Fix step:** S-58.
+
+### B-27 — `SECURITY.md` and the README say the guard refuses more than it does
+
+**Seen:** 2026-11-09, S-56 audit. `SECURITY.md:19` and `README.md:280` say the guard refuses "a Bash or PowerShell command that runs the store's own read tool on a keyprompt item", and the limits they list (`SECURITY.md:20`, `README.md:285`) name only a script file, an encoded command and another tool. The B-25 forms run the store's read tool on a keyprompt item and are none of those, so the sentence is not literally true. Nor are two forms the audit does not count against G1 (the PRD's "Honest limits" allow them) but that pass the guard: a read built from a shell variable (`S=keyprompt; security find-generic-password -s $S -w`, re-run 2026-11-10) and text piped into a shell (`echo "<read>" | bash`).
+**Requirement:** G4 in `docs/prd/v0-3.md`; invariant 9.
+**Needs first:** S-57 and S-58 merged, so the words describe what the guard then refuses and what it still misses.
+**Blocks:** nothing.
+**Files:** `SECURITY.md`, `README.md`, `skill/SKILL.md` if it repeats the sentence; a new test file.
+**Research:** none · **Model:** sonnet · **Confidence:** 0.9.
+**Introduced by:** PR #43, f031f76 (S-40).
+**Escaped past:** the docs step's review: the sentence was checked against the list of reads, not against the guard's parser.
+**New check:** test/b27-guard-docs.test.mjs: the limits sentence names "a form the guard does not parse" (or whatever words S-59 settles), the way test/b24-security-limits.test.mjs pins the log's limits.
+**Fix step:** S-59.
+
+### B-28 — A `--json` failure can repeat a typed token, and its message does not always say why
+
+**Seen:** 2026-11-09, S-56 audit, re-run at 23:52 IST in a throwaway home. (1) `keyprompt -sk_live_PASTEDKEY123 list --json` printed `{"command":"list","status":"invalid_usage","names":[],"exitCode":2,"message":"Unknown command \"-sk_live_PASTEDKEY123\". See keyprompt --help."}`: the typed token, which could be a pasted key, is in the result, and `command` names a command that was never recognized (the PRD says `null`). `setup --json` and `log --json` do the same. Cause: `jsonRequest` skips tokens starting with `-` when it picks the command (`src/cli.mjs:253`), `parseArgs` takes a single-dash token as the command (`src/cli.mjs:229-232`), and the "Unknown command" error (`src/cli.mjs:1044`) has no `jsonMessage`. (2) `has A1,…,A13 --json` says "A card can ask for at most 12 values at once." (`src/names.mjs:47`, reached through `src/cli.mjs:737`), though `has` opens no card and text mode calls the input an invalid name; `check_secrets` with 13 names gets the same sentence; `-x has FOO --json` says "A name is not a valid secret name", because the name check at `src/cli.mjs:737` reads `has` as a name.
+**Requirement:** J in `docs/prd/v0-3.md` ("without anything keyprompt did not write itself", "a message … that says why"); invariant 9.
+**Needs first:** nothing.
+**Blocks:** nothing.
+**Files:** `src/cli.mjs`, `src/names.mjs`; a new test file.
+**Research:** none · **Model:** sonnet · **Confidence:** 0.95 (re-run).
+**Introduced by:** (1) PR #44, 87611bb (S-41: how `jsonRequest` picks the command) and PR #45, c8e1ea1 (S-47: the `message` field, without a `jsonMessage` for an unknown command); (2) PR #45, c8e1ea1.
+**Escaped past:** S-47's tests: they covered an unknown option, hint and name after the command, not a token before it, and not a list over 12.
+**New check:** test/b28-json-messages.test.mjs (must fail on main before the fix).
+**Fix step:** S-60.
+
+### B-29 — `setup` does not read dotenv's `KEY: value` form, and reads lines inside such a value as names
+
+**Seen:** 2026-11-09, S-56 audit; narrowed 2026-11-10 after the PR's `/code-review`. dotenv accepts `KEY: value` as well as `KEY=value` (motdotla/dotenv lib/main.js line 8 at 4c54504, read live 2026-11-10; its default parser is still that regex, line 19). `exampleNames` (`src/setup.mjs:56-81`) reads only `NAME=` lines, so for `B_KEY: "start` / `INSIDE_VALUE_TWO=…` / `end"` it misses `B_KEY` and, because it never sees the quote open, reads `INSIDE_VALUE_TWO` (text inside B_KEY's value) as a name; dotenv's own regex gives `B_KEY` alone (both run 2026-11-10). Such a name is reported, put in the run line and `--json`'s `skipped`, or asked for on the card. Only name-shaped text before an inner `=` can show; what follows that `=` never does, so F's words hold. Not a case: `MY KEY="-----BEGIN` with a `NAME=` line inside, which the audit first counted; dotenv's key pattern (`[\w.-]+`) rejects `MY KEY` too and reads the inner line as a key, so keyprompt agrees with dotenv.
+**Requirement:** the PRD does not cover it (F's file format is `NAME=...` lines only).
+**Needs first:** nothing.
+**Blocks:** nothing.
+**Files:** `src/setup.mjs`; a new test file.
+**Research:** none (dotenv's rule read above) · **Model:** sonnet · **Confidence:** 0.9 (run).
+**Introduced by:** PR #46, cee769b (S-42).
+**Escaped past:** the grill and the spec: the file format was taken as `NAME=...` without checking dotenv's other separator.
+**New check:** test/b29-setup-colon-form.test.mjs (must fail on main before the fix).
+**Fix step:** S-61.
+
+### B-30 — On Windows, a `run` whose command word is not a program logs argument text as the program
+
+**Seen:** 2026-11-09, S-56 audit, by reading (not run on Windows). `keyprompt run K -- "curl https://h/v1?key=abc"` would log `program: "v1?key=abc"`, and `"python -c print('x')"` would log all of it. The PR's `/code-review` added that no space is needed: `"https://h/v1?key=abc"` alone would log `v1?key=abc` too. `programName` (`src/activity.mjs:123-125`) only drops the folder. On Windows, cross-spawn 7.0.6 sends a command it cannot resolve, and that does not end in `.exe` or `.com`, through `cmd.exe` (cross-spawn lib/parse.js lines 36-58, read 2026-11-09 from the installed copy), so the spawn succeeds, `cmd.exe` exits 1, and the run line is written (`src/cli.mjs:868-871`). On macOS the same input fails to spawn and writes no line (seen by the audit's L reviewer).
+**Requirement:** L in `docs/prd/v0-3.md` ("SHALL NOT write … a command's arguments"), D-20.
+**Needs first:** nothing.
+**Blocks:** nothing.
+**Files:** `src/activity.mjs`; a new test file (a unit test of `programName` runs everywhere; a CLI test runs on CI's Windows jobs).
+**Research:** none · **Model:** sonnet · **Confidence:** 0.7 — read in both codebases, not run on Windows; the fix step's first test, on CI's Windows jobs, settles it.
+**Introduced by:** PR #48, 12b9e7b (S-43).
+**Escaped past:** the grill and the spec: "the program's own name" assumed the first word is a program; the tests ran it on POSIX only.
+**New check:** test/b30-program-name.test.mjs (must fail on main before the fix).
+**Fix step:** S-62.
+
+### B-31 — The v0.3 PRD's detail sections say five things the code does not do
+
+**Seen:** 2026-11-09, S-56 audit. Not on an acceptance line, but the PRD is what later steps are written from:
+1. "Setup (S-42)" says the run line names "every name that is saved now"; it also names those already saved (`src/setup.mjs:157`, pinned by `test/cli.test.mjs:1081`).
+2. "Activity log (S-43)" says "a folder that cannot be written costs no wait"; a stale lock in a read-only folder costs about 2 seconds per command (`src/activity.mjs:82-89`, seen by the L reviewer).
+3. The same section says a lock path that is not a file "stops the waiting"; it does not say that the trim is then skipped every time, so the file grows past 1,000 lines (seen: 1,025), as it also does in a read-only home with a writable log.
+4. G3 says that on uninstall "only those entries SHALL go"; a pre-existing empty `"hooks": {}` or event array is removed too (`src/install-guard.mjs:149-152`). Claude Code reads no difference.
+5. "MCP server (S-45)" says the card's "who is asking" is the client's own name; with no `clientInfo` name it falls back to "Claude Code in <folder>" (when `CLAUDECODE` is set) or "a command in <folder>" (`src/cli.mjs:351`, 653-655).
+**Requirement:** the standard's rule that the spec is corrected where it is wrong (mystandard section 5).
+**Needs first:** Abhishek's choice on item 3 (say so, or trim without the lock when the lock path is not a file); the others are words.
+**Blocks:** nothing.
+**Files:** `docs/prd/v0-3.md`; `src/activity.mjs` only if item 3 changes code.
+**Research:** none · **Model:** sonnet · **Confidence:** 0.9.
+**Introduced by:** S-42 (PR #46), S-54 (PR #56), S-39 (PR #42), S-45 (PR #51).
+**Escaped past:** the review of each step's spec against its own code.
+**New check:** none possible as a test of meaning; S-63's Verify quotes each corrected sentence next to the code line it describes.
+**Fix step:** S-63.
