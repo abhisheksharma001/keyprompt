@@ -8,11 +8,12 @@ import { joinNames } from './save.mjs'
 /**
  * A names-only record of what keyprompt did with each name (S-43, D-20): when
  * a value was saved, handed to a command, deleted, or not given because the
- * person chose Later, cancelled or let the card time out. A line never holds a
+ * person chose Later, cancelled or let the card time out, or an MCP client
+ * withdrew its request. A line never holds a
  * value, a reason, an environment, a command's arguments or its output; only
  * the program's name and the folder it ran in.
  *
- * @typedef {'saved' | 'run' | 'deleted' | 'deferred' | 'cancelled' | 'timed_out'} ActivityEvent
+ * @typedef {'saved' | 'run' | 'deleted' | 'deferred' | 'cancelled' | 'timed_out' | 'withdrawn'} ActivityEvent
  * @typedef {{ time: string, event: ActivityEvent, command: string, names: string[], exitCode: number, program?: string, folder: string }} ActivityEntry
  */
 
@@ -22,7 +23,7 @@ export const MAX_ENTRIES = 1000
 /** `keyprompt log` shows this many, the newest ones. */
 export const SHOWN_ENTRIES = 50
 
-const EVENTS = new Set(['saved', 'run', 'deleted', 'deferred', 'cancelled', 'timed_out'])
+const EVENTS = new Set(['saved', 'run', 'deleted', 'deferred', 'cancelled', 'timed_out', 'withdrawn'])
 const COMMANDS = new Set(['set', 'setup', 'run', 'delete', 'mcp'])
 
 export function activityPath() {
@@ -152,6 +153,8 @@ function describe(entry) {
       return `The person cancelled the card for ${names} (${entry.command})`
     case 'timed_out':
       return `Nobody filled in the card for ${names} (${entry.command})`
+    case 'withdrawn':
+      return `The agent withdrew the card for ${names} (${entry.command})`
   }
 }
 

@@ -5,7 +5,7 @@ import { createInterface } from 'node:readline/promises'
 import { fileURLToPath } from 'node:url'
 import { activityEntry, activityPath, activityReport, readActivity, recordActivity, SHOWN_ENTRIES } from './activity.mjs'
 import { openInBrowser } from './browser.mjs'
-import { requestSecretWithCard } from './card-server.mjs'
+import { CardWithdrawnError, requestSecretWithCard } from './card-server.mjs'
 import { catalogPath, readCatalog, recordRemoved, recordSavedMany } from './catalog.mjs'
 import { collectSecrets } from './collect.mjs'
 import { EXIT, KeypromptError } from './errors.mjs'
@@ -350,25 +350,33 @@ function requesterLabel(/** @type {string | undefined} */ by) {
  * a failed save shows on the card. `remember: false` hands them to this run only.
  * @param {import('./store/index.mjs').SecretStore} store
  * @param {import('./card-server.mjs').CardField[]} fields
- * @param {{ command: 'set' | 'setup' | 'run' | 'mcp', reason?: string, by?: string, replacing: boolean, allowSessionOnly: boolean, masked?: boolean, allowEmpty?: boolean, warnings?: string[] }} options
+ * @param {{ command: 'set' | 'setup' | 'run' | 'mcp', reason?: string, by?: string, replacing: boolean, allowSessionOnly: boolean, masked?: boolean, allowEmpty?: boolean, warnings?: string[], signal?: AbortSignal, onClosed?: () => void }} options
+ *   `onClosed` runs the moment the card stops taking saves, before anything is logged.
  */
 async function askWithCard(store, fields, options) {
   // Every caller checks this first; a card with no boxes would say things that are not true (B-20).
   if (fields.length === 0) throw new KeypromptError('keyprompt was asked to open a card with no boxes, so it did not.')
+  // Withdrawn before any card opened: nothing to say and nothing to log.
+  if (options.signal?.aborted) throw new CardWithdrawnError()
   const names = fields.map((f) => f.name)
   process.stderr.write(`keyprompt: opened a secure card in the browser for ${joinNames(names)}. Waiting for it to be filled in...\n`)
+  /** @type {Awaited<ReturnType<typeof openCard>>} */
+  let answer
   try {
-    const answer = await openCard(store, fields, options)
-    const saved = names.filter((name) => answer.values.has(name))
-    if (answer.remembered && saved.length > 0) {
-      await recordActivity(activityEntry({ event: 'saved', command: options.command, names: saved, exitCode: EXIT.OK }))
-    }
-    return answer
+    answer = await openCard(store, fields, options)
   } catch (error) {
-    const closed = error instanceof KeypromptError ? CARD_CLOSED[error.exitCode] : undefined
+    options.onClosed?.()
+    // A cancel by the MCP client is not the person's Cancel: the log says who ended the card (B-21).
+    const closed = error instanceof CardWithdrawnError ? 'withdrawn' : error instanceof KeypromptError ? CARD_CLOSED[error.exitCode] : undefined
     if (closed) await recordActivity(activityEntry({ event: closed, command: options.command, names, exitCode: error.exitCode }))
     throw error
   }
+  options.onClosed?.()
+  const saved = names.filter((name) => answer.values.has(name))
+  if (answer.remembered && saved.length > 0) {
+    await recordActivity(activityEntry({ event: 'saved', command: options.command, names: saved, exitCode: EXIT.OK }))
+  }
+  return answer
 }
 
 /** The activity-log event for a card that ended without a save (S-43). */
@@ -393,6 +401,7 @@ function openCard(store, fields, options) {
     allowSessionOnly: options.allowSessionOnly,
     masked: options.masked,
     allowEmpty: options.allowEmpty,
+    signal: options.signal,
     open: openInBrowser,
     onSubmit: async (values, remember) => {
       if (!remember) {
@@ -569,7 +578,7 @@ export function demoRequest() {
  * What `set` does, shared with the `request_secret` MCP tool: read which
  * fields are saved, then ask for all of them on one card.
  * @param {ReturnType<typeof parseFields>} parsed
- * @param {{ command: 'set' | 'mcp', reason?: string, by?: string, warnings?: string[] }} options
+ * @param {{ command: 'set' | 'mcp', reason?: string, by?: string, warnings?: string[], signal?: AbortSignal, onClosed?: () => void }} options
  */
 async function askToSet(parsed, options) {
   const store = getStore()
@@ -583,6 +592,8 @@ async function askToSet(parsed, options) {
     replacing: fields.every((f) => f.saved),
     allowSessionOnly: false,
     warnings: options.warnings,
+    signal: options.signal,
+    onClosed: options.onClosed,
   })
   return { store, fields, values }
 }
@@ -642,7 +653,8 @@ function mcpRequester(/** @type {import('./mcp.mjs').ClientInfo} */ client) {
  * @returns {import('./mcp.mjs').Tools}
  */
 export function mcpTools() {
-  let cardOpen = false
+  /** The call whose card is open, or null. A token, so a cancelled call never frees a later call's card. */
+  let cardOwner = /** @type {object | null} */ (null)
   /**
    * @param {string} command
    * @param {string[]} names
@@ -654,7 +666,7 @@ export function mcpTools() {
     return { result, isError: ![EXIT.CANCELLED, EXIT.TIMED_OUT, EXIT.DEFERRED].includes(result.exitCode) }
   }
   return {
-    async request_secret(args, client) {
+    async request_secret(args, client, signal) {
       /** @type {string[]} */
       let names = []
       try {
@@ -662,14 +674,19 @@ export function mcpTools() {
         names = parsed.map((f) => f.name)
         const reason = args && typeof args === 'object' ? /** @type {Record<string, unknown>} */ (args).reason : undefined
         if (reason !== undefined && typeof reason !== 'string') throw new KeypromptError('reason must be text.', { exitCode: EXIT.USAGE })
-        if (cardOpen) throw new KeypromptError('A card is already open. Wait for its answer before asking again.', { exitCode: EXIT.USAGE })
-        cardOpen = true
+        if (cardOwner !== null) throw new KeypromptError('A card is already open. Wait for its answer before asking again.', { exitCode: EXIT.USAGE })
+        const owner = {}
+        cardOwner = owner
+        // Freed the moment the card stops taking saves (after a save under way, on a cancel), not after the log is written, so the next call may open its own card (B-21).
+        const release = () => {
+          if (cardOwner === owner) cardOwner = null
+        }
         try {
           const warnings = []
-          const { fields, values } = await askToSet(parsed, { command: 'mcp', reason, by: mcpRequester(client), warnings })
+          const { fields, values } = await askToSet(parsed, { command: 'mcp', reason, by: mcpRequester(client), warnings, signal, onClosed: release })
           return { result: setResult(fields, values, warnings), isError: false }
         } finally {
-          cardOpen = false
+          release()
         }
       } catch (error) {
         return failed('set', names, error)
