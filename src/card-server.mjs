@@ -95,7 +95,7 @@ function sameString(a, b) {
 /** The card ended because its caller withdrew the request (an MCP client's cancel), not because the person cancelled (B-21). */
 export class CardWithdrawnError extends KeypromptError {
   constructor() {
-    super('The request was cancelled, so keyprompt closed the secret card. Nothing was saved.', { exitCode: EXIT.CANCELLED })
+    super('The agent withdrew this request (it cancelled it or closed its connection), so keyprompt keeps no card open for it. Nothing was saved.', { exitCode: EXIT.CANCELLED })
   }
 }
 
@@ -127,7 +127,8 @@ export function requestSecretWithCard(request) {
         res.end(JSON.stringify(body))
       }
 
-      if (!sameString(req.headers.host ?? '', origin.slice('http://'.length))) {
+      // Before the address is known (or after an abort before it was), nothing is served.
+      if (origin === '' || !sameString(req.headers.host ?? '', origin.slice('http://'.length))) {
         send(403, { error: 'Forbidden.' })
         return
       }
@@ -297,8 +298,11 @@ export function requestSecretWithCard(request) {
 
     server.on('error', (error) => finish(() => reject(error)))
     server.listen(0, '127.0.0.1', async () => {
-      // Aborted before the server was ready: open nothing.
-      if (settled) return
+      // Aborted before the server was ready: open nothing, and stop listening now.
+      if (settled) {
+        server.close()
+        return
+      }
       const address = server.address()
       if (address === null || typeof address === 'string') {
         finish(() => reject(new KeypromptError('Could not start the local secret card.')))

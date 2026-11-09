@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { request as httpRequest } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { test } from 'node:test'
-import { requestSecretWithCard } from '../src/card-server.mjs'
+import { CardWithdrawnError, requestSecretWithCard } from '../src/card-server.mjs'
+import { KeypromptError } from '../src/errors.mjs'
 
 const BIN = fileURLToPath(new URL('../bin/keyprompt.mjs', import.meta.url))
 
@@ -127,6 +128,17 @@ store.write = async () => { throw new Error('no save expected') }
     const outcome = await Promise.race([second.then(() => 'card'), answer(3).then((m) => `answer: ${JSON.stringify(m)}`)])
     assert.equal(outcome, 'card')
     assert.equal(cards, 2)
+    // Once the cancelled call has finished its own cleanup (its log line is written), it must not free B's lock.
+    const logPath = join(dir, 'activity.jsonl')
+    for (let i = 0; i < 100 && !(existsSync(logPath) && readFileSync(logPath, 'utf8').includes('A_KEY')); i++) await new Promise((done) => setTimeout(done, 20))
+    send({ jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'request_secret', arguments: { fields: ['C_KEY'] } } })
+    const refused = await answer(4)
+    assert.equal(refused.result.structuredContent.message, 'A card is already open. Wait for its answer before asking again.')
+    // An id still in flight cannot be reused, so a later cancel always reaches the right card.
+    send({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'request_secret', arguments: { fields: ['D_KEY'] } } })
+    const reused = await answer(3)
+    assert.deepEqual(reused.error, { code: -32600, message: 'Request id already in use.' })
+    answers.delete(3)
     // Closing stdin with a card open: the process ends after the short grace, not after the 5-minute deadline.
     const started = Date.now()
     child.stdin.end()
@@ -136,10 +148,112 @@ store.write = async () => { throw new Error('no save expected') }
     assert.equal(code, 0, 'exited by itself')
     assert.ok(Date.now() - started < 20000, `exited after ${Date.now() - started} ms`)
     assert.equal(answers.has(2), false, 'a cancelled request gets no answer')
+    assert.equal(cards, 2, 'the refused and reused requests opened no card')
     const log = readFileSync(join(dir, 'activity.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line))
     assert.deepEqual(log.map((e) => [e.event, e.command, e.names]), [['withdrawn', 'mcp', ['A_KEY']], ['withdrawn', 'mcp', ['B_KEY']]])
   } finally {
     // A failed assertion must not leave the server waiting on its card and the test runner with it.
+    if (child && child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+/** A card whose save takes 300 ms, aborted 20 ms into it. */
+function abortDuringSave(onSubmit) {
+  const controller = new AbortController()
+  let calls = 0
+  const card = requestSecretWithCard({
+    fields: [{ name: 'A_KEY' }],
+    storeLabel: 'Test Store',
+    replacing: false,
+    allowSessionOnly: false,
+    timeoutMs: 5000,
+    onSubmit: async (values, remember) => {
+      calls++
+      setTimeout(() => controller.abort(), 20)
+      await new Promise((done) => setTimeout(done, 300))
+      await onSubmit(values, remember)
+    },
+    open: async (url) => {
+      setTimeout(() => post(url, 'submit', { values: { A_KEY: 'dummy-sensitive-b21-save' }, remember: true }), 10)
+      return true
+    },
+    signal: controller.signal,
+  })
+  return { card, calls: () => calls }
+}
+
+test('B-21: a cancel during a save lets that save decide: a save that works is returned, never "Nothing was saved"', async () => {
+  const { card, calls } = abortDuringSave(async () => {})
+  const answer = await card
+  assert.equal(answer.remembered, true)
+  assert.deepEqual([...answer.values.keys()], ['A_KEY'])
+  assert.equal(calls(), 1)
+})
+
+test('B-21: a cancel during a save that then fails ends with the save\'s own error, not "withdrawn"', async () => {
+  const { card } = abortDuringSave(async () => {
+    throw new KeypromptError('The test store is full.')
+  })
+  await assert.rejects(card, (error) => !(error instanceof CardWithdrawnError) && error.message === 'The test store is full.')
+})
+
+test('B-21: an abort before the server is ready opens no browser', async () => {
+  const controller = new AbortController()
+  let opened = false
+  const card = requestSecretWithCard({
+    fields: [{ name: 'A_KEY' }],
+    storeLabel: 'Test Store',
+    replacing: false,
+    allowSessionOnly: false,
+    timeoutMs: 3000,
+    onSubmit: async () => {},
+    open: async () => {
+      opened = true
+      return true
+    },
+    signal: controller.signal,
+  })
+  controller.abort()
+  await assert.rejects(card, (error) => error instanceof CardWithdrawnError)
+  await new Promise((done) => setTimeout(done, 100))
+  assert.equal(opened, false)
+})
+
+test('B-21: in keyprompt mcp, a request cancelled before its card opens prints and logs nothing', { skip: process.platform === 'win32' }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'keyprompt-b21-early-'))
+  /** @type {import('node:child_process').ChildProcess | undefined} */
+  let child
+  try {
+    const preload = join(dir, 'store.mjs')
+    // A slow store, so the cancel arrives while keyprompt is still checking which names are saved.
+    writeFileSync(preload, `import { getStore } from ${JSON.stringify(new URL('../src/store/index.mjs', import.meta.url).href)}
+const store = getStore()
+store.read = () => new Promise((done) => setTimeout(() => done(null), 400))
+`)
+    const browser = join(dir, 'idle.mjs')
+    writeFileSync(browser, `#!${process.execPath}\n`)
+    chmodSync(browser, 0o755)
+    child = spawn(process.execPath, ['--import', pathToFileURL(preload).href, BIN, 'mcp'], {
+      env: { ...process.env, KEYPROMPT_HOME: dir, KEYPROMPT_BROWSER: browser },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
+    let stdout = ''
+    let stderr = ''
+    child.stdout.on('data', (chunk) => (stdout += chunk))
+    child.stderr.on('data', (chunk) => (stderr += chunk))
+    const exited = new Promise((done) => child.on('exit', (code) => done(code)))
+    const send = (message) => child.stdin.write(`${JSON.stringify(message)}\n`)
+    send({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-11-25', capabilities: {} } })
+    send({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'request_secret', arguments: { fields: ['A_KEY'] } } })
+    send({ jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: 2 } })
+    await new Promise((done) => setTimeout(done, 1000))
+    child.stdin.end()
+    assert.equal(await exited, 0)
+    assert.ok(!stderr.includes('opened a secure card'), stderr)
+    assert.equal(existsSync(join(dir, 'activity.jsonl')), false, 'nothing logged')
+    assert.ok(!stdout.split('\n').some((line) => line.includes('"id":2')), 'a cancelled request gets no answer')
+  } finally {
     if (child && child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
     rmSync(dir, { recursive: true, force: true })
   }
