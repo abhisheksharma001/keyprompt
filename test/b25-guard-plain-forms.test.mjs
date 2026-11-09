@@ -1,0 +1,116 @@
+import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
+import { mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { test } from 'node:test'
+import { checkCommand, preToolUse } from '../src/guard.mjs'
+
+// B-25 (docs/bugs.md), step S-57: plain forms of a direct read that the guard let through.
+
+const BIN = fileURLToPath(new URL('../bin/keyprompt.mjs', import.meta.url))
+const SAVED = ['OPENAI_API_KEY']
+
+/** Bash forms: each runs the store's read tool on a keyprompt item. */
+const BASH_READS = [
+  'timeout 5 secret-tool lookup service keyprompt account X',
+  'nice -n 10 security find-generic-password -s keyprompt -w',
+  'env -u FOO security find-generic-password -s keyprompt -w',
+  'security \\\nfind-generic-password -s keyprompt -w',
+  'bash -c "security \\\nfind-generic-password -s keyprompt -w"',
+  'security find-generic-password -skeyprompt -w',
+  'security find-generic-password -wskeyprompt',
+  'security find-generic-password -gaOPENAI_API_KEY',
+  'keyprompt list | xargs -I{} security find-generic-password -s keyprompt -a {} -w',
+  'stdbuf -oL security find-generic-password -s keyprompt -w',
+  'setsid security find-generic-password -s keyprompt -w',
+  'flock /tmp/kp.lock security find-generic-password -s keyprompt -w',
+  'find . -maxdepth 0 -exec security find-generic-password -s keyprompt -w \\;',
+  "timeout 5 sh -c 'security find-generic-password -s keyprompt -w'",
+  'git bisect run security find-generic-password -s keyprompt -w',
+]
+
+/** PowerShell forms: read with PowerShell's own escape character, the backtick. */
+const POWERSHELL_READS = [
+  'Set-Location "C:\\proj\\"; Get-StoredCredential -Target keyprompt:X',
+  'CredentialManager\\Get-StoredCredential -Target keyprompt:X',
+  'Get-StoredCredential `\n  -Target keyprompt:X',
+  'Get-StoredCredential `\r\n  -Target keyprompt:X',
+  "Invoke-Command {Get-StoredCredential -Target 'keyprompt:X'}",
+]
+
+test('refuses each plain form of a direct read in B-25 (G1)', () => {
+  for (const command of BASH_READS) {
+    const found = checkCommand(command, SAVED)
+    assert.ok(found, `should refuse: ${command}`)
+    assert.match(found.reason, /keyprompt run NAME -- COMMAND/, command)
+    assert.equal(preToolUse({ tool_name: 'Bash', tool_input: { command } }, SAVED)?.hookSpecificOutput.permissionDecision, 'deny', command)
+  }
+})
+
+test('refuses each PowerShell form, read as PowerShell reads it (G1)', () => {
+  for (const command of POWERSHELL_READS) {
+    const found = checkCommand(command, SAVED)
+    assert.ok(found, `should refuse: ${command}`)
+    assert.match(found.reason, /keyprompt run NAME -- COMMAND/, command)
+    assert.equal(preToolUse({ tool_name: 'PowerShell', tool_input: { command } }, SAVED)?.hookSpecificOutput.permissionDecision, 'deny', command)
+  }
+  const nested = 'pwsh -NoProfile -Command "Set-Location C:\\proj\\; CredentialManager\\Get-StoredCredential -Target keyprompt:X"'
+  assert.ok(checkCommand(nested, SAVED), nested)
+  assert.equal(preToolUse({ tool_name: 'Bash', tool_input: { command: nested } }, SAVED)?.hookSpecificOutput.permissionDecision, 'deny')
+})
+
+test('lets through a command that only prints, searches or stores text, even when it mentions a read (G1b)', () => {
+  const read = 'security find-generic-password -s keyprompt -w'
+  const quiet = [
+    `echo ${read}`,
+    `printf '%s ' ${read}`,
+    `cat ${read}`,
+    `tee ${read}`,
+    `grep -e ${read}`,
+    `rg -e ${read}`,
+    `env A=1 echo ${read}`,
+    `git grep -n "${read}"`,
+    `git commit -m "S-57: refuse timeout 5 ${read}"`,
+    `gh pr create --title "S-57" --body "refuses nice -n 10 ${read}"`,
+    `ls # then ${read}`,
+    `ls\n# ${read}`,
+  ]
+  for (const command of quiet) {
+    assert.equal(checkCommand(command, SAVED), null, `should let through: ${command}`)
+    assert.equal(preToolUse({ tool_name: 'Bash', tool_input: { command } }, SAVED), null, command)
+  }
+  for (const command of [`Write-Output ${read}`, `Write-Host ${read}`, `echo ${read}`]) {
+    assert.equal(preToolUse({ tool_name: 'PowerShell', tool_input: { command } }, SAVED), null, command)
+  }
+})
+
+test('a Bash command is read with Bash quoting, and a PowerShell command with PowerShell quoting', () => {
+  // In Bash, \" inside double quotes is a quote, so the ; and the read stay inside the commit message.
+  const escaped = 'git commit -m "say \\"hi\\"; security find-generic-password -s keyprompt -w"'
+  assert.equal(preToolUse({ tool_name: 'Bash', tool_input: { command: escaped } }, SAVED), null)
+  // Backticks run a command in Bash and only escape the next character in PowerShell.
+  const backticks = 'Write-Output "run `security find-generic-password -s keyprompt -w` later"'
+  assert.equal(preToolUse({ tool_name: 'Bash', tool_input: { command: backticks } }, SAVED)?.hookSpecificOutput.permissionDecision, 'deny')
+  assert.equal(preToolUse({ tool_name: 'PowerShell', tool_input: { command: backticks } }, SAVED), null)
+})
+
+test('keyprompt guard pre-tool-use denies a B-25 form end to end', () => {
+  const home = mkdtempSync(join(tmpdir(), 'keyprompt-b25-'))
+  writeFileSync(join(home, 'catalog.json'), JSON.stringify({ MY_SAVED_NAME: { store: 'test', updatedAt: '2026-11-10T00:00:00.000Z' } }))
+  for (const [tool, command] of [
+    ['Bash', 'timeout 5 security find-generic-password -a MY_SAVED_NAME -w'],
+    ['PowerShell', 'CredentialManager\\Get-StoredCredential -Target MY_SAVED_NAME'],
+  ]) {
+    const result = spawnSync(process.execPath, [BIN, 'guard', 'pre-tool-use'], {
+      input: JSON.stringify({ tool_name: tool, tool_input: { command } }),
+      encoding: 'utf8',
+      env: { ...process.env, KEYPROMPT_HOME: home },
+    })
+    assert.equal(result.status, 0, result.stderr)
+    const output = JSON.parse(result.stdout)
+    assert.equal(output.hookSpecificOutput.permissionDecision, 'deny', command)
+    assert.match(output.hookSpecificOutput.permissionDecisionReason, /keyprompt run NAME -- COMMAND/)
+  }
+})
