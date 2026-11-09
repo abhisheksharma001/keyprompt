@@ -192,7 +192,7 @@ The person chose **Later**:
 - **`request_secret`** opens the same card as `keyprompt set` for up to 12 fields (with the same hints) and waits until you press Save, Cancel or **Later**, for at most 5 minutes. It answers with the same result as `keyprompt set --json`.
 - **`check_secrets`** says which names are saved, like `keyprompt has`.
 
-MCP only asks for keys and checks them. A saved key still reaches a program through `keyprompt run NAME -- COMMAND` in a shell.
+MCP only asks for keys and checks them. A saved key still reaches a program through `keyprompt run NAME -- COMMAND` in a shell. If the agent cancels the call or its connection closes, the card closes (within 5 seconds of the connection closing), and if the card had opened the activity log says the agent withdrew it; a save you had already pressed still finishes.
 
 Add it to your agent, with keyprompt installed by `npm install -g keyprompt`:
 
@@ -311,11 +311,12 @@ keyprompt keeps a names-only record of what it did with each key. `keyprompt log
 Shown: all 3 lines. The log is /Users/you/.keyprompt/activity.jsonl; it keeps the newest 1000 and never a value.
 ```
 
-- **What writes a line:** a save (by `set`, `setup`, the card `run` opens with **Remember on this computer** ticked, or the MCP tool `request_secret`); `run` giving names to a command, written when the command ends, with its exit code; a `delete` that removed a value; and a card that ended with **Later**, Cancel or no answer within 5 minutes. `has`, `list`, `log` and `demo` write nothing.
+- **What writes a line:** a save (by `set`, `setup`, the card `run` opens with **Remember on this computer** ticked, or the MCP tool `request_secret`); `run` giving names to a command, written when the command ends, with its exit code; a `delete` that removed a value; a card that ended with **Later**, Cancel or no answer within 5 minutes; and a card an MCP client withdrew (it cancelled `request_secret` or closed its connection). `has`, `list`, `log` and `demo` write nothing.
 - **What a line holds:** the time, what happened, the keyprompt command, the names, the exit code and the folder keyprompt ran in; for `run`, also the program's own name (`node`, not its folder). Never a value, a reason, the command's arguments (they can hold another secret or a client's data), its output or its environment.
-- **Size:** the file keeps the newest 1,000 lines.
+- **Size:** the file keeps the newest 1,000 lines. keyprompt processes running at once take turns to trim it; [SECURITY.md](https://github.com/abhisheksharma001/keyprompt/blob/main/SECURITY.md) says when a line can still be lost.
+- **Shown safely:** in `keyprompt log`, control and invisible characters in a folder or program name appear as `?`. `--json` keeps the text, escaped: DEL, C1 and invisible characters as `\u` escapes, the rest as JSON always escapes them (`\t`, `\n`, `\u001b`).
 - **On and silent:** writing a line prints nothing, and if the log cannot be written the command carries on as usual. To empty it, delete the file.
-- `keyprompt log --json` gives the lines shown as `entries`: one object each, such as `{"time":"2026-11-09T12:24:55.206Z","event":"run","command":"run","names":["OPENAI_API_KEY","STRIPE_SECRET_KEY"],"exitCode":0,"program":"node","folder":"/Users/you/code/shop"}`. `event` is `saved`, `run`, `deleted`, `deferred`, `cancelled` or `timed_out`.
+- `keyprompt log --json` gives the lines shown as `entries`: one object each, such as `{"time":"2026-11-09T12:24:55.206Z","event":"run","command":"run","names":["OPENAI_API_KEY","STRIPE_SECRET_KEY"],"exitCode":0,"program":"node","folder":"/Users/you/code/shop"}`. `event` is `saved`, `run`, `deleted`, `deferred`, `cancelled`, `timed_out` or `withdrawn`.
 
 ## Limits
 
