@@ -77,6 +77,8 @@ test('B-21: a signal that is already aborted opens no card', async () => {
 
 test('B-21: in keyprompt mcp, a cancelled request_secret frees the card, gets no answer, and closing stdin ends the process', { skip: process.platform === 'win32' }, async () => {
   const dir = mkdtempSync(join(tmpdir(), 'keyprompt-b21-'))
+  /** @type {import('node:child_process').ChildProcess | undefined} */
+  let child
   try {
     const preload = join(dir, 'store.mjs')
     writeFileSync(preload, `import { getStore } from ${JSON.stringify(new URL('../src/store/index.mjs', import.meta.url).href)}
@@ -88,7 +90,7 @@ store.write = async () => { throw new Error('no save expected') }
     const browser = join(dir, 'idle.mjs')
     writeFileSync(browser, `#!${process.execPath}\n`)
     chmodSync(browser, 0o755)
-    const child = spawn(process.execPath, ['--import', pathToFileURL(preload).href, BIN, 'mcp'], {
+    child = spawn(process.execPath, ['--import', pathToFileURL(preload).href, BIN, 'mcp'], {
       env: { ...process.env, KEYPROMPT_HOME: dir, KEYPROMPT_BROWSER: browser },
       stdio: ['pipe', 'pipe', 'pipe'],
     })
@@ -137,6 +139,8 @@ store.write = async () => { throw new Error('no save expected') }
     const log = readFileSync(join(dir, 'activity.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line))
     assert.deepEqual(log.map((e) => [e.event, e.command, e.names]), [['withdrawn', 'mcp', ['A_KEY']], ['withdrawn', 'mcp', ['B_KEY']]])
   } finally {
+    // A failed assertion must not leave the server waiting on its card and the test runner with it.
+    if (child && child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
     rmSync(dir, { recursive: true, force: true })
   }
 })
