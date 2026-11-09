@@ -54,7 +54,7 @@ Usage:
   keyprompt delete NAME     Remove NAME from the password store.
   keyprompt log             The newest 50 lines of the activity log: when each name was
                             saved, given to which program, deleted or put off. Never values.
-  keyprompt demo           Open a sample card to see how it looks. Nothing you type is saved.
+  keyprompt demo            Open a sample card to see how it looks. Nothing you type is saved.
   keyprompt install-skill   Teach Claude Code to use keyprompt (writes ~/.claude/skills/keyprompt).
   keyprompt install-guard [--yes]
                             Add keyprompt's guard to Claude Code's settings. Shows the
