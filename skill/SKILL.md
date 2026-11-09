@@ -103,17 +103,22 @@ When a message comes with a note from keyprompt's guard that it looks like it co
 
 ## Read results as JSON
 
-Add `--json` to `set`, `has`, `list`, `delete` or `setup` to read what happened instead of parsing sentences. stdout is then one JSON line, failures included, and the exit codes stay the same:
+Add `--json` to `set`, `has`, `list`, `delete`, `setup` or `log` to read what happened instead of parsing sentences. stdout is then one JSON line, failures included, and the exit codes stay the same:
 
 ```
 keyprompt has OPENAI_API_KEY --json
 {"command":"has","status":"saved","names":["OPENAI_API_KEY"],"exitCode":0}
 ```
 
-- `status` matches the exit code: `saved`, `listed` or `deleted` (0), `error` (1), `invalid_usage` (2), `missing` (3), `cancelled` (4), `timed_out` (5), `deferred` (6). On `deferred`, the user chose Later: follow the exit 6 advice above.
+- `status` matches the exit code: `saved`, `listed` (`list`, `log`) or `deleted` (0), `error` (1), `invalid_usage` (2), `missing` (3), `cancelled` (4), `timed_out` (5), `deferred` (6). On `deferred`, the user chose Later: follow the exit 6 advice above.
 - `set` and `setup` add `replaced`, `empty` (boxes left empty) and `warnings`. `setup` also adds `skipped` (already saved), `remaining` (not asked yet) and `ignoredLines` (line numbers it could not use).
+- `log` adds `entries`: the lines shown (see below).
 - A failure adds `message`: why, in keyprompt's own words.
 - It never holds a value. `run` does not take `--json`, because its stdout is the command's own output.
+
+## See what keyprompt did
+
+`keyprompt log` shows the newest 50 lines of a names-only record: when each name was saved, given to which program (and its exit code), deleted, or put off with Later, Cancel or no answer. Use it to see, for example, that the user already chose Later for a name today, before you ask again. A line holds names, the program's own name and the folder; never a value or a command's arguments.
 
 ## Replace or remove
 

@@ -60,6 +60,7 @@ On Linux, also install `secret-tool`: `sudo apt install libsecret-tools` (Debian
 | `keyprompt has NAME` | Exit 0 if saved, 3 if not. Never shows the value. |
 | `keyprompt list` | Saved names, reasons and dates. Never values. |
 | `keyprompt delete NAME` | Removes it from the password store. |
+| `keyprompt log` | The newest 50 lines of the activity log: when each name was saved, given to which program, deleted or put off. Never values. See [Activity log](#activity-log). |
 | `keyprompt install-skill` | Installs the Claude Code skill (`~/.claude/skills/keyprompt/SKILL.md`). |
 | `keyprompt install-guard [--yes]` | Adds keyprompt's guard to Claude Code's settings (see [Guard for Claude Code](#guard-for-claude-code)). Shows the entries first and asks; `--yes` skips the question. |
 | `keyprompt uninstall-guard` | Removes the guard again. Works only in your own terminal, and always asks. |
@@ -130,7 +131,7 @@ Use them with: keyprompt run OPENAI_API_KEY,STRIPE_SECRET_KEY -- <command>
 - To get a secret, run `keyprompt set NAME --reason "<why, in plain words>"` yourself. It opens a secure card in the user's browser and waits; tell the user a card opened.
 - Ask for everything you need right now on one card, never for keys you don't need yet: `keyprompt set ACCOUNT_ID:visible SECRET_KEY --reason "..."`. The hints `:visible`, `:multiline` and `:optional` only change how a box looks.
 - When the user asks you to set up or run a project that has a `.env.example`, run `keyprompt setup --reason "..."` in its folder instead: one card asks for every name in it that is not saved yet, and each box may stay empty.
-- Add `--json` to `set`, `has`, `list`, `delete` or `setup` to get one line of JSON with names, a status and the exit code, never values.
+- Add `--json` to `set`, `has`, `list`, `delete`, `setup` or `log` to get one line of JSON with names, a status and the exit code, never values.
 - If the exit code is 6, the user chose Later and nothing was saved. Tell them in one line, carry on with work that doesn't need the secret, and ask again only when you are about to use it.
 - To use one, run `keyprompt run NAME -- <command>`; the command reads it from `$NAME`. `keyprompt has NAME` checks whether it exists.
 - If the user pastes a secret into the chat anyway, tell them it is now exposed and should be rotated, then store the new one with `keyprompt set`.
@@ -147,7 +148,7 @@ On Windows: `keyprompt run API_TOKEN -- powershell -NoProfile -Command "Invoke-R
 
 ### JSON results
 
-Add `--json` to `set`, `has`, `list`, `delete` or `setup` and keyprompt prints one line of JSON on stdout instead of sentences, failures included. The exit codes stay the same, and the line saying a card opened still goes to stderr. A result never holds a value, a reason or what a password-store tool printed.
+Add `--json` to `set`, `has`, `list`, `delete`, `setup` or `log` and keyprompt prints one line of JSON on stdout instead of sentences, failures included. The exit codes stay the same, and the line saying a card opened still goes to stderr. A result never holds a value, a reason or what a password-store tool printed.
 
 ```sh
 keyprompt has OPENAI_API_KEY --json
@@ -159,13 +160,14 @@ keyprompt has OPENAI_API_KEY --json
 
 | Field | What it holds |
 |---|---|
-| `command` | `set`, `has`, `list`, `delete` or `setup`; `null` when the command was none of them. |
-| `status` | `saved`, `listed` or `deleted` (exit 0), `error` (1), `invalid_usage` (2), `missing` (3), `cancelled` (4), `timed_out` (5), `deferred` (6). |
-| `names` | The names the result is about. After a successful `set` or `setup`, only the names saved now. For `list`, the names on keyprompt's list of names, not checked against the store. |
+| `command` | `set`, `has`, `list`, `delete`, `setup` or `log`; `null` when the command was none of them. |
+| `status` | `saved`, `listed` (`list` and `log`) or `deleted` (exit 0), `error` (1), `invalid_usage` (2), `missing` (3), `cancelled` (4), `timed_out` (5), `deferred` (6). |
+| `names` | The names the result is about. After a successful `set` or `setup`, only the names saved now. For `list`, the names on keyprompt's list of names, not checked against the store. For `log`, the names in the lines shown. |
 | `exitCode` | The process's exit code. |
 | `replaced`, `empty` | `set` and `setup`: names whose saved value was replaced, and boxes left empty. |
 | `warnings` | `set`, `setup` and `delete`: `["catalog_not_updated"]` when the key was saved or deleted but the list of names `keyprompt list` reads could not be updated; otherwise `[]`. |
 | `skipped`, `remaining`, `ignoredLines` | `setup`: names already saved, names left for the next card, and the line numbers it could not use. |
+| `entries` | `log`: the lines shown, oldest first, as they are in the file (see [Activity log](#activity-log)). |
 | `message` | Failures only: why, in keyprompt's own words. Anything keyprompt did not write itself, such as an invalid name you typed or a store tool's error line, is left out. |
 
 The person chose **Later**:
@@ -248,7 +250,24 @@ If you start Claude Code with `CLAUDE_CONFIG_DIR` set (in an alias, say), run `i
 | Windows | Credential Manager → Windows Credentials | generic credential `keyprompt:NAME` |
 | Linux | Secret Service (GNOME Keyring / KWallet) | attributes `service=keyprompt account=NAME` |
 
-You can see or delete them there yourself at any time. `~/.keyprompt/catalog.json` keeps names, reasons and dates for `keyprompt list`; it never holds a value.
+You can see or delete them there yourself at any time. `~/.keyprompt/catalog.json` keeps names, reasons and dates for `keyprompt list`, and `~/.keyprompt/activity.jsonl` keeps the activity log; neither holds a value.
+
+## Activity log
+
+keyprompt keeps a names-only record of what it did with each key. `keyprompt log` shows the newest 50 lines, in your local time (your dates and folders will differ):
+
+```text
+2026-11-09 17:54  Saved STRIPE_SECRET_KEY (setup), in /Users/you/code/shop
+2026-11-09 17:54  Gave OPENAI_API_KEY and STRIPE_SECRET_KEY to node, which exited with 0, in /Users/you/code/shop
+2026-11-09 17:54  The person chose Later for SENTRY_DSN (set), in /Users/you/code/shop
+Shown: all 3 lines. The log is /Users/you/.keyprompt/activity.jsonl; it keeps the newest 1000 and never a value.
+```
+
+- **What writes a line:** a save (by `set`, `setup` or the card `run` opens, with **Remember on this computer** ticked); `run` giving names to a command, written when the command ends, with its exit code; a `delete` that removed a value; and a card that ended with **Later**, Cancel or no answer within 5 minutes. `has`, `list`, `log` and `demo` write nothing.
+- **What a line holds:** the time, what happened, the keyprompt command, the names, the exit code and the folder keyprompt ran in; for `run`, also the program's own name (`node`, not its folder). Never a value, a reason, the command's arguments (they can hold another secret or a client's data), its output or its environment.
+- **Size:** the file keeps the newest 1,000 lines.
+- **On and silent:** writing a line prints nothing, and if the log cannot be written the command carries on as usual. To empty it, delete the file.
+- `keyprompt log --json` gives the lines shown as `entries`: one object each, such as `{"time":"2026-11-09T12:24:55.206Z","event":"run","command":"run","names":["OPENAI_API_KEY","STRIPE_SECRET_KEY"],"exitCode":0,"program":"node","folder":"/Users/you/code/shop"}`. `event` is `saved`, `run`, `deleted`, `deferred`, `cancelled` or `timed_out`.
 
 ## Limits
 
