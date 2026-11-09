@@ -114,7 +114,12 @@ store.write = async () => { throw new Error('no save expected') }
     })
     const nextCard = () => new Promise((done) => cardOpened.push(done))
     const send = (message) => child.stdin.write(`${JSON.stringify(message)}\n`)
-    const answer = (id) => new Promise((done) => (answers.has(id) ? done(answers.get(id)) : waiting.set(id, done)))
+    // Bounded, so a regression fails here instead of hanging the test runner.
+    const answer = (id) =>
+      Promise.race([
+        new Promise((done) => (answers.has(id) ? done(answers.get(id)) : waiting.set(id, done))),
+        new Promise((_, fail) => setTimeout(() => fail(new Error(`no answer for id ${id} within 10 s`)), 10000).unref()),
+      ])
 
     send({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'b21', version: '1' } } })
     await answer(1)
