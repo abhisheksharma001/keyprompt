@@ -1,4 +1,4 @@
-import { appendFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { appendFile, mkdir, open, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { catalogDir } from './catalog.mjs'
 import { KeypromptError } from './errors.mjs'
@@ -28,6 +28,45 @@ const COMMANDS = new Set(['set', 'setup', 'run', 'delete', 'mcp'])
 
 export function activityPath() {
   return join(catalogDir(), 'activity.jsonl')
+}
+
+/** How long a writer waits for its turn before it writes nothing (B-23). */
+export const LOCK_WAIT_MS = 2000
+
+/** A lock older than this is left over from a process that crashed while holding it. */
+export const STALE_LOCK_MS = 10_000
+
+/**
+ * Take the writers' lock: a file made with an exclusive create, so only one
+ * keyprompt process appends and trims at a time. A lock older than
+ * STALE_LOCK_MS is removed (two processes clearing the same stale lock at the
+ * same moment can still overlap once). Resolves false when the turn does not
+ * come within LOCK_WAIT_MS.
+ * @param {string} lock
+ * @returns {Promise<boolean>}
+ */
+async function takeLock(lock) {
+  const deadline = Date.now() + LOCK_WAIT_MS
+  for (;;) {
+    try {
+      const handle = await open(lock, 'wx', 0o600)
+      await handle.close()
+      return true
+    } catch (error) {
+      if (/** @type {NodeJS.ErrnoException} */ (error).code !== 'EEXIST') throw error
+    }
+    try {
+      const { mtimeMs } = await stat(lock)
+      if (Date.now() - mtimeMs > STALE_LOCK_MS) {
+        await rm(lock, { force: true })
+        continue
+      }
+    } catch {
+      // The holder just let it go: try again.
+    }
+    if (Date.now() >= deadline) return false
+    await new Promise((done) => setTimeout(done, 15 + Math.floor(Math.random() * 20)))
+  }
 }
 
 /**
@@ -66,12 +105,25 @@ export function activityEntry({ event, command, names, exitCode, program, time =
 export async function recordActivity(entry) {
   try {
     await mkdir(catalogDir(), { recursive: true, mode: 0o700 })
-    await appendFile(activityPath(), `${JSON.stringify(entry)}\n`, { mode: 0o600 })
-    const lines = (await readFile(activityPath(), 'utf8')).split('\n').filter((line) => line.length > 0)
-    if (lines.length <= MAX_ENTRIES) return
-    const tmp = `${activityPath()}.${process.pid}.tmp`
-    await writeFile(tmp, `${lines.slice(-MAX_ENTRIES).join('\n')}\n`, { mode: 0o600 })
-    await rename(tmp, activityPath())
+    const lock = `${activityPath()}.lock`
+    // Writers take turns, so a trim never drops another process's new line (B-23).
+    if (!(await takeLock(lock))) return
+    try {
+      await appendFile(activityPath(), `${JSON.stringify(entry)}\n`, { mode: 0o600 })
+      const lines = (await readFile(activityPath(), 'utf8')).split('\n').filter((line) => line.length > 0)
+      if (lines.length <= MAX_ENTRIES) return
+      const tmp = `${activityPath()}.${process.pid}.tmp`
+      await writeFile(tmp, `${lines.slice(-MAX_ENTRIES).join('\n')}\n`, { mode: 0o600 })
+      try {
+        await rename(tmp, activityPath())
+      } catch (error) {
+        // Never leave the temporary copy behind (EPERM on Windows while another program has the file open).
+        await rm(tmp, { force: true })
+        throw error
+      }
+    } finally {
+      await rm(lock, { force: true })
+    }
   } catch {
     // Deliberately silent (D-20): the action itself worked.
   }
@@ -131,6 +183,16 @@ export async function readActivity() {
   return entries
 }
 
+/**
+ * Control characters (C0, DEL, C1) and bidirectional-text marks shown as `?`,
+ * so a folder or program name cannot move the cursor or reorder the line it
+ * is printed on (B-23).
+ * @param {string} text
+ */
+function printable(text) {
+  return text.replace(/[\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, '?')
+}
+
 /** @param {Date} date */
 function localTime(date) {
   const two = (/** @type {number} */ n) => String(n).padStart(2, '0')
@@ -144,7 +206,7 @@ function describe(entry) {
     case 'saved':
       return `Saved ${names} (${entry.command})`
     case 'run':
-      return `Gave ${names} to ${entry.program ?? 'a command'}, which exited with ${entry.exitCode}`
+      return `Gave ${names} to ${entry.program === undefined ? 'a command' : printable(entry.program)}, which exited with ${entry.exitCode}`
     case 'deleted':
       return `Deleted ${names}`
     case 'deferred':
@@ -167,7 +229,7 @@ function describe(entry) {
  */
 export function activityReport(shown, total, path) {
   if (shown.length === 0) return `Nothing in the activity log yet. It is kept in ${path}.\n`
-  const lines = shown.map((entry) => `${localTime(new Date(entry.time))}  ${describe(entry)}, in ${entry.folder}`)
+  const lines = shown.map((entry) => `${localTime(new Date(entry.time))}  ${describe(entry)}, in ${printable(entry.folder)}`)
   const which = total > shown.length ? `the newest ${shown.length} of ${total} lines` : `all ${total} ${total === 1 ? 'line' : 'lines'}`
   lines.push(`Shown: ${which}. The log is ${path}; it keeps the newest ${MAX_ENTRIES} and never a value.`)
   return `${lines.join('\n')}\n`
