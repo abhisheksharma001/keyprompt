@@ -208,3 +208,68 @@ The deadline is the real-world path. Someone presses Save near the end of the 5 
 **Files:** `src/errors.mjs`, `src/cli.mjs`, `src/names.mjs`, `src/save.mjs`, `src/store/linux.mjs`, `src/store/windows.mjs`, `test/cli.test.mjs`, `test/save.test.mjs`, a new `test/errors.test.mjs`.
 **Research:** none · **Model:** sonnet · **Confidence:** 0.95 that this is the cause (the code drops the message in `jsonFailure`, and the run above shows it).
 **Fix step:** S-47.
+
+### B-20 — `request_secret` with only blank fields opens an empty card that says "Replace secret"
+
+**Seen:** 2026-11-09, by the senior review of S-45 (a fresh Opus session; mystandard 14a, run after the merge). `request_secret` with `fields: [" "]` passed `toolList` (one string) but `parseFields` drops blank items, so the list became empty and nothing stopped it: a card opened with no boxes, titled "Replace secret" because `[].every(...)` is true, and saying a value is already saved. stderr said "opened a secure card ... for ." and the activity log got a line with no names. `check_secrets` with `names: [","]` answered `status: "saved"` naming nothing. `keyprompt set` has its own empty check; the MCP tools did not.
+**Requirement:** M in `docs/prd/v0-3.md`, and invariant 9 (every word shown is true).
+**Needs first:** nothing.
+**Blocks:** S-46.
+**Files:** `src/cli.mjs`; a new test file.
+**Research:** none · **Model:** sonnet · **Confidence:** 0.95 that this is the cause (`src/cli.mjs` `mcpTools`: no empty check after `parseFields`; reproduced by the reviewer).
+**Introduced by:** PR #51, 0edd234.
+**Escaped past:** the step's acceptance and tests: they covered an invalid name but not a list that parses to nothing.
+**New check:** test/b20-empty-fields.test.mjs (fails on the introducing sha: yes, shown by its own commit before the fix).
+**Fix step:** S-51.
+
+### B-21 — A cancelled `request_secret` leaves its card open, and closing stdin does not close it
+
+**Seen:** 2026-11-09, senior review of S-45. After `notifications/cancelled` for an open `request_secret`, the card stays open for up to 5 minutes and keeps the one-card lock, so the next `request_secret` is refused with "Wait for its answer", an answer that never comes, because a cancelled request is never answered. If the person then saves, the value is saved and logged while the agent was told the call failed. Clients built on the MCP TypeScript SDK cancel a request after 60 seconds by default (`DEFAULT_REQUEST_TIMEOUT_MSEC = 60_000`, typescript-sdk packages/core-internal/src/shared/protocol.ts:112 at 1e608ca, read live by the reviewer 2026-11-09). The same open card keeps `keyprompt mcp` alive after its stdin closes, though the stdio binding says a server SHOULD exit promptly then.
+**Requirement:** M in `docs/prd/v0-3.md`.
+**Needs first:** nothing.
+**Blocks:** S-46.
+**Files:** `src/card-server.mjs` (an abort signal), `src/mcp.mjs`, `src/cli.mjs`; a new test file. `src/card-server.mjs` is security-sensitive (invariant 4).
+**Research:** none · **Model:** opus · **Confidence:** 0.9 that this is the cause (no path from a cancel or end of input to the card server; reproduced by the reviewer).
+**Introduced by:** PR #51, 0edd234.
+**Escaped past:** the grill and the acceptance: "wait, like set" was chosen without asking what a client's cancel or timeout should do.
+**New check:** test/b21-cancel-closes-card.test.mjs (fails on the introducing sha: yes, by its own commit before the fix).
+**Fix step:** S-52.
+
+### B-22 — `keyprompt mcp` claims 2025-03-26 but refuses its batches, and reads a whole over-long line into memory
+
+**Seen:** 2026-11-09, senior review of S-45. (1) 2025-03-26 is in `PROTOCOL_VERSIONS`, and that version says implementations "MUST support receiving JSON-RPC batches" (modelcontextprotocol.io/specification/2025-03-26/basic, read live by the reviewer 2026-11-09); a batch gets -32600. (2) `readline` holds a whole line before the 1 MB check, so a line with no newline can still fill memory, though the PRD says a line over 1 MB "is not read". (3) The set of cancelled ids never shrinks. A fourth point, that `tools/call` is answered before `initialize`, is not changed: the 2025-11-25 lifecycle asks this only of clients ("SHOULD NOT"), a client that speaks 2026-07-28 probes with `server/discover` first and our -32601 makes it fall back, and the locked S-45 tests send `tools/call` without `initialize`.
+**Requirement:** M in `docs/prd/v0-3.md`, and the PRD's "MCP server (S-45)" wording.
+**Needs first:** nothing.
+**Blocks:** S-46.
+**Files:** `src/mcp.mjs`; a new test file.
+**Research:** none (the reviewer read the 2025-03-26 page live) · **Model:** sonnet · **Confidence:** 0.9.
+**Introduced by:** PR #51, 0edd234.
+**Escaped past:** the review of the spec: only the 2025-11-25 schema was read for the version list.
+**New check:** test/b22-mcp-protocol.test.mjs (fails on the introducing sha: yes, by its own commit before the fix).
+**Fix step:** S-53.
+
+### B-23 — The activity log loses lines when keyprompt runs in parallel, prints terminal escape codes, and may leave temp files
+
+**Seen:** 2026-11-09, senior review of S-43. (1) Once the file holds 1,000 lines, every write rewrites it, so writers race on every write: with the file at 1,000 lines and 20 processes writing at once, 9 of the 20 new lines were lost, while the PRD says two processes "can lose one line". (2) `keyprompt log` prints `folder` and `program` raw, so a folder named with terminal escape codes (ESC[1A ESC[2K) can rewrite earlier lines of the person's view. (3) If `rename` fails (EPERM on Windows while another process has the file open), `activity.jsonl.<pid>.tmp` is left behind (PLAUSIBLE, not run).
+**Requirement:** L in `docs/prd/v0-3.md`, and invariant 9 for the PRD's wording.
+**Needs first:** nothing.
+**Blocks:** S-46.
+**Files:** `src/activity.mjs`; a new test file.
+**Research:** none · **Model:** sonnet · **Confidence:** 0.9 for (1) and (2), reproduced by the reviewer; 0.6 for (3), which was not run.
+**Introduced by:** PR #48, 12b9e7b.
+**Escaped past:** the step's tests: the trim was tested with one writer, and the report only with plain folder names.
+**New check:** test/b23-activity-log.test.mjs (fails on the introducing sha: yes, by its own commit before the fix).
+**Fix step:** S-54.
+
+### B-24 — `SECURITY.md` says nothing about the activity log or `keyprompt mcp`
+
+**Seen:** 2026-11-09, senior review of S-43 and S-45. `SECURITY.md` does not say that the activity log can be edited by anything running as the person, that its folder paths can name a client or project, that a `run` line is written only when the command ends (a keyprompt killed with SIGKILL leaves none), or that the card's "who is asking" for an MCP client is that client's own claim, as with `--by`.
+**Requirement:** invariant 9 ("Limits belong in `SECURITY.md`").
+**Needs first:** B-21 and B-23 fixed, so the limits describe the code that ships.
+**Blocks:** S-46.
+**Files:** `SECURITY.md`.
+**Research:** none · **Model:** sonnet · **Confidence:** 0.95.
+**Introduced by:** PR #48 (12b9e7b) and PR #51 (0edd234).
+**Escaped past:** the docs steps S-49 and S-50, whose files did not include `SECURITY.md`.
+**New check:** none possible as a test of meaning; S-55's Verify greps `SECURITY.md` for each limit.
+**Fix step:** S-55.

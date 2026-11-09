@@ -16,7 +16,7 @@ Plan: `docs/prd/card-v2.md` (0.2.x) and `docs/prd/v0-3.md` (0.3). Rules: `.claud
 | Fixes | S-20, S-21, S-25, S-26, S-27, S-28, S-30, S-31, S-32, S-33, S-35 | B-6 (the card never ends while a save is under way), B-7 (one true sentence for an ended card), B-12 (masking finds a key's base64 inside longer base64), B-3 (a failed update of the list of names no longer fails a save that worked), B-13 (the same for a delete that worked), B-4 (on `run`, every optional box may be left empty), B-14 (the Save button says plain "Save" when any box is optional), B-8 (with Remember unticked, the penguin holds an envelope and the vault stays shut), B-15 (the README's two demo pictures match the card again), B-16 (the README's picture links pin a commit on main) and B-17 (the S-29 row says its tag and release exist) |
 | 5 Release | S-29, S-34 | 0.2.1 on npm: the six steps since 0.2.0; 0.2.2: the four since (S-30 to S-33) |
 | Research | S-36 | R-9 answered: what keymask, the closest rival, is and is not |
-| 6 v0.3 | S-37 → S-38 → S-39 → S-40, then S-41 → S-47, S-42 → S-48, S-43 → S-49, then S-44 → S-45 → S-50, then S-46 | The plan; the Claude Code guard (its check, its installer, its docs); `--json` results, and a reason when one fails (B-19); `keyprompt setup`, then the docs for both; a names-only activity log; research on MCP (R-6), then `keyprompt mcp`; release 0.3.0 |
+| 6 v0.3 | S-37 → S-38 → S-39 → S-40, then S-41 → S-47, S-42 → S-48, S-43 → S-49, then S-44 → S-45 → S-50, then the review fixes S-51 → S-52 → S-53, S-54 → S-55, then S-46 | The plan; the Claude Code guard (its check, its installer, its docs); `--json` results, and a reason when one fails (B-19); `keyprompt setup`, then the docs for both; a names-only activity log; research on MCP (R-6), then `keyprompt mcp`; release 0.3.0 |
 
 Order: S-3, S-7, S-15 and S-18 touch different files from the S-2 → S-4 chain, so they can be built in parallel by separate sessions. Everything else follows the arrows.
 
@@ -73,7 +73,7 @@ Order: S-3, S-7, S-15 and S-18 touch different files from the S-2 → S-4 chain,
 | S-44 | done 2026-11-09 (PR #50) | R-6 answered from live primary sources, and S-45 now names the choice. **Found:** the 2026-07-28 spec dropped the handshake and asks during a tool call through an `input_required` answer and a retry, while VS Code still speaks 2025-11-25, so a server must speak both. URL mode reaches Claude Code (interactive only) and VS Code; Codex declines any non-https URL, so it would decline the card; Gemini CLI, Zed and Cline have none; Cursor and Windsurf are unconfirmed. The spec's MUST NOT on "pre-authenticated" URLs may catch the card's one-time-token URL. SDK v2 brings 3 packages, about 14.5 MB and a Node 20 floor; SDK v1 brings 17 dependencies. **How:** a research subagent read everything live; I re-checked four claims myself (both SDKs on npm, Codex's URL check at its tag, Claude Code's changelog) and all four matched. **Surprise:** two of R-6's 2026-11-05 assumptions no longer hold: one way of asking, and "Codex unconfirmed" (it is confirmed, and it declines). **Learned:** a client that "supports URL mode" can still refuse the URL keyprompt would send; check the client's own URL rules, not just its capability list. |
 | S-45 | done 2026-11-09 (PR #51) | `keyprompt mcp`, from Abhishek's option (b) and the grill (D-22): a hand-written stdio MCP server with no new dependency. It speaks the 2025-11-25 handshake (and three earlier versions), answers the 2026-07-28 `server/discover` probe with -32601 so a client that speaks both eras falls back to `initialize`, and never answers a cancelled request. `request_secret` shares `set`'s card flow (`askToSet`, `setResult`) and answers with `set --json`'s result; `check_secrets` answers like `has`; neither returns a value or the card's URL. 216 of 216 with the real store. Break test: dropping the cancelled check failed exactly that test. **Surprise:** a server that speaks only the older handshake still works with a client that prefers 2026-07-28, because the spec tells such clients to probe and fall back; that made the server half the size of a dual-era one. **Learned:** writing the protocol as a module that takes its tools as input let every protocol rule be tested on in-memory streams, without a card. |
 | S-50 | done 2026-11-09 (PR #52) | The docs for `keyprompt mcp`: a commands-table row, an "MCP" section (the two tools, no value back, `keyprompt run` still needed, and how to add it to Claude Code, VS Code, Cursor and Codex), the activity log line for `request_secret`, the skill's "In an MCP client", and the CHANGELOG. Each client line comes from the client's own docs or source, read 2026-11-09. **Surprise:** blog posts say Codex waits 60 seconds for a tool call; its source at rust-v0.167.0 says 300 (`DEFAULT_TOOL_TIMEOUT`), the same as the card's 5 minutes, so the README suggests `tool_timeout_sec = 360`. **Senior review:** not required, because these are words with a source for each line. **Learned:** secondary write-ups about a fast-moving tool can be wrong on defaults; the tag's source settles it. |
-| S-46 | todo | — |
+| S-51 … S-55, S-46 | todo | — |
 
 ---
 
@@ -1005,6 +1005,81 @@ Order and cadence are Abhishek's (D-10, D-13): one PR, then stop. S-38 and S-39 
 **Change:** the README gets a `keyprompt mcp` row and a short "MCP" section: the two tools, that neither returns a value, that a key is still used through `keyprompt run` in a shell, one line or block per client, and that `request_secret` waits up to 5 minutes (a client with a shorter tool timeout gives up first). The skill says that in an MCP client the tools do what `set` and `has` do. CHANGELOG "Unreleased": under Added.
 **Acceptance:** WHEN a person reads the README THEN they SHALL find how to add `keyprompt mcp` to Claude Code, VS Code, Cursor and Codex, what the two tools do, and that no tool returns a value.
 **Must not:** change any file under `src/`, `bin/` or `test/`; claim a client works without a source or a run.
+
+### S-51 — `request_secret` and `check_secrets` refuse a list that names nothing (bug B-20)
+
+**PR:** one. The first commit also logs B-20 to B-24 and steps S-51 to S-55, all found by the senior review of S-45 and S-43 (2026-11-09).
+**Depends on:** nothing. **Blocks:** S-46.
+**Research:** none. **Model:** sonnet.
+**Senior review:** not required — no secret handling or access changes: the fix refuses earlier, before any store read or card, and the new test pins the result exactly.
+**Confidence:** 0.95 — one missing check, reproduced by the reviewer.
+**Files:** `src/cli.mjs`, test/b20-empty-fields.test.mjs (new).
+**Locked tests:** `test/activity.test.mjs`, `test/buddy.test.mjs`, `test/card-script.test.mjs`, `test/card-server.test.mjs`, `test/catalog.test.mjs`, `test/cli.test.mjs`, `test/collect.test.mjs`, `test/errors.test.mjs`, `test/guard.test.mjs`, `test/install-guard.test.mjs`, `test/macos-parse.test.mjs`, `test/mcp.test.mjs`, `test/names.test.mjs`, `test/receipt.test.mjs`, `test/redact.test.mjs`, `test/run.test.mjs`, `test/save.test.mjs`, `test/setup.test.mjs`, `test/store.integration.test.mjs` (every test file on main at 5ff17c7; new tests go in a new file).
+**Today:** `request_secret` with `fields: [" "]` opens a card with no boxes titled "Replace secret"; `check_secrets` with `names: [","]` answers `saved` naming nothing.
+**Change:** `askToSet` throws a usage error (exit 2) when the parsed fields are empty, and `check_secrets` does the same for names, each with a message that names the argument and does not repeat it.
+**Acceptance:** WHEN an MCP client calls `request_secret` with fields that parse to no name THEN keyprompt SHALL answer `invalid_usage` with `isError: true` and SHALL NOT open a card or write a log line; WHEN `check_secrets` gets names that parse to none THEN it SHALL answer `invalid_usage`.
+**Verify:** the new test fails on its own commit and passes after the fix; `KEYPROMPT_STORE_TEST=1 npm test`; `git diff --name-only main -- test/` lists only the new file.
+**Must not:** edit a locked test; change `set`'s output.
+
+### S-52 — Cancelling `request_secret`, or closing stdin, closes the card (bug B-21)
+
+**PR:** one.
+**Depends on:** S-51 merged (same file). **Blocks:** S-46, S-55.
+**Research:** none. **Model:** opus — the card server is security-sensitive (invariant 4).
+**Senior review:** required — it changes the card server's lifecycle (how a card that collects a secret ends); Opus in a fresh session reads the PR before merge.
+**Confidence:** 0.8 — the abort path is new code in the card server.
+**Files:** `src/card-server.mjs`, `src/mcp.mjs`, `src/cli.mjs`, test/b21-cancel-closes-card.test.mjs (new).
+**Locked tests:** the same list as S-51.
+**Today:** a cancelled `request_secret` keeps its card open and the one-card lock for up to 5 minutes; an open card keeps `keyprompt mcp` alive after stdin closes.
+**Change:** `requestSecretWithCard` takes an optional `signal` (an AbortSignal). On abort it ends the card the way Cancel does: no submit is accepted after that, the server closes, and the promise rejects with exit code 4 and a message that the client cancelled. A submit already being saved finishes first, as the deadline already does. `serveMcp` keeps one AbortController per in-flight `tools/call`, aborts it on `notifications/cancelled` for that id, and aborts all of them when the input ends. `mcpTools().request_secret` passes the signal through `askToSet` and `askWithCard`.
+**Acceptance:** WHEN a client cancels an open `request_secret` THEN the card SHALL close, the one-card lock SHALL be released so the next `request_secret` opens a new card, and no answer SHALL be sent for the cancelled id; WHEN stdin closes while a card is open THEN `keyprompt mcp` SHALL exit within a few seconds.
+**Verify:** the new test fails on its own commit and passes after the fix; `KEYPROMPT_STORE_TEST=1 npm test`; the card-server tests unchanged.
+**Must not:** edit a locked test; weaken any card-server check (token, Host, Origin, size, one submit, deadline); return a value.
+
+### S-53 — `keyprompt mcp` keeps the protocol promises it makes (bug B-22)
+
+**PR:** one.
+**Depends on:** S-52 merged (same file). **Blocks:** S-46.
+**Research:** none. **Model:** sonnet.
+**Senior review:** not required — protocol framing only, no secret path; each rule gets an exact test.
+**Confidence:** 0.85.
+**Files:** `src/mcp.mjs`, test/b22-mcp-protocol.test.mjs (new), `docs/prd/v0-3.md`.
+**Locked tests:** the same list as S-51.
+**Today:** a 2025-03-26 batch gets -32600; a line with no newline grows in memory without limit; the cancelled-id set never shrinks.
+**Change:** (1) When the client negotiated 2025-03-26, an array is a batch: each element is handled, and the answers go back as one array (none when every element was a notification; an empty array is one -32600). Other versions keep refusing arrays. (2) Read stdin in chunks: once a line passes 1 MB without a newline, drop it up to the next newline and answer one -32600 "Message too long." (3) Forget a cancelled id once its request has ended. `tools/call` before `initialize` stays answered (reason in B-22).
+**Acceptance:** WHEN a 2025-03-26 client sends a batch THEN each request SHALL be answered in one array; WHEN a client sends more than 1 MB without a newline THEN the server SHALL not hold more than about 1 MB of it and SHALL answer "Message too long." once.
+**Verify:** the new test fails on its own commit and passes after the fix; `KEYPROMPT_STORE_TEST=1 npm test`.
+**Must not:** edit a locked test; change any answer the S-45 tests pin.
+
+### S-54 — The activity log keeps every line under parallel writers, prints no control characters, and leaves no temp file (bug B-23)
+
+**PR:** one.
+**Depends on:** S-51 merged (branch order only). **Blocks:** S-46, S-55.
+**Research:** none. **Model:** sonnet.
+**Senior review:** required — it changes how stored data is written (a lock file around the log's append and trim).
+**Confidence:** 0.8 — file locking across processes and operating systems.
+**Files:** `src/activity.mjs`, test/b23-activity-log.test.mjs (new), `docs/prd/v0-3.md`.
+**Locked tests:** the same list as S-51.
+**Today:** 20 parallel writers on a full log lose about 9 lines; `keyprompt log` prints raw escape codes from a folder name; a failed rename leaves a temp file.
+**Change:** (1) Writers take turns through `activity.jsonl.lock`, made with an exclusive create; a lock older than 10 seconds is taken as left over from a crashed process and removed; a writer that cannot get the lock within about 2 seconds writes nothing (the action itself still succeeds). (2) `activityReport` replaces control characters (C0, DEL, C1) and bidirectional-text marks in `folder` and `program` with `?`. (3) The temp file is removed when the rename fails. The PRD's "can lose one line" becomes what is true.
+**Acceptance:** WHEN 20 keyprompt processes write to a full log at once THEN all 20 lines SHALL be in it and it SHALL hold 1,000 lines; WHEN a folder name holds control characters THEN `keyprompt log` SHALL print none of them.
+**Verify:** the new test fails on its own commit and passes after the fix; `KEYPROMPT_STORE_TEST=1 npm test`.
+**Must not:** edit a locked test; make logging able to fail or slow a command beyond about 2 seconds; write a value.
+
+### S-55 — `SECURITY.md` states the limits of the activity log and `keyprompt mcp` (bug B-24)
+
+**PR:** one.
+**Depends on:** S-52 and S-54 merged. **Blocks:** S-46.
+**Research:** none. **Model:** sonnet.
+**Senior review:** not required — words only, each checked against the merged code.
+**Confidence:** 0.9.
+**Files:** `SECURITY.md`, `README.md` (if a sentence there claims more than the code).
+**Locked tests:** the same list as S-51.
+**Today:** `SECURITY.md` does not mention either feature.
+**Change:** add to "What it does not protect against": the log is not tamper-proof and its folders can name a client; a `run` line is written when the command ends, so a killed keyprompt leaves none; the MCP card's "who is asking" is the client's own claim; MCP tools still need `keyprompt run` to use a key.
+**Acceptance:** WHEN a person reads `SECURITY.md` THEN they SHALL find each of those four limits.
+**Verify:** `grep -n` for each limit in `SECURITY.md`; `KEYPROMPT_STORE_TEST=1 npm test`.
+**Must not:** change any file under `src/`, `bin/` or `test/`.
 
 ### S-46 — Release 0.3.0 (owner step)
 
