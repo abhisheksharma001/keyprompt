@@ -61,6 +61,7 @@ On Linux, also install `secret-tool`: `sudo apt install libsecret-tools` (Debian
 | `keyprompt list` | Saved names, reasons and dates. Never values. |
 | `keyprompt delete NAME` | Removes it from the password store. |
 | `keyprompt log` | The newest 50 lines of the activity log: when each name was saved, given to which program, deleted or put off. Never values. See [Activity log](#activity-log). |
+| `keyprompt mcp` | A small MCP server for agents that call MCP tools: one tool asks for keys on the card, one checks which are saved. Never returns a value. See [MCP](#mcp). |
 | `keyprompt install-skill` | Installs the Claude Code skill (`~/.claude/skills/keyprompt/SKILL.md`). |
 | `keyprompt install-guard [--yes]` | Adds keyprompt's guard to Claude Code's settings (see [Guard for Claude Code](#guard-for-claude-code)). Shows the entries first and asks; `--yes` skips the question. |
 | `keyprompt uninstall-guard` | Removes the guard again. Works only in your own terminal, and always asks. |
@@ -184,6 +185,53 @@ The person chose **Later**:
 
 `run` does not take `--json`, because its stdout is the command's own output: given `--json` before `--`, it stops with exit 2 before anything runs.
 
+### MCP
+
+`keyprompt mcp` is a small MCP server that runs on your computer, for agents that call MCP tools. It has two tools, and neither returns a value:
+
+- **`request_secret`** opens the same card as `keyprompt set` for up to 12 fields (with the same hints) and waits until you press Save, Cancel or **Later**, for at most 5 minutes. It answers with the same result as `keyprompt set --json`.
+- **`check_secrets`** says which names are saved, like `keyprompt has`.
+
+MCP only asks for keys and checks them. A saved key still reaches a program through `keyprompt run NAME -- COMMAND` in a shell.
+
+Add it to your agent, with keyprompt installed by `npm install -g keyprompt`:
+
+**Claude Code:**
+
+```sh
+claude mcp add keyprompt -- keyprompt mcp
+```
+
+**VS Code:** in `.vscode/mcp.json` in your project, or in your user `mcp.json` (**MCP: Open User Configuration**):
+
+```json
+{
+  "servers": {
+    "keyprompt": { "type": "stdio", "command": "keyprompt", "args": ["mcp"] }
+  }
+}
+```
+
+**Cursor:** in `.cursor/mcp.json` in your project, or `~/.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "keyprompt": { "command": "keyprompt", "args": ["mcp"] }
+  }
+}
+```
+
+**Codex:**
+
+```sh
+codex mcp add keyprompt -- keyprompt mcp
+```
+
+Codex 0.167.0 waits 300 seconds for a tool call by default, the same as the card's 5 minutes. To leave room, add `tool_timeout_sec = 360` under `[mcp_servers.keyprompt]` in `~/.codex/config.toml`.
+
+These lines follow each client's own documentation or source as of 2026-11-09. Only Claude Code (2.1.319, on macOS) has been run against `keyprompt mcp` so far.
+
 ## Guard for Claude Code
 
 The skill asks Claude not to read a saved key straight from your password store. The guard makes Claude Code refuse the obvious ways of doing it. It is optional, and it works in Claude Code only.
@@ -263,7 +311,7 @@ keyprompt keeps a names-only record of what it did with each key. `keyprompt log
 Shown: all 3 lines. The log is /Users/you/.keyprompt/activity.jsonl; it keeps the newest 1000 and never a value.
 ```
 
-- **What writes a line:** a save (by `set`, `setup` or the card `run` opens, with **Remember on this computer** ticked); `run` giving names to a command, written when the command ends, with its exit code; a `delete` that removed a value; and a card that ended with **Later**, Cancel or no answer within 5 minutes. `has`, `list`, `log` and `demo` write nothing.
+- **What writes a line:** a save (by `set`, `setup`, the card `run` opens with **Remember on this computer** ticked, or the MCP tool `request_secret`); `run` giving names to a command, written when the command ends, with its exit code; a `delete` that removed a value; and a card that ended with **Later**, Cancel or no answer within 5 minutes. `has`, `list`, `log` and `demo` write nothing.
 - **What a line holds:** the time, what happened, the keyprompt command, the names, the exit code and the folder keyprompt ran in; for `run`, also the program's own name (`node`, not its folder). Never a value, a reason, the command's arguments (they can hold another secret or a client's data), its output or its environment.
 - **Size:** the file keeps the newest 1,000 lines.
 - **On and silent:** writing a line prints nothing, and if the log cannot be written the command carries on as usual. To empty it, delete the file.
