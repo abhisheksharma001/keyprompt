@@ -23,7 +23,7 @@ export const MAX_ENTRIES = 1000
 export const SHOWN_ENTRIES = 50
 
 const EVENTS = new Set(['saved', 'run', 'deleted', 'deferred', 'cancelled', 'timed_out'])
-const COMMANDS = new Set(['set', 'setup', 'run', 'delete'])
+const COMMANDS = new Set(['set', 'setup', 'run', 'delete', 'mcp'])
 
 export function activityPath() {
   return join(catalogDir(), 'activity.jsonl')
