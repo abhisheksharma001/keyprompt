@@ -251,3 +251,12 @@ Keyprompt's design inference: use stable status identifiers plus its existing ex
 **Review:** none yet; a higher model reads the answer if it leads to a protocol change.
 **Status:** open.
 **Answer:** —
+
+### R-15 — Which shell does Claude Code's Monitor tool run, and what `tool_name` does the guard get for it?
+
+**Where:** v0.3 · S-57 · `src/guard.mjs` `preToolUse` (a `Monitor` call is read both as Bash and as PowerShell) · the guard
+**Find out:** whether a Monitor command runs in Bash (Git Bash on Windows) or in PowerShell when the PowerShell tool is on, and whether a `Bash|PowerShell` PreToolUse hook receives it with `tool_name` `Monitor` or `Bash`. If it is always Bash, read it as Bash only: reading it both ways refuses a Monitor command such as `git commit -m "say \"hi\"; <read>"`, which Bash would not run (found by S-57's `/code-review`).
+**Confidence:** 0.4 (low). The tools reference says only that Monitor "uses the same permission rules as Bash" and that on Windows the Bash tool uses Git Bash and the PowerShell tool PowerShell; it does not say which shell Monitor runs (code.claude.com/docs/en/tools-reference, live, 2026-11-10). R-12 read on the hooks page that a `Bash` matcher "also runs on shell commands Claude starts with the Monitor tool" and that "the hook gets a Bash call" (live, 2026-11-07).
+**Review:** none yet; the S-57 senior review decides whether both ways stays until this is answered.
+**Status:** open.
+**Answer:** —
