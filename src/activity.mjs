@@ -37,8 +37,12 @@ export const LOCK_WAIT_MS = 2000
 /** A lock older than this is left over from a process that crashed or stopped while holding it. */
 export const STALE_LOCK_MS = 10_000
 
-/** Errors that mean "someone else has the lock": EPERM and EACCES are what Windows gives while a lock file is being deleted. */
-const BUSY = new Set(['EEXIST', 'EPERM', 'EACCES'])
+/**
+ * Errors that mean "someone else has the lock". On Windows a lock file being
+ * deleted gives EPERM or EACCES; elsewhere those mean the folder cannot be
+ * written, and waiting would only slow every command (S-54 senior review).
+ */
+const BUSY = new Set(process.platform === 'win32' ? ['EEXIST', 'EPERM', 'EACCES'] : ['EEXIST'])
 
 /**
  * Take the trimming lock: a file made with an exclusive create, holding this
@@ -57,17 +61,24 @@ async function takeLock(lock, token) {
       const handle = await open(lock, 'wx', 0o600)
       try {
         await handle.writeFile(token)
-      } finally {
+      } catch (error) {
+        // A lock without its token (a full disk, say) would make every writer wait: remove it.
         await handle.close()
+        await rm(lock, { force: true })
+        throw error
       }
+      await handle.close()
       return true
     } catch (error) {
       if (!BUSY.has(/** @type {NodeJS.ErrnoException} */ (error).code ?? '')) throw error
     }
     try {
+      const info = await stat(lock)
+      // Something that is not a lock file (a folder, say) never goes away: stop waiting for it.
+      if (!info.isFile()) return false
       const seen = await readFile(lock, 'utf8')
-      const { mtimeMs } = await stat(lock)
-      // Still the same lock, and old: its holder is gone. (Two waiters clearing the same stale lock in the same instant can still overlap once.)
+      const { mtimeMs } = info
+      // Still the same lock, and old: its holder is gone, or stopped. (Waiters that judged the same stale lock in the same instant can overlap.)
       if (Date.now() - mtimeMs > STALE_LOCK_MS && (await readFile(lock, 'utf8')) === seen) {
         await rm(lock, { force: true })
         continue
@@ -81,17 +92,26 @@ async function takeLock(lock, token) {
 }
 
 /**
+ * Whether the lock still holds this writer's token.
+ * @param {string} lock
+ * @param {string} token
+ */
+async function stillHeld(lock, token) {
+  try {
+    return (await readFile(lock, 'utf8')) === token
+  } catch {
+    return false
+  }
+}
+
+/**
  * Remove the lock only if it is still this writer's: a holder that was
  * paused past STALE_LOCK_MS must not remove the next holder's lock.
  * @param {string} lock
  * @param {string} token
  */
 export async function releaseLock(lock, token) {
-  try {
-    if ((await readFile(lock, 'utf8')) === token) await rm(lock, { force: true })
-  } catch {
-    // Already gone.
-  }
+  if (await stillHeld(lock, token)) await rm(lock, { force: true })
 }
 
 /**
@@ -128,9 +148,13 @@ export function activityEntry({ event, command, names, exitCode, program, time =
  * A short append is safe without a lock (the file is opened for appending),
  * so every writer appends its line. Only the trim, which rewrites the file,
  * needs a turn: writers take turns through `activity.jsonl.lock`, so a trim
- * never drops another writer's new line (B-23). A writer that does not get
- * its turn within LOCK_WAIT_MS skips the trim; its line is then at risk only
- * if it lands in the middle of another writer's trim.
+ * does not drop another writer's new line (B-23). Two cases remain: a writer
+ * that does not get its turn within LOCK_WAIT_MS skips the trim, and its line
+ * is then at risk if it lands in the middle of another writer's trim; and a
+ * writer stopped for over STALE_LOCK_MS in the middle of a trim (a laptop
+ * asleep, a suspended process) has its lock cleared as stale, and its trim
+ * can then drop lines written meanwhile. It checks its token just before
+ * the rename, which narrows that case but cannot close it.
  * @param {ActivityEntry} entry
  */
 export async function recordActivity(entry) {
@@ -147,6 +171,11 @@ export async function recordActivity(entry) {
       const tmp = `${activityPath()}.${process.pid}.${token}.tmp`
       await writeFile(tmp, `${lines.slice(-MAX_ENTRIES).join('\n')}\n`, { mode: 0o600 })
       try {
+        // Lost the lock while stopped (it was cleared as stale): another writer may have written since, so do not overwrite.
+        if (!(await stillHeld(lock, token))) {
+          await rm(tmp, { force: true })
+          return
+        }
         await rename(tmp, activityPath())
       } catch (error) {
         // Never leave the temporary copy behind (EPERM on Windows while another program has the file open).
@@ -216,14 +245,15 @@ export async function readActivity() {
 }
 
 /**
- * Control characters (C0, DEL, C1), bidirectional-text marks, zero-width
- * characters and line or paragraph separators shown as `?`,
+ * Control characters (C0, DEL, C1), format characters (bidirectional-text
+ * marks, zero-width characters, tag characters, the soft hyphen) and line or
+ * paragraph separators shown as `?`,
  * so a folder or program name cannot move the cursor or reorder the line it
  * is printed on (B-23).
  * @param {string} text
  */
 function printable(text) {
-  return text.replace(/[\u0000-\u001f\u007f-\u009f\u061c\u200b-\u200f\u2028\u2029\u202a-\u202e\u2060-\u2069\ufeff]/g, '?')
+  return text.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, '?')
 }
 
 /** @param {Date} date */

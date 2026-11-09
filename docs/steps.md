@@ -1055,7 +1055,7 @@ Order and cadence are Abhishek's (D-10, D-13): one PR, then stop. S-38 and S-39 
 **Verify:** the new test fails on its own commit and passes after the fix; `KEYPROMPT_STORE_TEST=1 npm test`.
 **Must not:** edit a locked test; change any answer the S-45 tests pin.
 
-### S-54 — The activity log keeps every line under parallel writers, prints no control characters, and leaves no temp file (bug B-23)
+### S-54 — The activity log keeps lines under parallel writers, prints no control characters, and removes its temp file when the rename fails (bug B-23)
 
 **PR:** one.
 **Depends on:** S-51 merged (branch order only). **Blocks:** S-46, S-55.
@@ -1065,7 +1065,7 @@ Order and cadence are Abhishek's (D-10, D-13): one PR, then stop. S-38 and S-39 
 **Files:** `src/activity.mjs`, test/b23-activity-log.test.mjs (new), `docs/prd/v0-3.md`.
 **Locked tests:** the same list as S-51.
 **Today:** 20 parallel writers on a full log lose about 9 lines; `keyprompt log` prints raw escape codes from a folder name; a failed rename leaves a temp file.
-**Change:** (1) Writers take turns through `activity.jsonl.lock`, made with an exclusive create; a lock older than 10 seconds is taken as left over from a crashed process and removed; a writer that cannot get the lock within about 2 seconds writes nothing (the action itself still succeeds). (2) `activityReport` replaces control characters (C0, DEL, C1) and bidirectional-text marks in `folder` and `program` with `?`. (3) The temp file is removed when the rename fails. The PRD's "can lose one line" becomes what is true.
+**Change:** (1) Writers take turns through `activity.jsonl.lock`, made with an exclusive create; a lock older than 10 seconds is taken as left over from a crashed process and removed; a writer that cannot get the lock within about 2 seconds writes nothing (the action itself still succeeds). *Changed while building (the PRD has the result):* every writer appends its line and only the trim takes turns, so a busy lock skips the trim, not the line; the lock holds a token; the remaining limits are in the PRD. (2) `activityReport` replaces control characters (C0, DEL, C1) and bidirectional-text marks in `folder` and `program` with `?`. (3) The temp file is removed when the rename fails. The PRD's "can lose one line" becomes what is true.
 **Acceptance:** WHEN 20 keyprompt processes write to a full log at once THEN all 20 lines SHALL be in it and it SHALL hold 1,000 lines; WHEN a folder name holds control characters THEN `keyprompt log` SHALL print none of them.
 **Verify:** the new test fails on its own commit and passes after the fix; `KEYPROMPT_STORE_TEST=1 npm test`.
 **Must not:** edit a locked test; make logging able to fail or slow a command beyond about 2 seconds; write a value.

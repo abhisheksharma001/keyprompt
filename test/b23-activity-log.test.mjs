@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
+import { spawn, spawnSync } from 'node:child_process'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { test } from 'node:test'
 import { activityEntry, activityPath, activityReport, MAX_ENTRIES, readActivity, recordActivity, releaseLock } from '../src/activity.mjs'
 
@@ -93,7 +94,7 @@ test('B-23: while another writer holds the lock, a writer waits about 2 seconds,
   })
 })
 
-test('B-23: a writer removes only its own lock', async () => {
+test('B-23: a writer removes its lock when it is done', async () => {
   await inHome(async () => {
     await recordActivity(activityEntry({ event: 'saved', command: 'set', names: ['FIRST'], exitCode: 0 }))
     assert.equal(existsSync(`${activityPath()}.lock`), false, 'its own lock is removed')
@@ -109,5 +110,42 @@ test('B-23: releasing the lock leaves it alone when another writer holds it now'
     assert.equal(readFileSync(lock, 'utf8'), 'the-next-writer')
     await releaseLock(lock, 'the-next-writer')
     assert.equal(existsSync(lock), false)
+  })
+})
+
+test('B-23: a keyprompt folder that cannot be written costs no wait', { skip: process.platform === 'win32' || process.getuid?.() === 0 }, async () => {
+  await inHome(async (home) => {
+    chmodSync(home, 0o500)
+    try {
+      const started = Date.now()
+      await recordActivity(activityEntry({ event: 'saved', command: 'set', names: ['A_KEY'], exitCode: 0 }))
+      assert.ok(Date.now() - started < 500, `took ${Date.now() - started} ms`)
+    } finally {
+      chmodSync(home, 0o700)
+    }
+  })
+})
+
+test('B-23: a lock path that is not a file stops the waiting, and the line is still appended', async () => {
+  await inHome(async () => {
+    mkdirSync(`${activityPath()}.lock`)
+    const started = Date.now()
+    await recordActivity(activityEntry({ event: 'saved', command: 'set', names: ['A_KEY'], exitCode: 0 }))
+    assert.ok(Date.now() - started < 500, `took ${Date.now() - started} ms`)
+    assert.deepEqual((await readActivity()).map((e) => e.names[0]), ['A_KEY'])
+  })
+})
+
+test('B-23: keyprompt log --json writes DEL, C1 and invisible characters as \\u escapes, and parses back unchanged', async () => {
+  await inHome(async (home) => {
+    const folder = '/work/x\u007f\u009b\u202e\u200b\u{E0041}y'
+    writeFileSync(activityPath(), `${JSON.stringify({ time: '2026-11-09T12:00:00.000Z', event: 'saved', command: 'set', names: ['A_KEY'], exitCode: 0, folder })}\n`)
+    const r = spawnSync(process.execPath, [fileURLToPath(new URL('../bin/keyprompt.mjs', import.meta.url)), 'log', '--json'], {
+      encoding: 'utf8',
+      env: { ...process.env, KEYPROMPT_HOME: home },
+    })
+    assert.equal(r.status, 0, r.stderr)
+    assert.doesNotMatch(r.stdout, /[\u007f-\u009f\p{Cf}]/u)
+    assert.equal(JSON.parse(r.stdout).entries[0].folder, folder)
   })
 })

@@ -278,9 +278,17 @@ function jsonFailure(command, names, error) {
   return { command, status: statuses[exitCode], names, exitCode, message: known ? error.jsonMessage : UNEXPECTED_JSON_MESSAGE }
 }
 
-/** @param {object} result */
+/**
+ * JSON with DEL, C1, format and separator characters written as `\u` escapes,
+ * so a folder name in `log --json` cannot drive a terminal that shows it.
+ * JSON already escapes C0; the parsed value is the same.
+ * @param {object} result
+ */
 function writeJson(result) {
-  process.stdout.write(`${JSON.stringify(result)}\n`)
+  const safe = JSON.stringify(result).replace(/[\u007f-\u009f\p{Cf}\u2028\u2029]/gu, (found) =>
+    [...found].flatMap((c) => Array.from({ length: c.length }, (_, i) => `\\u${c.charCodeAt(i).toString(16).padStart(4, '0')}`)).join(''),
+  )
+  process.stdout.write(`${safe}\n`)
 }
 
 /**
