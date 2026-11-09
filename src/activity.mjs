@@ -1,4 +1,5 @@
 import { appendFile, mkdir, open, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { randomBytes } from 'node:crypto'
 import { join } from 'node:path'
 import { catalogDir } from './catalog.mjs'
 import { KeypromptError } from './errors.mjs'
@@ -30,34 +31,44 @@ export function activityPath() {
   return join(catalogDir(), 'activity.jsonl')
 }
 
-/** How long a writer waits for its turn before it writes nothing (B-23). */
+/** How long a writer waits for its turn to trim (B-23). Its line is appended either way. */
 export const LOCK_WAIT_MS = 2000
 
-/** A lock older than this is left over from a process that crashed while holding it. */
+/** A lock older than this is left over from a process that crashed or stopped while holding it. */
 export const STALE_LOCK_MS = 10_000
 
+/** Errors that mean "someone else has the lock": EPERM and EACCES are what Windows gives while a lock file is being deleted. */
+const BUSY = new Set(['EEXIST', 'EPERM', 'EACCES'])
+
 /**
- * Take the writers' lock: a file made with an exclusive create, so only one
- * keyprompt process appends and trims at a time. A lock older than
- * STALE_LOCK_MS is removed (two processes clearing the same stale lock at the
- * same moment can still overlap once). Resolves false when the turn does not
- * come within LOCK_WAIT_MS.
+ * Take the trimming lock: a file made with an exclusive create, holding this
+ * writer's random token. A lock older than STALE_LOCK_MS is removed, but only
+ * if its token has not changed, so a waiter never removes a lock another
+ * writer has just taken. Resolves false when the turn does not come within
+ * LOCK_WAIT_MS.
  * @param {string} lock
+ * @param {string} token
  * @returns {Promise<boolean>}
  */
-async function takeLock(lock) {
+async function takeLock(lock, token) {
   const deadline = Date.now() + LOCK_WAIT_MS
   for (;;) {
     try {
       const handle = await open(lock, 'wx', 0o600)
-      await handle.close()
+      try {
+        await handle.writeFile(token)
+      } finally {
+        await handle.close()
+      }
       return true
     } catch (error) {
-      if (/** @type {NodeJS.ErrnoException} */ (error).code !== 'EEXIST') throw error
+      if (!BUSY.has(/** @type {NodeJS.ErrnoException} */ (error).code ?? '')) throw error
     }
     try {
+      const seen = await readFile(lock, 'utf8')
       const { mtimeMs } = await stat(lock)
-      if (Date.now() - mtimeMs > STALE_LOCK_MS) {
+      // Still the same lock, and old: its holder is gone. (Two waiters clearing the same stale lock in the same instant can still overlap once.)
+      if (Date.now() - mtimeMs > STALE_LOCK_MS && (await readFile(lock, 'utf8')) === seen) {
         await rm(lock, { force: true })
         continue
       }
@@ -66,6 +77,20 @@ async function takeLock(lock) {
     }
     if (Date.now() >= deadline) return false
     await new Promise((done) => setTimeout(done, 15 + Math.floor(Math.random() * 20)))
+  }
+}
+
+/**
+ * Remove the lock only if it is still this writer's: a holder that was
+ * paused past STALE_LOCK_MS must not remove the next holder's lock.
+ * @param {string} lock
+ * @param {string} token
+ */
+export async function releaseLock(lock, token) {
+  try {
+    if ((await readFile(lock, 'utf8')) === token) await rm(lock, { force: true })
+  } catch {
+    // Already gone.
   }
 }
 
@@ -98,21 +123,28 @@ export function activityEntry({ event, command, names, exitCode, program, time =
 /**
  * Add one line, then drop the oldest beyond MAX_ENTRIES. The log is a record
  * for the person, never a reason for a command to fail, so nothing here
- * throws: a log that cannot be written is left as it is. Two keyprompt
- * processes trimming at the same moment can lose one line.
+ * throws: a log that cannot be written is left as it is.
+ *
+ * A short append is safe without a lock (the file is opened for appending),
+ * so every writer appends its line. Only the trim, which rewrites the file,
+ * needs a turn: writers take turns through `activity.jsonl.lock`, so a trim
+ * never drops another writer's new line (B-23). A writer that does not get
+ * its turn within LOCK_WAIT_MS skips the trim; its line is then at risk only
+ * if it lands in the middle of another writer's trim.
  * @param {ActivityEntry} entry
  */
 export async function recordActivity(entry) {
   try {
     await mkdir(catalogDir(), { recursive: true, mode: 0o700 })
     const lock = `${activityPath()}.lock`
-    // Writers take turns, so a trim never drops another process's new line (B-23).
-    if (!(await takeLock(lock))) return
+    const token = randomBytes(12).toString('hex')
+    const locked = await takeLock(lock, token).catch(() => false)
     try {
       await appendFile(activityPath(), `${JSON.stringify(entry)}\n`, { mode: 0o600 })
+      if (!locked) return
       const lines = (await readFile(activityPath(), 'utf8')).split('\n').filter((line) => line.length > 0)
       if (lines.length <= MAX_ENTRIES) return
-      const tmp = `${activityPath()}.${process.pid}.tmp`
+      const tmp = `${activityPath()}.${process.pid}.${token}.tmp`
       await writeFile(tmp, `${lines.slice(-MAX_ENTRIES).join('\n')}\n`, { mode: 0o600 })
       try {
         await rename(tmp, activityPath())
@@ -122,7 +154,7 @@ export async function recordActivity(entry) {
         throw error
       }
     } finally {
-      await rm(lock, { force: true })
+      if (locked) await releaseLock(lock, token)
     }
   } catch {
     // Deliberately silent (D-20): the action itself worked.
@@ -184,13 +216,14 @@ export async function readActivity() {
 }
 
 /**
- * Control characters (C0, DEL, C1) and bidirectional-text marks shown as `?`,
+ * Control characters (C0, DEL, C1), bidirectional-text marks, zero-width
+ * characters and line or paragraph separators shown as `?`,
  * so a folder or program name cannot move the cursor or reorder the line it
  * is printed on (B-23).
  * @param {string} text
  */
 function printable(text) {
-  return text.replace(/[\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, '?')
+  return text.replace(/[\u0000-\u001f\u007f-\u009f\u061c\u200b-\u200f\u2028\u2029\u202a-\u202e\u2060-\u2069\ufeff]/g, '?')
 }
 
 /** @param {Date} date */

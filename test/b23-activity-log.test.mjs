@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSyn
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { activityEntry, activityPath, activityReport, MAX_ENTRIES, readActivity, recordActivity } from '../src/activity.mjs'
+import { activityEntry, activityPath, activityReport, MAX_ENTRIES, readActivity, recordActivity, releaseLock } from '../src/activity.mjs'
 
 const ACTIVITY_URL = new URL('../src/activity.mjs', import.meta.url).href
 
@@ -57,12 +57,12 @@ test('B-23: keyprompt log shows control characters and bidi marks in a folder or
     command: 'run',
     names: ['A_KEY'],
     exitCode: 0,
-    program: 'evil‮txt.exe',
-    folder: '/work/a\u001b[1A\u001b[2Kfake\u0007\u009b',
+    program: 'evil\u202Etxt.exe',
+    folder: '/work/a\u001b[1A\u001b[2Kfake\u0007\u009b\u061c\u2028\u200b\ufeff',
   }
   const report = activityReport([entry], 1, '/p/activity.jsonl')
-  assert.doesNotMatch(report.replaceAll('\n', ''), /[\u0000-\u001f\u007f-\u009f‎‏‪-‮⁦-⁩]/)
-  assert.match(report, /Gave A_KEY to evil\?txt\.exe, which exited with 0, in \/work\/a\?\[1A\?\[2Kfake\?\?\n/)
+  assert.doesNotMatch(report.replaceAll('\n', ''), /[\u0000-\u001f\u007f-\u009f\u061c\u200b-\u200f\u2028\u2029\u202a-\u202e\u2060-\u2069\ufeff]/)
+  assert.match(report, /Gave A_KEY to evil\?txt\.exe, which exited with 0, in \/work\/a\?\[1A\?\[2Kfake\?{6}\n/)
 })
 
 test('B-23: a lock left over from a crashed process is cleared, and the line is written', async () => {
@@ -77,15 +77,37 @@ test('B-23: a lock left over from a crashed process is cleared, and the line is 
   })
 })
 
-test('B-23: while another writer holds the lock, a writer gives up after about 2 seconds and writes nothing', async () => {
+test('B-23: while another writer holds the lock, a writer waits about 2 seconds, then appends its line without trimming', async () => {
   await inHome(async () => {
+    writeFileSync(activityPath(), `${Array.from({ length: MAX_ENTRIES }, (_, i) => line(`OLD_${i}`)).join('\n')}\n`)
     const lock = `${activityPath()}.lock`
-    writeFileSync(lock, '')
+    writeFileSync(lock, 'another-writer')
     const started = Date.now()
     await recordActivity(activityEntry({ event: 'saved', command: 'set', names: ['WAITED'], exitCode: 0 }))
     const waited = Date.now() - started
     assert.ok(waited >= 1500 && waited < 6000, `waited ${waited} ms`)
-    assert.deepEqual(await readActivity(), [])
-    assert.equal(existsSync(lock), true, "another writer's lock is left alone")
+    const entries = await readActivity()
+    assert.equal(entries.length, MAX_ENTRIES + 1, 'appended, not trimmed')
+    assert.deepEqual(entries.at(-1).names, ['WAITED'])
+    assert.equal(readFileSync(lock, 'utf8'), 'another-writer', "another writer's lock is left alone")
+  })
+})
+
+test('B-23: a writer removes only its own lock', async () => {
+  await inHome(async () => {
+    await recordActivity(activityEntry({ event: 'saved', command: 'set', names: ['FIRST'], exitCode: 0 }))
+    assert.equal(existsSync(`${activityPath()}.lock`), false, 'its own lock is removed')
+  })
+})
+
+test('B-23: releasing the lock leaves it alone when another writer holds it now', async () => {
+  await inHome(async () => {
+    const lock = `${activityPath()}.lock`
+    // A holder paused past the stale limit, whose lock was cleared and taken by another writer.
+    writeFileSync(lock, 'the-next-writer')
+    await releaseLock(lock, 'the-paused-writer')
+    assert.equal(readFileSync(lock, 'utf8'), 'the-next-writer')
+    await releaseLock(lock, 'the-next-writer')
+    assert.equal(existsSync(lock), false)
   })
 })
