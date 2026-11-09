@@ -3,6 +3,7 @@ import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { createInterface } from 'node:readline/promises'
 import { fileURLToPath } from 'node:url'
+import { activityEntry, activityPath, activityReport, readActivity, recordActivity, SHOWN_ENTRIES } from './activity.mjs'
 import { openInBrowser } from './browser.mjs'
 import { requestSecretWithCard } from './card-server.mjs'
 import { catalogPath, readCatalog, recordRemoved, recordSavedMany } from './catalog.mjs'
@@ -51,7 +52,9 @@ Usage:
   keyprompt has NAME        Exit 0 if NAME is saved, 3 if not. Never shows the value.
   keyprompt list            Saved names, reasons and dates. Never values.
   keyprompt delete NAME     Remove NAME from the password store.
-  keyprompt demo            Open a sample card to see how it looks. Nothing you type is saved.
+  keyprompt log             The newest 50 lines of the activity log: when each name was
+                            saved, given to which program, deleted or put off. Never values.
+  keyprompt demo           Open a sample card to see how it looks. Nothing you type is saved.
   keyprompt install-skill   Teach Claude Code to use keyprompt (writes ~/.claude/skills/keyprompt).
   keyprompt install-guard [--yes]
                             Add keyprompt's guard to Claude Code's settings. Shows the
@@ -82,7 +85,7 @@ Exit codes:
   run exits with COMMAND's own code once COMMAND has started.
 
 Options:
-  --json          One names-only JSON result for set, has, list, delete or setup.
+  --json          One names-only JSON result for set, has, list, delete, setup or log.
                   Failures are JSON too, with keyprompt's message; existing exit
                   codes stay the same.
   --reason TEXT   Shown on the card: why the secret is needed.
@@ -228,7 +231,7 @@ export function parseArgs(argv) {
   return parsed
 }
 
-const JSON_COMMANDS = new Set(['set', 'has', 'list', 'delete', 'setup'])
+const JSON_COMMANDS = new Set(['set', 'has', 'list', 'delete', 'setup', 'log'])
 
 /**
  * Recognize output mode even when argument parsing fails. Option values and
@@ -344,12 +347,38 @@ function requesterLabel(/** @type {string | undefined} */ by) {
  * a failed save shows on the card. `remember: false` hands them to this run only.
  * @param {import('./store/index.mjs').SecretStore} store
  * @param {import('./card-server.mjs').CardField[]} fields
- * @param {{ reason?: string, by?: string, replacing: boolean, allowSessionOnly: boolean, masked?: boolean, allowEmpty?: boolean, warnings?: string[] }} options
+ * @param {{ command: 'set' | 'setup' | 'run', reason?: string, by?: string, replacing: boolean, allowSessionOnly: boolean, masked?: boolean, allowEmpty?: boolean, warnings?: string[] }} options
  */
 async function askWithCard(store, fields, options) {
-  process.stderr.write(
-    `keyprompt: opened a secure card in the browser for ${joinNames(fields.map((f) => f.name))}. Waiting for it to be filled in...\n`,
-  )
+  const names = fields.map((f) => f.name)
+  process.stderr.write(`keyprompt: opened a secure card in the browser for ${joinNames(names)}. Waiting for it to be filled in...\n`)
+  try {
+    const answer = await openCard(store, fields, options)
+    const saved = names.filter((name) => answer.values.has(name))
+    if (answer.remembered && saved.length > 0) {
+      await recordActivity(activityEntry({ event: 'saved', command: options.command, names: saved, exitCode: EXIT.OK }))
+    }
+    return answer
+  } catch (error) {
+    const closed = error instanceof KeypromptError ? CARD_CLOSED[error.exitCode] : undefined
+    if (closed) await recordActivity(activityEntry({ event: closed, command: options.command, names, exitCode: error.exitCode }))
+    throw error
+  }
+}
+
+/** The activity-log event for a card that ended without a save (S-43). */
+const CARD_CLOSED = /** @type {Record<number, import('./activity.mjs').ActivityEvent>} */ ({
+  [EXIT.CANCELLED]: 'cancelled',
+  [EXIT.TIMED_OUT]: 'timed_out',
+  [EXIT.DEFERRED]: 'deferred',
+})
+
+/**
+ * @param {import('./store/index.mjs').SecretStore} store
+ * @param {import('./card-server.mjs').CardField[]} fields
+ * @param {Parameters<typeof askWithCard>[2]} options
+ */
+function openCard(store, fields, options) {
   return requestSecretWithCard({
     fields,
     reason: options.reason,
@@ -542,11 +571,11 @@ export async function main(argv) {
   try {
     const args = parseArgs(argv)
     if (request.json && !request.command) {
-      throw new KeypromptError('--json works only with set, has, list, delete and setup.', { exitCode: EXIT.USAGE })
+      throw new KeypromptError('--json works only with set, has, list, delete, setup and log.', { exitCode: EXIT.USAGE })
     }
     if (args.json && args.command.length > 0) throw new KeypromptError('These JSON commands do not take a child command.', { exitCode: EXIT.USAGE })
     // Invalid names never get reflected in an error result.
-    if (request.json && request.command !== 'list' && request.command !== 'setup') failure.names = parseFields(args.positionals.slice(1)).map((f) => f.name)
+    if (request.json && !['list', 'setup', 'log'].includes(request.command)) failure.names = parseFields(args.positionals.slice(1)).map((f) => f.name)
     return await mainParsed(args, failure)
   } catch (error) {
     if (!request.json) throw error
@@ -589,6 +618,7 @@ async function mainParsed(args, failure) {
     for (const field of parsed) fields.push({ ...field, saved: (await store.read(field.name)) !== null })
     const warnings = []
     const { values } = await askWithCard(store, fields, {
+      command: 'set',
       reason: args.reason,
       by: args.by,
       replacing: fields.every((f) => f.saved),
@@ -630,6 +660,7 @@ async function mainParsed(args, failure) {
     if (fields.length > 0) {
       failure.names = fields.map((f) => f.name)
       ;({ values } = await askWithCard(store, fields, {
+        command: 'setup',
         reason: args.reason,
         by: args.by,
         replacing: false,
@@ -670,7 +701,7 @@ async function mainParsed(args, failure) {
     const [command, ...commandArgs] = args.command
     const secrets = await collectSecrets(store, fields, async ({ fields: missing, allowSessionOnly }) => {
       // allowEmpty: when every missing name is optional, Save with every box empty carries on to the command without them (B-4).
-      const options = { reason: args.reason, by: args.by, replacing: false, allowSessionOnly, masked: args.redact, allowEmpty: true }
+      const options = { command: /** @type {const} */ ('run'), reason: args.reason, by: args.by, replacing: false, allowSessionOnly, masked: args.redact, allowEmpty: true }
       const asked = await askWithCard(store, missing, options).catch((error) => {
         if (error instanceof KeypromptError && error.exitCode === EXIT.DEFERRED) throw laterForRun(missing, command)
         throw error
@@ -681,7 +712,13 @@ async function mainParsed(args, failure) {
     // After the values are known and before the command starts, so a refused run starts nothing.
     const inCommand = secretsInCommand(secrets, args.command)
     if (inCommand.length > 0) throw valueInCommandError(inCommand)
-    return runWithSecrets(command, commandArgs, secrets, { redact: args.redact })
+    const started = new Date()
+    const exitCode = await runWithSecrets(command, commandArgs, secrets, { redact: args.redact })
+    // Written once the command has ended, so it carries the exit code; the time is when the names were handed over.
+    if (secrets.size > 0) {
+      await recordActivity(activityEntry({ event: 'run', command: 'run', names: [...secrets.keys()], exitCode, program: command, time: started }))
+    }
+    return exitCode
   }
 
   if (verb === 'demo') {
@@ -742,6 +779,7 @@ async function mainParsed(args, failure) {
     const name = assertName(rest[0])
     const store = getStore()
     const { removed, note } = await removeAndRecord(store, name)
+    if (removed) await recordActivity(activityEntry({ event: 'deleted', command: 'delete', names: [name], exitCode: EXIT.OK }))
     if (args.json) writeJson({
       command: verb,
       status: removed ? 'deleted' : 'missing',
@@ -754,6 +792,16 @@ async function mainParsed(args, failure) {
       process.stdout.write(removed ? `Deleted ${name} from the ${store.label}.\n` : `${name} was not saved.\n`)
     }
     return removed ? EXIT.OK : EXIT.NOT_FOUND
+  }
+
+  if (verb === 'log') {
+    if (rest.length > 0 || args.command.length > 0) throw new KeypromptError('Usage: keyprompt log [--json]', { exitCode: EXIT.USAGE })
+    const entries = await readActivity()
+    const shown = entries.slice(-SHOWN_ENTRIES)
+    if (args.json) {
+      writeJson({ command: verb, status: 'listed', names: [...new Set(shown.flatMap((e) => e.names))], exitCode: EXIT.OK, entries: shown })
+    } else process.stdout.write(activityReport(shown, entries.length, activityPath()))
+    return EXIT.OK
   }
 
   if (verb === 'guard') {

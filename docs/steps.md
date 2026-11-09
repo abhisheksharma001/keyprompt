@@ -16,7 +16,7 @@ Plan: `docs/prd/card-v2.md` (0.2.x) and `docs/prd/v0-3.md` (0.3). Rules: `.claud
 | Fixes | S-20, S-21, S-25, S-26, S-27, S-28, S-30, S-31, S-32, S-33, S-35 | B-6 (the card never ends while a save is under way), B-7 (one true sentence for an ended card), B-12 (masking finds a key's base64 inside longer base64), B-3 (a failed update of the list of names no longer fails a save that worked), B-13 (the same for a delete that worked), B-4 (on `run`, every optional box may be left empty), B-14 (the Save button says plain "Save" when any box is optional), B-8 (with Remember unticked, the penguin holds an envelope and the vault stays shut), B-15 (the README's two demo pictures match the card again), B-16 (the README's picture links pin a commit on main) and B-17 (the S-29 row says its tag and release exist) |
 | 5 Release | S-29, S-34 | 0.2.1 on npm: the six steps since 0.2.0; 0.2.2: the four since (S-30 to S-33) |
 | Research | S-36 | R-9 answered: what keymask, the closest rival, is and is not |
-| 6 v0.3 | S-37 → S-38 → S-39 → S-40, then S-41 → S-47, S-42 → S-48, S-43, then S-44 → S-45, then S-46 | The plan; the Claude Code guard (its check, its installer, its docs); `--json` results, and a reason when one fails (B-19); `keyprompt setup`, then the docs for both; a names-only activity log; research on MCP (R-6), then `keyprompt mcp`; release 0.3.0 |
+| 6 v0.3 | S-37 → S-38 → S-39 → S-40, then S-41 → S-47, S-42 → S-48, S-43 → S-49, then S-44 → S-45, then S-46 | The plan; the Claude Code guard (its check, its installer, its docs); `--json` results, and a reason when one fails (B-19); `keyprompt setup`, then the docs for both; a names-only activity log; research on MCP (R-6), then `keyprompt mcp`; release 0.3.0 |
 
 Order: S-3, S-7, S-15 and S-18 touch different files from the S-2 → S-4 chain, so they can be built in parallel by separate sessions. Everything else follows the arrows.
 
@@ -939,15 +939,31 @@ Order and cadence are Abhishek's (D-10, D-13): one PR, then stop. S-38 and S-39 
 **Acceptance:** WHEN an agent reads `skill/SKILL.md` THEN it SHALL find when to use `setup` and what `--json` returns, and every example output in the README SHALL be what the command prints today.
 **Must not:** change any file under `src/`, `bin/` or `test/`; claim more than the PRD says.
 
-### S-43 — A names-only activity log (outline: grill first)
+### S-43 — A names-only activity log, and `keyprompt log`
 
-**Depends on:** S-42 done (D-10's order); the S-43 grill. **Blocks:** nothing.
-**Research:** none expected.
-**Model:** sonnet once the grill is done.
-**Confidence:** 0.5 (low) — not ready. Open: what one line holds (name, time, exit code, and the command's name only, or its full arguments, which may hold other secrets); where it lives (beside the catalog, under `~/.keyprompt`); size limit; on by default or opt-in; a command to read it.
-**Files:** `src/cli.mjs`, `src/catalog.mjs` or a new file, tests; docs after.
-**Acceptance:** written at the grill.
-**Must not:** write a value, an environment, COMMAND's output, or full arguments unless Abhishek chooses that (invariant 8).
+**PR:** one.
+**Depends on:** S-42 done (D-10's order); the S-43 grill, answered 2026-11-09 (D-20). **Blocks:** S-49.
+**Research:** lookup, done at the grill. AgentSecrets writes a local file, ~/.agentsecrets/proxy.log, in JSONL with key names, agent, method, URL, status and duration, never a value (github.com/The-17/agentsecrets/blob/main/docs/PROXY.md, cached 2026-10-01). Infisical Agent Vault's session logs keep time, method, host, path, status and outcome, and leave out bodies, headers and query strings (infisical.com/platform/agent-vault, cached 2026-10-19).
+**Model:** opus in this session; sonnet could build it from the PRD's "Activity log (S-43)".
+**Confidence:** 0.8 — the grill settled what a line holds, which events, the default and the size; the code reuses the catalog's folder and the card's existing outcomes. The new judgment is where each event is caught so that no line can carry a value or an argument.
+**Files:** src/activity.mjs (new), `src/cli.mjs`, test/activity.test.mjs (new), `test/cli.test.mjs`, `docs/prd/v0-3.md`, this register.
+**Today:** nothing records when a name was saved, handed to which command or deleted; `keyprompt list` shows each name's last save date only.
+**Change:** what the PRD's "Activity log (S-43)" says. `askWithCard` in `src/cli.mjs` writes the save line, or the Later, Cancel or timeout line, for `set`, `setup` and `run`; the `run` branch writes its line when the command ends; `delete` writes one when a value was removed. A new `log` verb (in the JSON commands, with a help line).
+**Acceptance:** L in `docs/prd/v0-3.md`.
+**Verify:** `KEYPROMPT_STORE_TEST=1 npm test`, and `ls ~/.keyprompt` before and after shows no new file. Unit: a program is kept by its own name only; the file keeps the newest 1,000; a log that cannot be written never throws, and a line keyprompt did not write is left out; the exact report text. CLI, with the fake store: `run` with an argument that looks like a secret and `delete` write one line each (program, never the argument), and `has`, `list`, a delete of an unsaved name and a run that gives no value write none; with the fake browser (not on Windows): save, `setup`'s save, Later, Cancel, and a run with Remember unticked. Break test (after the commit): make the `run` line keep the whole command line and watch exactly one test fail; restore with `git checkout`.
+**Must not:** write a value, a reason, an environment, a command's arguments or its output (invariant 8); print anything when a line is written; change any command's output or exit code; add a dependency; change README, `skill/SKILL.md` or the CHANGELOG (S-49).
+
+### S-49 — Docs for `keyprompt log`: README, the skill, the CHANGELOG (outline)
+
+**PR:** one.
+**Depends on:** S-43 done. **Blocks:** S-46.
+**Research:** none — the words come from the PRD's "Activity log (S-43)" and the real output of `keyprompt log`.
+**Model:** sonnet.
+**Confidence:** 0.85 — words only; every example must be real output.
+**Files:** `README.md`, `skill/SKILL.md`, `CHANGELOG.md`.
+**Change:** the README's commands table gets `keyprompt log`; a short "Activity log" section says what a line holds and never holds, where the file is, the 1,000-line cap, that it is on and silent, and shows real `keyprompt log` output; the `--json` lists add `log` and its `entries`. The skill says `keyprompt log` shows what keyprompt did with each name. CHANGELOG "Unreleased": under Added.
+**Acceptance:** WHEN a person reads the README THEN it SHALL say what the activity log records and that it never holds a value or a command's arguments, and every example output SHALL be what the command prints today.
+**Must not:** change any file under `src/`, `bin/` or `test/`; claim more than the PRD says.
 
 ### S-44 — Research R-6: can `keyprompt mcp` open the card through MCP URL mode?
 
