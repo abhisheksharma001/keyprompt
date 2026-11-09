@@ -27,8 +27,9 @@ const WRAPPERS = new Set(['sudo', 'doas', 'env', 'command', 'builtin', 'exec', '
  * Commands that only print, search or store text and cannot run another
  * command from their words, so a read they mention is text (S-57). `git` and
  * `gh` are not here: `git bisect run` or `git rebase --exec` runs a command,
- * and a mention in a commit message or a pull request body is one quoted word,
- * which the read check never matches anyway.
+ * and a mention inside a quoted commit message or pull request body
+ * (`-m "…"`, `--body "…"`) is one word, which the read check never matches.
+ * A here-document body is read as commands (B-26, S-58).
  */
 const TEXT_ONLY = new Set(['echo', 'printf', 'cat', 'tee', 'grep', 'egrep', 'fgrep', 'rg', 'write-output', 'write-host'])
 /** Shells whose `-c` argument is a script that runs. */
@@ -54,13 +55,15 @@ function base(word) {
  * With `powershell`, the text is read the way PowerShell reads it
  * (about_Quoting_Rules, about_Parsing): the backtick is the escape character
  * and `\` is a plain character, a doubled quote inside quotes is a quote,
- * braces also end a command, and backticks run nothing.
+ * curly quotes are quotes (CharTraits.cs), braces also end a command, and
+ * backticks run nothing.
  *
  * @param {string} text
  * @param {boolean} [powershell]
  * @returns {{ commands: string[][], nested: string[] }}
  */
 export function splitShell(text, powershell = false) {
+  if (powershell) text = text.replace(/[‘’‚‛]/g, "'").replace(/[“”„]/g, '"')
   const escape = powershell ? '`' : '\\'
   /** @type {string[][]} */
   const commands = []
@@ -70,10 +73,13 @@ export function splitShell(text, powershell = false) {
   let words = []
   let word = ''
   let inWord = false
+  // True right after a `$( )` or backticks outside quotes: a `#` glued to them is part of a word, not a comment.
+  let glued = false
   const endWord = () => {
     if (inWord) words.push(word)
     word = ''
     inWord = false
+    glued = false
   }
   const endCommand = () => {
     endWord()
@@ -121,7 +127,7 @@ export function splitShell(text, powershell = false) {
         inWord = true
       }
       i += skip || 2
-    } else if (c === '#' && !inWord) {
+    } else if (c === '#' && !inWord && !glued) {
       const end = text.indexOf('\n', i)
       i = end === -1 ? text.length : end
     } else if (c === "'") {
@@ -156,8 +162,10 @@ export function splitShell(text, powershell = false) {
       i++
     } else if (c === '$' && text[i + 1] === '(') {
       i = subshell(i + 2)
+      glued = true
     } else if (c === '`') {
       i = backtick(i + 1)
+      glued = true
     } else if (separators.includes(c)) {
       endCommand()
       i++
@@ -252,36 +260,32 @@ function commandStart(words) {
   return i
 }
 
+/** @type {Record<string, string[]>} the subcommands of each store's read tool that read */
+const READ_SUBCOMMANDS = { security: ['find-generic-password', 'dump-keychain'], 'secret-tool': ['lookup', 'search'] }
+
 /**
- * A read starting at one word of a command: the store's read tool and what
- * follows it, or a shell or `eval` given a script.
+ * For each index, the first index at or after it whose word passes `test`
+ * (`words.length` when none does).
  *
- * @param {string} command the word, as `base` returns it
- * @param {string[]} args the words after it
- * @param {Set<string>} names
- * @param {number} depth
- * @returns {string | null}
+ * @param {string[]} words
+ * @param {(word: string) => boolean} test
  */
-function readAt(command, args, names, depth) {
-  if (command === 'security') return securityRead(args, names)
-  if (command === 'secret-tool') return secretToolRead(args, names)
-  // Windows: the CredentialManager module's cmdlet, naming a keyprompt target or a saved name (R-12).
-  if (command === 'get-storedcredential') return args.some((w) => namesKeyprompt(w, names)) ? READS : null
-  if (command === 'eval') return readInShell(args.join(' '), names, depth + 1, false)
-  if (SHELLS.has(command)) {
-    // PowerShell: everything after -Command (or -c) is the script. Other shells: the one word after -c (or -lc, -ec ...).
-    const powershell = command.startsWith('pwsh') || command.startsWith('powershell')
-    const flag = args.findIndex((w) => (powershell ? /^-c(ommand)?$/i.test(w) : /^-[a-z]{0,3}c[a-z]{0,3}$/.test(w)))
-    if (flag === -1 || args[flag + 1] === undefined) return null
-    return readInShell(powershell ? args.slice(flag + 1).join(' ') : args[flag + 1], names, depth + 1, powershell)
-  }
-  return null
+function nextMatch(words, test) {
+  const next = new Array(words.length + 1).fill(words.length)
+  for (let k = words.length - 1; k >= 0; k--) next[k] = test(words[k]) ? k : next[k + 1]
+  return next
 }
 
 /**
  * A read anywhere among a command's words, so that no list of wrappers is
  * needed (`timeout 5 …`, `xargs …`, `find … -exec …`), unless the command only
  * prints, searches or stores text (S-57).
+ *
+ * Each kind of read, and each script, is checked once, at its first word: a
+ * later one sees only the tail of the same words, read the same way, so it
+ * can find nothing new. That keeps the check linear in the command's length,
+ * because the hook times out after 10 seconds and Claude Code then runs the
+ * command (`src/install-guard.mjs`).
  *
  * @param {string[]} words one simple command
  * @param {Set<string>} names
@@ -290,9 +294,46 @@ function readAt(command, args, names, depth) {
  */
 function readInWords(words, names, depth) {
   const start = commandStart(words)
-  if (start >= words.length || TEXT_ONLY.has(base(words[start]))) return null
-  for (let i = 0; i < words.length; i++) {
-    const found = readAt(base(words[i]), words.slice(i + 1), names, depth)
+  if (start >= words.length) return null
+  // An option skipped before the first word may have taken it as its value (`env -u echo …`), so only a start past no option counts as text.
+  if (TEXT_ONLY.has(base(words[start])) && !words.slice(0, start).some((w) => w.startsWith('-'))) return null
+  const checked = new Set()
+  const plain = nextMatch(words, (w) => !w.startsWith('-'))
+  /** @type {Record<string, number[]>} */
+  const flags = {}
+  let end = words.length
+  for (let i = 0; i < end; i++) {
+    const command = base(words[i])
+    /** @type {string | null} */
+    let found = null
+    if (command === 'eval') {
+      // eval runs every word after it as one script, which settles the rest of the command.
+      return readInShell(words.slice(i + 1).join(' '), names, depth + 1, false)
+    } else if (command === 'security' || command === 'secret-tool') {
+      const sub = plain[i + 1]
+      const key = `${command} ${words[sub]}`
+      if (READ_SUBCOMMANDS[command].includes(words[sub]) && !checked.has(key)) {
+        checked.add(key)
+        found = (command === 'security' ? securityRead : secretToolRead)(words.slice(sub), names)
+      }
+    } else if (command === 'get-storedcredential' && !checked.has(command)) {
+      // Windows: the CredentialManager module's cmdlet, naming a keyprompt target or a saved name (R-12).
+      checked.add(command)
+      found = words.slice(i + 1).some((w) => namesKeyprompt(w, names)) ? READS : null
+    } else if (SHELLS.has(command)) {
+      // PowerShell: everything after -Command (or -c) is the script. Other shells: the one word after -c (or -lc, -ec ...).
+      const powershell = command.startsWith('pwsh') || command.startsWith('powershell')
+      const kind = powershell ? 'powershell' : 'shell'
+      flags[kind] ??= nextMatch(words, (w) => (powershell ? /^-c(ommand)?$/i.test(w) : /^-[a-z]{0,3}c[a-z]{0,3}$/.test(w)))
+      const flag = flags[kind][i + 1]
+      const key = `${kind} ${flag}`
+      if (flag + 1 < words.length && !checked.has(key)) {
+        checked.add(key)
+        found = readInShell(powershell ? words.slice(flag + 1).join(' ') : words[flag + 1], names, depth + 1, powershell)
+        // A PowerShell script is every word after the flag, so the words past it are checked.
+        if (powershell) end = Math.min(end, flag + 1)
+      }
+    }
     if (found) return found
   }
   return null
