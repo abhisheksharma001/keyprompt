@@ -2,7 +2,9 @@
 
 What changed in each version of keyprompt. Everything listed under a version is merged to `main`.
 
-## Unreleased
+## 0.3.0 — 2026-11-09
+
+A guard for Claude Code, `--json` results for agents, `keyprompt setup` for a project's `.env.example`, a names-only activity log with `keyprompt log`, and `keyprompt mcp` for agents that call MCP tools. None adds a dependency.
 
 ### Added
 
