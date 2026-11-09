@@ -977,12 +977,19 @@ Order and cadence are Abhishek's (D-10, D-13): one PR, then stop. S-38 and S-39 
 **Acceptance:** WHEN S-44 is done THEN R-6 SHALL be answered with sources, and S-45 SHALL name the dependency choice Abhishek has to make.
 **Must not:** write code; install or add an MCP SDK.
 
-### S-45 — `keyprompt mcp` (outline: waits on S-44)
+### S-45 — `keyprompt mcp` (waits on Abhishek's choice)
 
-**Depends on:** S-44 done; Abhishek's yes or no on a dependency (an MCP SDK, or JSON-RPC over stdio written by hand; invariant 7). **Blocks:** S-46 if it ships in 0.3.0.
-**Research:** from S-44. **Model:** opus.
-**Confidence:** 0.3 (low) — nothing is known enough to build.
-**Must not:** return a value through MCP (invariant 1); add a dependency without Abhishek's yes.
+**Depends on:** S-44 done (R-6 answered 2026-11-09) and Abhishek's choice among four options. The facts behind each are in R-6.
+  - **(a) Park it.** Ship 0.3.0 without MCP and look again when Codex or Cursor can open a local card. Today URL mode reaches only Claude Code (interactive) and VS Code, and both can already run `keyprompt` through a shell.
+  - **(b) Tools only, hand-written, no new dependency.** A stdio server with one `request_secret` tool that opens the card itself, as `keyprompt set` does, and returns names only. It works in any MCP client that has tools, but the key is still used only through `keyprompt run`, which needs a shell.
+  - **(c) URL mode with SDK v2.** `@modelcontextprotocol/server` 2.4.0 brings three new packages, about 14.5 MB, and raises keyprompt's Node floor from 18.17 to 20 (invariant 7).
+  - **(d) URL mode, hand-written, both protocol versions.** No new dependency, but the most code: the message list in R-6.
+
+**Blocks:** S-46, only if it ships in 0.3.0.
+**Research:** R-6. Before (c) or (d) are built, two things must be settled: a hands-on test of whether Claude Code and VS Code open an `http://127.0.0.1` URL (Codex does not), and whether the card's one-time-token URL breaks the spec's MUST NOT on "pre-authenticated" URLs.
+**Model:** opus.
+**Confidence:** 0.9 for (a). 0.6 (low) for (b), (c) or (d) as written: each needs its own grill and, for (c) and (d), the two checks above. Not ready to build until then.
+**Must not:** return a value through MCP (invariant 1); put the card's URL in a tool result, where it would pass through the model; add a dependency without Abhishek's yes.
 
 ### S-46 — Release 0.3.0 (owner step)
 

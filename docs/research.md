@@ -108,17 +108,44 @@ Keyprompt's design inference: use stable status identifiers plus its existing ex
 
 ### R-6 — Could keyprompt plug into any MCP agent through "URL mode elicitation"?
 
-**Where:** later (parked) · a possible future `keyprompt mcp` server
+**Where:** v0.3 · S-44 (this answer) · S-45, a possible `keyprompt mcp` server
 **Find out:** which agent clients implement URL mode, and whether a keyprompt MCP server could hand them the card URL that way.
-**Confidence:** 0.8 (medium) for the spec side and Claude Code.
-- **Spec:** the MCP spec (version 2026-07-28, client/elicitation) says servers MUST NOT use form mode for passwords or API keys and MUST use URL mode. URL mode sends the person to a separate page whose data never passes through the client (modelcontextprotocol.io/specification/2026-07-28/client/elicitation, read 2026-11-05). That describes keyprompt's card.
-- **Clients:**
-  - Claude Code 2.1.287: "Added URL prompts from MCP servers on the 2025-11-25 protocol". It asks the person, then opens the URL in the browser (CHANGELOG via `gh`, live, and code.claude.com/docs/en/mcp, live, both 2026-11-05).
-  - VS Code's source declares URL mode support (live).
-  - Codex and Cursor: unconfirmed.
-**Review:** higher model before any build.
-**Status:** open — parked.
-**Answer:** —
+**Confidence:** 0.85 (medium). The spec, the SDKs and six clients were read in their own source or docs; Cursor and Windsurf stay unconfirmed, and nobody has yet tried whether a client opens an `http://127.0.0.1` URL.
+**Review:** higher model before any build (S-45).
+**Status:** answered 2026-11-09 (S-44). The 2026-11-05 facts were read again, not reused.
+**Answer:** read live on 2026-11-09 by a research subagent. I checked four of its claims myself the same day: both SDKs' versions and dependencies with `npm view`, Codex's URL check at tag rust-v0.167.0, and Claude Code's changelog. All four matched.
+
+- **Spec: there are two protocol versions to speak, and they work differently.**
+  - The current version is 2026-07-28 (modelcontextprotocol.io/specification/versioning; its changelog at /specification/2026-07-28/changelog). It has no `initialize` handshake: every request carries `_meta` with the protocol version and the client's capabilities, and servers must answer `server/discover`. A server asks for something during a tool call by answering `tools/call` with `resultType: "input_required"` and an `elicitation/create` with `mode: "url"`, `message` and `url`. The client asks the person, opens the URL, and then calls the tool again with the answers. `accept` only means the person agreed to open the page (/specification/2026-07-28/client/elicitation and /basic/patterns/mrtr).
+  - The previous version, 2025-11-25, has the `initialize` handshake. There the server sends its own `elicitation/create` request (with an `elicitationId`) in the middle of the tool call, and may send `notifications/elicitation/complete` afterwards (/specification/2025-11-25/client/elicitation; schema.ts at modelcontextprotocol/modelcontextprotocol@222640c).
+  - VS Code speaks only 2025-11-25 and Claude Code speaks both, so a server must speak both: it answers by the version of the first message it gets.
+- **What the spec asks of the server, and where keyprompt's card does not obviously fit.**
+  - It may not put sensitive data in the URL, and it MUST NOT send "a URL which is pre-authenticated to access a protected resource".
+  - It must tie each request to the person who started it, and check that whoever opens the page is that person. A server that is not on the web "must use a different mechanism".
+  - The card's URL carries a one-time token. That token lets its holder save a value, never read one, but it is still a capability link, and whether it breaks that MUST is not settled.
+  - The spec never mentions localhost. It says servers "SHOULD use HTTPS URLs for non-development environments", so `http://127.0.0.1` goes against a SHOULD, not a MUST (both versions' elicitation pages).
+  - A server MUST NOT use a mode the client did not declare. In 2026, a request that truly needs an undeclared capability gets error `-32021`.
+- **Clients, as of 2026-11-09.**
+  - **Claude Code 2.1.319: yes, in interactive sessions only.**
+    - URL mode on 2026-07-28 connections arrived in 2.1.281 and on 2025-11-25 in 2.1.287 (CHANGELOG.md via `gh`, live).
+    - It asks the person, then opens the URL in the browser (code.claude.com/docs/en/mcp, live).
+    - With `claude -p`, an unanswered elicitation is cancelled (code.claude.com/docs/en/headless). The changelog instead describes such a call timing out, so the two disagree.
+    - The tool-call timeout is long: `MCP_TOOL_TIMEOUT`, and a 30-minute idle timeout for stdio.
+  - **VS Code 1.145.2: yes, on 2025-11-25 only.** It has supported it since 1.107 (code.visualstudio.com/updates/v1_107). The source at microsoft/vscode@14a4fc0 shows an "Open <host>" consent button.
+  - **Codex CLI 0.167.0: it declares URL mode but declines any URL that is not `https`.** `validate_external_url` in codex-rs/tui/src/bottom_pane/app_link_view.rs at rust-v0.167.0 returns nothing unless the scheme is https. So it would decline keyprompt's card.
+  - **Gemini CLI v0.67.0: no.** It registers only `roots`, and issue #28074 was closed as not planned.
+  - **Zed v1.27.0: no.** It has no elicitation capability.
+  - **Cline v4.1.26: no.** It sends `capabilities: {}`.
+  - **Cursor: unconfirmed, probably no.** Its docs say "Elicitation: Supported" without mentioning URL mode (cursor.com/docs/mcp). A forum post shows cursor-agent declaring form mode only (secondary).
+  - **Windsurf: unconfirmed.** Its changelog does not mention elicitation.
+- **What building it would take.**
+  - **SDK v2,** `@modelcontextprotocol/server` 2.4.0 (2026-10-23). It brings three packages (`@modelcontextprotocol/server`, `@modelcontextprotocol/core`, and zod 4.x), about 14.5 MB unpacked, and needs Node 20 or later. keyprompt promises 18.17 or later, so the floor would rise. It speaks both versions through one `serveStdio`, with URL mode via `inputRequired.elicitUrl` (`npm view`, live; typescript-sdk@1e608ca docs/migration/support-2026-07-28.md).
+  - **SDK v1,** `@modelcontextprotocol/sdk` 1.32.2. It has 17 dependencies (express, hono, ajv, jose, zod and others) and is 4.49 MB unpacked. It speaks 2025-11-25 only and gets only fixes now (`npm view`, live; typescript-sdk README@1e608ca).
+  - **Hand-written, both versions, no new dependency.** It needs a line reader and writer over stdio; `initialize`, `notifications/initialized` and `ping` (2025); `server/discover` and `_meta` on every request (2026); `tools/list` and `tools/call`; the 2025 `elicitation/create` with its reply and the completion notice; the 2026 `input_required` answer and its retry, with a signed `requestState`; `notifications/cancelled`; the JSON-RPC errors; and exiting when stdin closes.
+- **What this means for keyprompt (my inference, not a source).**
+  - Today URL mode would reach two clients that keyprompt can already serve: Claude Code (shell and skill) and VS Code. Its agent can run `keyprompt` in a terminal too. Codex, the third client that declares URL mode, would decline the card.
+  - A keyprompt MCP server would also have to answer the open security question above.
+  - A tools-only server, one that opens the card itself the way `keyprompt set` does, would work in any MCP client without URL mode. But it still cannot hand a value to anything except through `keyprompt run`, which needs a shell.
 
 ### R-7 — Is the npm package name free?
 
