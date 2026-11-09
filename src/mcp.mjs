@@ -1,4 +1,4 @@
-import { createInterface } from 'node:readline'
+import { StringDecoder } from 'node:string_decoder'
 
 /**
  * `keyprompt mcp`: a small MCP server on stdin and stdout, written by hand so
@@ -24,8 +24,50 @@ export const PROTOCOL_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26', '202
  */
 export const END_GRACE_MS = 5000
 
-/** A line longer than this is not read. */
+/** A line longer than this is not kept: it is refused as soon as it passes this size (B-22). */
 export const MAX_LINE = 1024 * 1024
+
+/**
+ * The input's lines, without their line endings. A line that passes `max`
+ * characters before its newline yields `null` once, at that moment, and the
+ * rest of it is dropped up to the newline, so memory stays near `max`.
+ * @param {AsyncIterable<Buffer | string>} input
+ * @param {number} max
+ * @returns {AsyncGenerator<string | null>}
+ */
+export async function* boundedLines(input, max) {
+  const decoder = new StringDecoder('utf8')
+  let line = ''
+  let dropping = false
+  for await (const chunk of input) {
+    let text = typeof chunk === 'string' ? chunk : decoder.write(chunk)
+    while (text.length > 0) {
+      const end = text.indexOf('\n')
+      if (dropping) {
+        if (end === -1) break
+        dropping = false
+        text = text.slice(end + 1)
+        continue
+      }
+      if (end === -1) {
+        line += text
+        text = ''
+        if (line.length > max) {
+          yield null
+          line = ''
+          dropping = true
+        }
+        break
+      }
+      const whole = line + text.slice(0, end)
+      line = ''
+      text = text.slice(end + 1)
+      yield whole.length > max ? null : whole.endsWith('\r') ? whole.slice(0, -1) : whole
+    }
+  }
+  const rest = line + decoder.end()
+  if (!dropping && rest.length > 0) yield rest.length > max ? null : rest
+}
 
 const ERROR = { PARSE: -32700, INVALID_REQUEST: -32600, METHOD_NOT_FOUND: -32601, INVALID_PARAMS: -32602 }
 
@@ -92,7 +134,8 @@ export async function serveMcp({ input, output, version, tools }) {
   let protocolVersion
   /** @type {ClientInfo} */
   let client = {}
-  /** Requests the client cancelled: their answers are never sent. */
+  /** Request ids in flight, and those of them the client cancelled: a cancelled one is never answered. */
+  const active = new Set()
   const cancelled = new Set()
   /** One abort per tool call in flight, so a cancel or the end of input closes its card (B-21). */
   const inFlight = new Map()
@@ -102,14 +145,17 @@ export async function serveMcp({ input, output, version, tools }) {
   const send = (/** @type {object} */ message) => output.write(`${JSON.stringify(message)}\n`)
   const fail = (/** @type {unknown} */ id, /** @type {number} */ code, /** @type {string} */ message) => send({ jsonrpc: '2.0', id, error: { code, message } })
 
-  /** @param {Record<string, unknown>} message */
+  /**
+   * The response to one request.
+   * @param {Record<string, unknown>} message
+   * @returns {Promise<object>}
+   */
   async function answer(message) {
     const { id, method } = message
     const params = message.params && typeof message.params === 'object' ? /** @type {Record<string, any>} */ (message.params) : {}
     /** @param {object} result */
-    const reply = (result) => {
-      if (!cancelled.has(id)) send({ jsonrpc: '2.0', id, result })
-    }
+    const reply = (result) => ({ jsonrpc: '2.0', id, result })
+    const fail = (/** @type {number} */ code, /** @type {string} */ text) => ({ jsonrpc: '2.0', id, error: { code, message: text } })
     switch (method) {
       case 'initialize': {
         const asked = typeof params.protocolVersion === 'string' ? params.protocolVersion : ''
@@ -127,12 +173,12 @@ export async function serveMcp({ input, output, version, tools }) {
         return reply({ tools: TOOLS })
       case 'tools/call': {
         const name = params.name
-        if (name !== 'request_secret' && name !== 'check_secrets') return fail(id, ERROR.INVALID_PARAMS, 'Unknown tool. keyprompt has request_secret and check_secrets.')
+        if (name !== 'request_secret' && name !== 'check_secrets') return fail(ERROR.INVALID_PARAMS, 'Unknown tool. keyprompt has request_secret and check_secrets.')
         /** @type {import('./mcp.mjs').ToolAnswer} */
         let answered
         if (name === 'request_secret') {
           // One abort per card, so a cancel reaches the right one; an id still in flight cannot be reused.
-          if (inFlight.has(id)) return fail(id, ERROR.INVALID_REQUEST, 'Request id already in use.')
+          if (inFlight.has(id)) return fail(ERROR.INVALID_REQUEST, 'Request id already in use.')
           const controller = new AbortController()
           inFlight.set(id, controller)
           try {
@@ -148,17 +194,55 @@ export async function serveMcp({ input, output, version, tools }) {
       }
       default:
         // Also the answer to the 2026-07-28 probe `server/discover`, which makes a dual-era client fall back to `initialize`.
-        return fail(id, ERROR.METHOD_NOT_FOUND, 'Method not found.')
+        return fail(ERROR.METHOD_NOT_FOUND, 'Method not found.')
     }
   }
 
-  const lines = createInterface({ input, crlfDelay: Infinity })
-  for await (const line of lines) {
-    if (line.trim().length === 0) continue
-    if (line.length > MAX_LINE) {
+  const invalid = { jsonrpc: '2.0', id: null, error: { code: ERROR.INVALID_REQUEST, message: 'Invalid request.' } }
+
+  /**
+   * One message, answered: the response to send, or null for a notification,
+   * a client's response or a request the client cancelled.
+   * @param {unknown} message
+   * @returns {Promise<object | null>}
+   */
+  async function handle(message) {
+    if (message === null || typeof message !== 'object' || Array.isArray(message)) return invalid
+    const m = /** @type {Record<string, unknown>} */ (message)
+    const isRequest = 'id' in m && (typeof m.id === 'string' || typeof m.id === 'number')
+    if (typeof m.method !== 'string') {
+      // A response from the client: this server sends no requests, so there is nothing to match.
+      if ('result' in m || 'error' in m) return null
+      return isRequest ? { ...invalid, id: m.id } : invalid
+    }
+    if (!isRequest) {
+      if (m.method === 'notifications/cancelled') {
+        const p = m.params && typeof m.params === 'object' ? /** @type {Record<string, unknown>} */ (m.params) : {}
+        // Only a request in flight can be cancelled; a stray cancel must not silence a later request with that id (B-22).
+        if (active.has(p.requestId)) {
+          cancelled.add(p.requestId)
+          inFlight.get(p.requestId)?.abort()
+        }
+      }
+      // notifications/initialized and any other notification need no answer.
+      return null
+    }
+    active.add(m.id)
+    try {
+      const response = await answer(m).catch(() => ({ jsonrpc: '2.0', id: m.id, error: { code: -32603, message: 'Internal error.' } }))
+      return cancelled.has(m.id) ? null : response
+    } finally {
+      active.delete(m.id)
+      cancelled.delete(m.id)
+    }
+  }
+
+  for await (const line of boundedLines(input, MAX_LINE)) {
+    if (line === null) {
       fail(null, ERROR.INVALID_REQUEST, 'Message too long.')
       continue
     }
+    if (line.trim().length === 0) continue
     /** @type {unknown} */
     let message
     try {
@@ -167,29 +251,23 @@ export async function serveMcp({ input, output, version, tools }) {
       fail(null, ERROR.PARSE, 'Parse error.')
       continue
     }
-    if (message === null || typeof message !== 'object' || Array.isArray(message)) {
-      fail(null, ERROR.INVALID_REQUEST, 'Invalid request.')
-      continue
-    }
-    const m = /** @type {Record<string, unknown>} */ (message)
-    const isRequest = 'id' in m && (typeof m.id === 'string' || typeof m.id === 'number')
-    if (typeof m.method !== 'string') {
-      // A response from the client: this server sends no requests, so there is nothing to match.
-      if (!('result' in m) && !('error' in m)) fail(isRequest ? m.id : null, ERROR.INVALID_REQUEST, 'Invalid request.')
-      continue
-    }
-    if (!isRequest) {
-      if (m.method === 'notifications/cancelled') {
-        const p = m.params && typeof m.params === 'object' ? /** @type {Record<string, unknown>} */ (m.params) : {}
-        cancelled.add(p.requestId)
-        inFlight.get(p.requestId)?.abort()
+    // JSON-RPC batches exist only in 2025-03-26, which requires them; every other version refuses an array (B-22).
+    if (Array.isArray(message) && protocolVersion === '2025-03-26') {
+      if (message.length === 0) {
+        send(invalid)
+        continue
       }
-      // notifications/initialized and any other notification need no answer.
+      pending.push(
+        Promise.all(message.map((item) => handle(item))).then((responses) => {
+          const answered = responses.filter((r) => r !== null)
+          if (answered.length > 0) send(answered)
+        }),
+      )
       continue
     }
     pending.push(
-      answer(m).catch(() => {
-        if (!cancelled.has(m.id)) fail(m.id, -32603, 'Internal error.')
+      handle(message).then((response) => {
+        if (response !== null) send(response)
       }),
     )
   }
