@@ -16,7 +16,7 @@ Plan: `docs/prd/card-v2.md` (0.2.x) and `docs/prd/v0-3.md` (0.3). Rules: `.claud
 | Fixes | S-20, S-21, S-25, S-26, S-27, S-28, S-30, S-31, S-32, S-33, S-35 | B-6 (the card never ends while a save is under way), B-7 (one true sentence for an ended card), B-12 (masking finds a key's base64 inside longer base64), B-3 (a failed update of the list of names no longer fails a save that worked), B-13 (the same for a delete that worked), B-4 (on `run`, every optional box may be left empty), B-14 (the Save button says plain "Save" when any box is optional), B-8 (with Remember unticked, the penguin holds an envelope and the vault stays shut), B-15 (the README's two demo pictures match the card again), B-16 (the README's picture links pin a commit on main) and B-17 (the S-29 row says its tag and release exist) |
 | 5 Release | S-29, S-34 | 0.2.1 on npm: the six steps since 0.2.0; 0.2.2: the four since (S-30 to S-33) |
 | Research | S-36 | R-9 answered: what keymask, the closest rival, is and is not |
-| 6 v0.3 | S-37 → S-38 → S-39 → S-40, then S-41 → S-47, S-42, S-43, then S-44 → S-45, then S-46 | The plan; the Claude Code guard (its check, its installer, its docs); `--json` results, and a reason when one fails (B-19); `keyprompt setup`; a names-only activity log; research on MCP (R-6), then `keyprompt mcp`; release 0.3.0 |
+| 6 v0.3 | S-37 → S-38 → S-39 → S-40, then S-41 → S-47, S-42 → S-48, S-43, then S-44 → S-45, then S-46 | The plan; the Claude Code guard (its check, its installer, its docs); `--json` results, and a reason when one fails (B-19); `keyprompt setup`, then the docs for both; a names-only activity log; research on MCP (R-6), then `keyprompt mcp`; release 0.3.0 |
 
 Order: S-3, S-7, S-15 and S-18 touch different files from the S-2 → S-4 chain, so they can be built in parallel by separate sessions. Everything else follows the arrows.
 
@@ -66,7 +66,8 @@ Order: S-3, S-7, S-15 and S-18 touch different files from the S-2 → S-4 chain,
 | S-40 | done 2026-11-07 (PR #43) | The guard's docs. **Before:** `SECURITY.md` said of the agent reading the OS store "nothing stops it", and the README and the skill did not mention the guard. **The change:** that limit now says what the guard refuses in Claude Code after `install-guard`, that it reads command text only, fails open and covers Claude Code only, and that anywhere else keyprompt does nothing to stop the read; the paste section says the warning cannot take a key back. The README has a "Guard for Claude Code" section (both commands, the entries, what it refuses and warns about, what it does not stop, `CLAUDE_CONFIG_DIR`, `onFailure` by hand), rows for the three new commands and exit 4 "or said no". The skill says to use `keyprompt run` when refused and never to go round the guard. The CHANGELOG has Unreleased (Added, Changed). **Proved:** 184 of 184; the README's JSON parses to exactly `guardEntries` with placeholder paths; each refused and let-through example was piped through the real guard under a scratch HOME; weakening the `SECURITY.md` headline sentence failed exactly one test. **Surprise:** running `install-guard` again drops a hand-added `"onFailure": "block"` (it replaces keyprompt's entries); the README says so, and keeping it would be a later step if wanted. **Learned:** self-review caught two lines that claimed more than the code does ("running it again changes nothing"; "switched Node versions with nvm", when only removing the version breaks it) and a "live Stripe key" that would have included publishable keys. |
 | S-41 | done 2026-11-07 (PR #44) | Four-command JSON scope (set, has, list, delete). One names-only JSON result on stdout, including failures; existing exit codes; set reports replaced and empty fields; catalog warnings preserve store outcomes. `run --json` refuses before side effects. 190 tests: 181 pass, 9 opt-in skips locally. All six Linux/macOS/Windows × Node 20/22 jobs passed at 311b70e (run 42343566480) and 32e14ac (run 42343732600), including the real-store tests. Abhishek explicitly approved the merge ("merge it"). Six new subprocess tests use a test-only fake store; HTTP Save/Cancel/Later tested on macOS. Mutation proof: adding catalog data to list output fails exactly the focused names-only test; restoring the commit passes. No new dependencies. README/skill examples stay for a following docs step. |
 | S-47 | done 2026-11-09 (PR #45) | Fixes B-19. A `--json` failure now carries `message`: the text-mode sentence with anything keyprompt did not write left out. `KeypromptError` takes `jsonMessage` (default: the message); it is set for an unknown option, an invalid name (which could be a pasted key), an unknown hint, a Linux or Windows store helper's first stderr line (one shared `helperError` replaced the two copies of `detail()`, with byte-identical text output) and `saveAll`, which repeats a store's message. A non-`KeypromptError` gets a fixed sentence. 194 of 194 tests pass with the real store. Break tests: a helper line left in `jsonMessage` fails 4 tests (one per layer); a typed name left in fails 2. **Surprise:** S-41 was built and merged (PR #44) by another session while this session was grilling the same step, so the grill's answers never reached it. Only the message differed in substance; Abhishek kept #44 and added the message (D-18). Before starting a step, check `git log origin/main` and the open PRs, not only at the PR. The default-allow `jsonMessage` is listed for review: a future message with unchecked text must set it. |
-| S-42 … S-46 | todo | — |
+| S-42 | done 2026-11-09 (PR #46) | `keyprompt setup`, from the grill's four answers (D-19). It reads names from `.env.example` or `--from FILE`, refuses a file whose name does not say it is a template (`.env`, `.env.local`) before opening it, skips saved names, and asks for the first 12 missing ones in file order on one card with every box optional. The report and `--json` (set's shape plus `skipped`, `remaining`, `ignoredLines`) carry names and line numbers only. 204 of 204 tests with the real store. Break test: removing the template-name check failed exactly the `.env` refusal test. **Surprise:** my first unit test claimed the refusal "never repeats the path" by checking the message did not contain it, which fails for `.env` because keyprompt's own sentence names `.env`; it now checks every refusal gives one fixed sentence. A message of mine read "There is no the file given with --from"; the test caught it. dotenv also reads `KEY: value`; setup reports such a line instead. **Learned:** the grill was worth asking even with every answer the recommended one: it put the 12-box limit and the "never open .env" rule into the acceptance line before any code. The README and skill follow in S-48. |
+| S-43 … S-46, S-48 | todo | — |
 
 ---
 
@@ -900,7 +901,7 @@ Order and cadence are Abhishek's (D-10, D-13): one PR, then stop. S-38 and S-39 
 ### S-47 — A `--json` failure says why, in keyprompt's own words (fixes B-19)
 
 **PR:** one.
-**Depends on:** S-41 done; D-18. **Blocks:** the `--json` docs step (README and skill examples).
+**Depends on:** S-41 done; D-18. **Blocks:** S-48, the `--json` docs (README and skill examples).
 **Research:** none — every message is in this repo; the call sites that add text keyprompt did not write were found with `grep -n 'new KeypromptError(' src/` and read one by one.
 **Model:** sonnet.
 **Confidence:** 0.85 — the change is small and local; the one judgment is which messages hold text keyprompt did not write, and a test pins each one found.
@@ -911,15 +912,31 @@ Order and cadence are Abhishek's (D-10, D-13): one PR, then stop. S-38 and S-39 
 **Verify:** `KEYPROMPT_STORE_TEST=1 npm test`. After committing, make `helperError` leave the helper's line in `jsonMessage` and see the JSON failure test fail; restore with `git checkout`.
 **Must not:** change any text-mode output; change a status, an exit code or the shape S-41 merged, beyond the added `message`; put a value in any result.
 
-### S-42 — `keyprompt setup`: ask for a project's missing names on one card (outline: grill first)
+### S-42 — `keyprompt setup`: ask for a project's missing names on one card
 
-**Depends on:** S-41 done (D-10's order); the S-42 grill. **Blocks:** nothing.
-**Research:** none expected.
-**Model:** sonnet once the grill is done.
-**Confidence:** 0.5 (low) — not ready. Open: where the names come from (`.env.example` only, or a keyprompt file too); what an example value or a comment in it means (`:optional`?); more than 12 missing names (the card's limit); whether `setup` writes anything into the project (the PRD's default: no).
-**Files:** `src/cli.mjs`, a new test file; docs after.
-**Acceptance:** written at the grill.
-**Must not:** read `.env` or any file that may hold values (names only, from the example file); write into the project; open more than one card at a time.
+**PR:** one.
+**Depends on:** S-41 and S-47 done (D-10's order); the S-42 grill, answered 2026-11-09 (D-19). **Blocks:** S-48.
+**Research:** lookup, done at the grill. `.env.example` is the usual list of the names a project needs; dotenv-safe treats every name in it as required (unpkg.com/dotenv-safe@9.1.0/README.markdown, cached 2026-05-25); varlock's `.env.schema` treats an empty value as optional (varlock.dev/reference/root-decorators, cached 2026-04-25); env-drift flags real-looking keys in example files (github.com/tirthkparikh/env-drift, cached 2026-11-07), so setup ignores every value.
+**Model:** opus in this session; sonnet could build it from the PRD's "Setup (S-42)".
+**Confidence:** 0.8 — the four open questions are answered; the card, the save and the JSON result are reused from `set`. The new judgment is reading an example file: what counts as a name line, and the quoted values that run over several lines.
+**Files:** src/setup.mjs (new), `src/cli.mjs`, `src/names.mjs` (exports `MAX_FIELDS`), test/setup.test.mjs (new), `test/cli.test.mjs`, `docs/prd/v0-3.md`, this register.
+**Today:** an agent that clones a project must read its `.env.example` itself and call `keyprompt set` with the names, and `set` asks again for names that are already saved. `run` asks only for missing names, but only once a command is about to run.
+**Change:** what the PRD's "Setup (S-42)" says. `src/setup.mjs` holds the pure parts: the template-name check, reading names from the file's text, and the text report. `src/cli.mjs` adds the `setup` verb, the `--from FILE` option (its value is skipped when `--json` is looked for, like `--reason`), `setup` in the `--json` commands, and help lines. A JSON failure's `names` become the card's names once a card opens.
+**Acceptance:** F in `docs/prd/v0-3.md`.
+**Verify:** `KEYPROMPT_STORE_TEST=1 npm test`. Unit: names from comments, `export`, spaces, CRLF, duplicates, lowercase and broken lines (line numbers only), and a quoted value over several lines whose inner lines look like `NAME=`; no value from the file appears in any result. The template check accepts `.env.example`, `.env.sample`, `.env.template`, `.env.schema`, `.env.dist`, `example.env`, `.env.local.example` and refuses `.env`, `.env.local`, `.env.production`, `secrets.env`, `.envrc`. CLI, with the fake store: nothing missing (no card, all skipped); `--from .env` refused with exit 2 before the store is read; no `.env.example`; `--from` with another command; `setup NAME`. With the fake browser (not on Windows): 14 missing and 1 saved, the card shows the first 12 in file order and not the saved one, Save with two values reports names, empty, skipped and remaining, in JSON and in text, with no value in any output; Later exits 6 with the card's names. Break test (after the commit): remove the template-name check from `readExampleNames` and watch exactly one test fail; restore with `git checkout`.
+**Must not:** read `.env` or any file whose name does not say it is a template; show, return or store anything after `=` in the file; write into the project; open more than one card at a time; change the output of `set`, `run`, `has`, `list` or `delete`; change README, `skill/SKILL.md` or the CHANGELOG (S-48); add a dependency.
+
+### S-48 — Docs for `--json` and `setup`: README, the skill, the CHANGELOG (outline)
+
+**PR:** one.
+**Depends on:** S-42 done. **Blocks:** S-46.
+**Research:** none — the words come from the PRD's "JSON results (S-41)" and "Setup (S-42)", and the real output of both.
+**Model:** sonnet.
+**Confidence:** 0.8 — words only; every example must be real output.
+**Files:** `README.md`, `skill/SKILL.md`, `CHANGELOG.md`.
+**Change:** the README gets `--json` (the shape, statuses, one example result and one failure) and `setup` (what it reads, what it refuses, the 12-box limit, the report). The skill tells the agent to run `keyprompt setup` at the start of a project that has a `.env.example`, and that `--json` exists. CHANGELOG "Unreleased": both under Added.
+**Acceptance:** WHEN an agent reads `skill/SKILL.md` THEN it SHALL find when to use `setup` and what `--json` returns, and every example output in the README SHALL be what the command prints today.
+**Must not:** change any file under `src/`, `bin/` or `test/`; claim more than the PRD says.
 
 ### S-43 — A names-only activity log (outline: grill first)
 
