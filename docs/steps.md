@@ -1077,7 +1077,7 @@ Order and cadence are Abhishek's (D-10, D-13): one PR, then stop. S-38 and S-39 
 **Research:** none. **Model:** sonnet.
 **Senior review:** not required — words only, each checked against the merged code.
 **Confidence:** 0.9.
-**Files:** `SECURITY.md`, `README.md` (if a sentence there claims more than the code), `CHANGELOG.md`, test/b24-security-limits.test.mjs (new). The bug loop (mystandard v3) asks for a failing test first, so this docs step adds one that checks each limit is stated; "Must not" below was written before that rule.
+**Files:** `SECURITY.md`, `README.md` (if a sentence there claims more than the code), `CHANGELOG.md`, test/b24-security-limits.test.mjs (new). The bug loop (mystandard v3, Abhishek's standard as of 2026-11-09) asks for a failing test first, so this docs step adds one that checks each limit is stated; "Must not" below was written before that rule and was loosened in the S-55 PR itself, which the PR says openly (flagged by its `/code-review`).
 **Locked tests:** the same list as S-51.
 **Today:** `SECURITY.md` does not mention either feature.
 **Change:** in the README's activity log section, add `withdrawn` to the list of events (S-52). Add to "What it does not protect against": the log is not tamper-proof and its folders can name a client; a `run` line is written when the command ends, so a killed keyprompt leaves none; the MCP card's "who is asking" is the client's own claim; MCP tools still need `keyprompt run` to use a key.
