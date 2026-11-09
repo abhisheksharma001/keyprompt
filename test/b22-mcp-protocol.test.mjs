@@ -30,11 +30,15 @@ function connect() {
   return {
     write: (/** @type {string} */ text) => input.write(text),
     send: (/** @type {unknown} */ message) => input.write(`${JSON.stringify(message)}\n`),
-    next: (/** @type {number} */ ms = 2000) =>
-      Promise.race([
+    next: (/** @type {number} */ ms = 2000) => {
+      /** @type {NodeJS.Timeout | undefined} */
+      let timer
+      return Promise.race([
         new Promise((done) => (lines.length > 0 ? done(lines.shift()) : waiting.push(done))).then((line) => JSON.parse(/** @type {string} */ (line))),
-        new Promise((_, fail) => setTimeout(() => fail(new Error(`no message within ${ms} ms`)), ms).unref()),
-      ]),
+        // Not unref'd: a missing answer must fail the test, not end it as "cancelled".
+        new Promise((_, fail) => (timer = setTimeout(() => fail(new Error(`no message within ${ms} ms`)), ms))),
+      ]).finally(() => clearTimeout(timer))
+    },
     pending: () => lines.length,
     end: async () => {
       input.end()
