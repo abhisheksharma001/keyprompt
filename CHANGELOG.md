@@ -7,10 +7,13 @@ What changed in each version of keyprompt. Everything listed under a version is 
 ### Added
 
 - **A guard for Claude Code, if you want one.** `keyprompt install-guard` adds two hooks to Claude Code's user settings after showing them and asking (`--yes` skips the question), and leaves every other setting as it is; `keyprompt uninstall-guard` removes them and works only in your own terminal. With the guard, Claude Code refuses a Bash or PowerShell command that reads a keyprompt secret straight from the OS password store (such as `security find-generic-password -w`) and tells Claude to use `keyprompt run`. It also warns when a message looks like it contains a key, naming the kind of key and never repeating it; it does not block the message. The guard reads command text only, fails open (if it cannot run, Claude Code lets the command through and shows a hook error) and works in Claude Code only. The README and `SECURITY.md` say what it does not stop.
+- **`--json` results for agents.** `set`, `has`, `list`, `delete` and `setup` take `--json` and print one line of JSON on stdout instead of sentences, failures included: the command, a status, the names and the exit code, and for a failure a `message` that says why in keyprompt's own words. A result never holds a value, a reason or what a password-store tool printed, and a message leaves out anything keyprompt did not write itself, such as an invalid name you typed or a store tool's error line. The exit codes do not change. `run` does not take `--json`.
+- **`keyprompt setup` asks for a project's keys on one card.** It reads the names from `.env.example` in the current folder (or the file `--from FILE` names), skips the ones already saved, and opens one card for the rest, where every box may stay empty. It reads only a file whose name says it is a template (example, sample, template, schema or dist), so `.env` and `.env.local` are refused before they are opened; it keeps only the names, never the values; it asks for at most 12 at a time, in the file's order; and it writes nothing into the project. The report says what was saved, left empty, already saved and not asked yet, and which `keyprompt run` line to use.
 
 ### Changed
 
 - Exit code 4 now also means you said no to `install-guard` or `uninstall-guard`.
+- Exit code 2 now also means `setup` will not read the example file: its name does not say it is a template, it is missing or over 1 MB, or it lists no names.
 
 ## 0.2.2 — 2026-11-07
 

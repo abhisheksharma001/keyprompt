@@ -56,6 +56,7 @@ On Linux, also install `secret-tool`: `sudo apt install libsecret-tools` (Debian
 |---|---|
 | `keyprompt set FIELD [FIELD...] [--reason TEXT]` | Opens one secret card for all the fields. Saves the values in the OS password store. Waits until you save, cancel or choose **Later**. If a name already exists, the card says **Replace secret**; the old value is never shown, and a box you leave empty keeps its saved value. |
 | `keyprompt run FIELD[,FIELD...] -- COMMAND` | Runs COMMAND with `$NAME` set for each name. Names that aren't saved yet open one card first, where you can untick **Remember on this computer** to use a value for this run only. Exact copies of the values in COMMAND's output appear as `[keyprompt:NAME]`. |
+| `keyprompt setup [--from FILE]` | Reads the names a project needs from its `.env.example` (or FILE) and opens one card for the ones not saved yet. See [Set up a project](#set-up-a-project). |
 | `keyprompt has NAME` | Exit 0 if saved, 3 if not. Never shows the value. |
 | `keyprompt list` | Saved names, reasons and dates. Never values. |
 | `keyprompt delete NAME` | Removes it from the password store. |
@@ -77,7 +78,7 @@ A **FIELD** is a name plus optional hints after a colon, for example `keyprompt 
 
 The agent picks the hints, and they only change how a box looks on the card: every value is still saved the same way and masked in `run`'s output. A `:visible` box shows what you type, so only put an ID there.
 
-Options: `--reason TEXT` (shown on the card: why it's needed), `--by TEXT` (shown on the card: who's asking), `--no-redact` (pass output through untouched, for a full-screen program in your own terminal; refused when the output is not a terminal).
+Options: `--reason TEXT` (shown on the card: why it's needed), `--by TEXT` (shown on the card: who's asking), `--from FILE` (for `setup`: the example file to read), `--json` (one line of JSON instead of sentences, for agents: see [JSON results](#json-results)), `--no-redact` (pass output through untouched, for a full-screen program in your own terminal; refused when the output is not a terminal).
 
 Exit codes:
 
@@ -85,13 +86,37 @@ Exit codes:
 |---|---|
 | `0` | OK. |
 | `1` | Something failed; the message says what. |
-| `2` | Bad usage: an unknown option, a bad name, a bad hint, or `--no-redact` when the output is not a terminal. |
+| `2` | Bad usage: an unknown option, a bad name, a bad hint, an example file `setup` will not read, or `--no-redact` when the output is not a terminal. |
 | `3` | Not saved (`keyprompt has`, or `keyprompt delete` of a name that wasn't saved). |
 | `4` | You cancelled the card, or said no to `install-guard` or `uninstall-guard`. |
 | `5` | Nobody filled in the card within 5 minutes. |
 | `6` | You chose **Later**. Nothing was saved. |
 
 Once the command in `keyprompt run` has started, `run` exits with the command's own exit code. If it stops before that, it says why in a message that starts with `keyprompt:`, and the exit code is one from the table (for example 4, 5 or 6).
+
+## Set up a project
+
+A project usually lists the keys it needs in `.env.example`. Run this in the project's folder:
+
+```sh
+keyprompt setup --reason "Run this project locally"
+```
+
+keyprompt reads the names from `.env.example` (or from the file `--from FILE` names), skips the ones already saved, and opens one card for the rest. Every box may stay empty, so you fill in the keys you have; Save needs at least one value. For an `.env.example` that lists `OPENAI_API_KEY`, `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET`, with `OPENAI_API_KEY` already saved and only the Stripe secret key filled in, it prints (on a Mac):
+
+```text
+keyprompt: opened a secure card in the browser for STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET. Waiting for it to be filled in...
+Saved STRIPE_SECRET_KEY in the macOS Keychain. The value was not shown here.
+Left empty, so still not saved: STRIPE_WEBHOOK_SECRET.
+Already saved, so not asked: OPENAI_API_KEY.
+Use them with: keyprompt run OPENAI_API_KEY,STRIPE_SECRET_KEY -- <command>
+```
+
+- **Only the names are read.** A line counts when it looks like `NAME=...`, with or without `export ` in front. keyprompt keeps the part before `=` and ignores the value, even a sample one. A line it cannot use (a lowercase name, say) is reported by its line number, never its text. When every name is saved already, no card opens.
+- **Only a template is read.** The file's name must contain example, sample, template, schema or dist (`.env.example`, `example.env`, `.env.local.example`). `.env`, `.env.local` and every other file are refused with exit 2 before they are opened, because they may hold real keys.
+- **One card holds 12 boxes.** With more than 12 names missing, it asks for the first 12 in the file's order and lists the others as not asked yet; run `keyprompt setup` again for them.
+- **Every box is a hidden one.** A name that is not a secret (a port, say) can stay empty. For a value with line breaks, such as a PEM key, use `keyprompt set NAME:multiline`.
+- **Nothing is written into the project.** The keys go to the OS password store, as with `set`.
 
 ## For agents
 
@@ -104,6 +129,8 @@ Once the command in `keyprompt run` has started, `run` exits with the command's 
 - Never ask the user to paste a secret into the chat, and never print, echo, log or write one to a file.
 - To get a secret, run `keyprompt set NAME --reason "<why, in plain words>"` yourself. It opens a secure card in the user's browser and waits; tell the user a card opened.
 - Ask for everything you need right now on one card, never for keys you don't need yet: `keyprompt set ACCOUNT_ID:visible SECRET_KEY --reason "..."`. The hints `:visible`, `:multiline` and `:optional` only change how a box looks.
+- When the user asks you to set up or run a project that has a `.env.example`, run `keyprompt setup --reason "..."` in its folder instead: one card asks for every name in it that is not saved yet, and each box may stay empty.
+- Add `--json` to `set`, `has`, `list`, `delete` or `setup` to get one line of JSON with names, a status and the exit code, never values.
 - If the exit code is 6, the user chose Later and nothing was saved. Tell them in one line, carry on with work that doesn't need the secret, and ask again only when you are about to use it.
 - To use one, run `keyprompt run NAME -- <command>`; the command reads it from `$NAME`. `keyprompt has NAME` checks whether it exists.
 - If the user pastes a secret into the chat anyway, tell them it is now exposed and should be rotated, then store the new one with `keyprompt set`.
@@ -117,6 +144,43 @@ keyprompt run API_TOKEN -- sh -c 'curl -sS -H "Authorization: Bearer $API_TOKEN"
 ```
 
 On Windows: `keyprompt run API_TOKEN -- powershell -NoProfile -Command "Invoke-RestMethod https://api.example.com/me -Headers @{Authorization = 'Bearer ' + $env:API_TOKEN}"`
+
+### JSON results
+
+Add `--json` to `set`, `has`, `list`, `delete` or `setup` and keyprompt prints one line of JSON on stdout instead of sentences, failures included. The exit codes stay the same, and the line saying a card opened still goes to stderr. A result never holds a value, a reason or what a password-store tool printed.
+
+```sh
+keyprompt has OPENAI_API_KEY --json
+```
+
+```json
+{"command":"has","status":"saved","names":["OPENAI_API_KEY"],"exitCode":0}
+```
+
+| Field | What it holds |
+|---|---|
+| `command` | `set`, `has`, `list`, `delete` or `setup`; `null` when the command was none of them. |
+| `status` | `saved`, `listed` or `deleted` (exit 0), `error` (1), `invalid_usage` (2), `missing` (3), `cancelled` (4), `timed_out` (5), `deferred` (6). |
+| `names` | The names the result is about. After a successful `set` or `setup`, only the names saved now. For `list`, the names on keyprompt's list of names, not checked against the store. |
+| `exitCode` | The process's exit code. |
+| `replaced`, `empty` | `set` and `setup`: names whose saved value was replaced, and boxes left empty. |
+| `warnings` | `set`, `setup` and `delete`: `["catalog_not_updated"]` when the key was saved or deleted but the list of names `keyprompt list` reads could not be updated; otherwise `[]`. |
+| `skipped`, `remaining`, `ignoredLines` | `setup`: names already saved, names left for the next card, and the line numbers it could not use. |
+| `message` | Failures only: why, in keyprompt's own words. Anything keyprompt did not write itself, such as an invalid name you typed or a store tool's error line, is left out. |
+
+The person chose **Later**:
+
+```json
+{"command":"set","status":"deferred","names":["STRIPE_SECRET_KEY"],"exitCode":6,"message":"The person chose Later for STRIPE_SECRET_KEY. Nothing was saved."}
+```
+
+`setup --json`, for the example under [Set up a project](#set-up-a-project):
+
+```json
+{"command":"setup","status":"saved","names":["STRIPE_SECRET_KEY"],"exitCode":0,"replaced":[],"empty":["STRIPE_WEBHOOK_SECRET"],"warnings":[],"skipped":["OPENAI_API_KEY"],"remaining":[],"ignoredLines":[]}
+```
+
+`run` does not take `--json`, because its stdout is the command's own output: given `--json` before `--`, it stops with exit 2 before anything runs.
 
 ## Guard for Claude Code
 

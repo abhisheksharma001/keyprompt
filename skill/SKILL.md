@@ -1,6 +1,6 @@
 ---
 name: keyprompt
-description: Get and use API keys, tokens and other secrets without the user pasting them into the chat. Use whenever a task needs a credential (an API key, a token, a password for a CLI, a webhook secret), whenever you are about to ask the user to paste one, or when the user pastes one anyway. keyprompt opens a secure secret card in the user's browser, saves the value in the OS password store (macOS Keychain, Windows Credential Manager, Linux keyring), and injects it into a command's environment, so the value never enters the conversation.
+description: Get and use API keys, tokens and other secrets without the user pasting them into the chat. Use whenever a task needs a credential (an API key, a token, a password for a CLI, a webhook secret), when setting up a project that has a .env.example, whenever you are about to ask the user to paste one, or when the user pastes one anyway. keyprompt opens a secure secret card in the user's browser, saves the value in the OS password store (macOS Keychain, Windows Credential Manager, Linux keyring), and injects it into a command's environment, so the value never enters the conversation.
 ---
 
 # keyprompt: secrets without the chat
@@ -65,6 +65,20 @@ Hints only change how a box looks on the card. Every value is still saved the sa
 
 On exit 6, tell the user in one line that you will carry on without it ("OK, I'll leave OPENAI_API_KEY for later and carry on"), then do the work that doesn't need it. Ask again only when you are about to use it. Never run the command again straight away: that just reopens the card the user dismissed.
 
+## Set up a project from its `.env.example`
+
+When the user asks you to set up, run or deploy a project that has a `.env.example` (just after cloning it, say), run this once in the project's folder instead of one `set` per key:
+
+```
+keyprompt setup --reason "Run this project locally"
+```
+
+- It reads only the names in `.env.example` (lines like `NAME=...`; the values are ignored), skips the names already saved, and opens one card for the rest. Every box may stay empty, so the user fills in the keys they have; Save needs at least one value. Tell the user a card opened, as with `set`. If every name is saved already, no card opens.
+- Another file name? `keyprompt setup --from config/.env.sample`. The file's name must say it is a template (example, sample, template, schema or dist). Never point `--from` at `.env` or `.env.local`: they may hold real keys, and setup refuses them with exit 2 without opening them. A missing file is exit 2 too.
+- The report says what was saved, left empty, already saved and not asked yet, and ends with the `keyprompt run NAMES -- <command>` line to use. One card asks for at most 12; for names listed as "Not asked yet", run `keyprompt setup` again.
+- A name left empty is still not saved. When a command needs it, `keyprompt run` opens a card for it.
+- The other exit codes are those of `set` above (4, 5, 6, 1).
+
 ## Use a secret
 
 ```
@@ -86,6 +100,20 @@ keyprompt run TWILIO_ACCOUNT_SID:visible,TWILIO_AUTH_TOKEN -- python send_sms.py
 With keyprompt's guard installed, Claude Code refuses a command that reads a saved secret straight from the password store; the reason starts `keyprompt guard:` (Claude Code shows it as a hook error). Run the command that needs the secret as `keyprompt run NAME -- COMMAND` instead. Never try another way round the guard: no script file, no encoded command, no other tool, no editing Claude Code's settings and no `keyprompt uninstall-guard`. If the refused command read nothing and only wrote those words as text into a file (a heredoc, say), write that file with your file-editing tool instead.
 
 When a message comes with a note from keyprompt's guard that it looks like it contains a key, follow rule 4.
+
+## Read results as JSON
+
+Add `--json` to `set`, `has`, `list`, `delete` or `setup` to read what happened instead of parsing sentences. stdout is then one JSON line, failures included, and the exit codes stay the same:
+
+```
+keyprompt has OPENAI_API_KEY --json
+{"command":"has","status":"saved","names":["OPENAI_API_KEY"],"exitCode":0}
+```
+
+- `status` matches the exit code: `saved`, `listed` or `deleted` (0), `error` (1), `invalid_usage` (2), `missing` (3), `cancelled` (4), `timed_out` (5), `deferred` (6). On `deferred`, the user chose Later: follow the exit 6 advice above.
+- `set` and `setup` add `replaced`, `empty` (boxes left empty) and `warnings`. `setup` also adds `skipped` (already saved), `remaining` (not asked yet) and `ignoredLines` (line numbers it could not use).
+- A failure adds `message`: why, in keyprompt's own words.
+- It never holds a value. `run` does not take `--json`, because its stdout is the command's own output.
 
 ## Replace or remove
 
