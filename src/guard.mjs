@@ -114,7 +114,6 @@ function mentionsRead(text) {
   for (let i = 0; i < lower.length; i++) {
     const c = lower.charCodeAt(i)
     const dollar = c === 36 && lower.charCodeAt(i + 1) === 40
-    if (dollar) i++
     const todo = live | (c < 128 ? STARTS[c] : 0)
     if (todo === 0) continue
     const tick = c === 96

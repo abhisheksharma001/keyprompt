@@ -1,0 +1,44 @@
+{
+  "name": "keyprompt",
+  "version": "0.3.0",
+  "description": "Give API keys to AI coding agents without pasting them into the chat. A card opens in your browser, the key goes into your OS keychain, and keyprompt has no command that prints it back.",
+  "type": "module",
+  "bin": {
+    "keyprompt": "bin/keyprompt.mjs"
+  },
+  "files": [
+    "bin",
+    "src",
+    "skill",
+    "README.md",
+    "SECURITY.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18.17"
+  },
+  "dependencies": {
+    "cross-spawn": "7.0.6"
+  },
+  "keywords": [
+    "api-key",
+    "secrets",
+    "keychain",
+    "credential-manager",
+    "libsecret",
+    "ai-agents",
+    "claude-code",
+    "codex",
+    "cursor"
+  ],
+  "author": "Abhishek Sharma",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/abhisheksharma001/keyprompt.git"
+  }
+}
