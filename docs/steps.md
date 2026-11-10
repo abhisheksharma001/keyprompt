@@ -17,7 +17,7 @@ Plan: `docs/prd/card-v2.md` (0.2.x) and `docs/prd/v0-3.md` (0.3). Rules: `.claud
 | 5 Release | S-29, S-34 | 0.2.1 on npm: the six steps since 0.2.0; 0.2.2: the four since (S-30 to S-33) |
 | Research | S-36 | R-9 answered: what keymask, the closest rival, is and is not |
 | 6 v0.3 | S-37 → S-38 → S-39 → S-40, then S-41 → S-47, S-42 → S-48, S-43 → S-49, then S-44 → S-45 → S-50, then the review fixes S-51 → S-52 → S-53, S-54 → S-55, then S-46 | The plan; the Claude Code guard (its check, its installer, its docs); `--json` results, and a reason when one fails (B-19); `keyprompt setup`, then the docs for both; a names-only activity log; research on MCP (R-6), then `keyprompt mcp`; release 0.3.0 |
-| 7 v0.3 audit | S-56, then S-57 → S-58 → S-59, S-60, S-61, S-62, S-63, S-64 | The feature-end audit (`docs/audits/v0-3-feature-end.md`): G2, G3, F and M met; G1, G1b, G4, J and L unmet. Then the fixes B-25 to B-31 and tests for the clauses no test pins |
+| 7 v0.3 audit | S-56, then S-57 → S-58 (dropped) → S-65 → S-66 → S-67 → S-68 → S-69 → S-70 → S-71 → S-72 → S-73 → S-74 → S-59, S-60, S-61, S-62, S-63, S-64, and S-75 (B-32 fix chain: S-66 to S-75) | The feature-end audit (`docs/audits/v0-3-feature-end.md`): G2, G3, F and M met; G1, G1b, G4, J and L unmet. Then the fixes B-25 to B-31 and tests for the clauses no test pins |
 
 Order: S-3, S-7, S-15 and S-18 touch different files from the S-2 → S-4 chain, so they can be built in parallel by separate sessions. Everything else follows the arrows.
 
@@ -1154,7 +1154,7 @@ Order and cadence are Abhishek's (D-10, D-13): one PR, then stop. S-38 and S-39 
 ### S-59 — The guard's docs say what it refuses and what it misses (bug B-27)
 
 **PR:** one.
-**Depends on:** S-57 merged and the B-32 fix (D-23); S-65 (it changes the refusal text these docs quote). **Blocks:** nothing.
+**Depends on:** S-57 merged and the B-32 fix (D-23, D-25): S-66, S-67, S-68, S-69, S-70, S-71, S-72, S-73 and S-74 merged; S-65 (it changes the refusal text these docs quote). **Blocks:** nothing.
 **Research:** none. **Model:** sonnet.
 **Senior review:** not required — words only, each checked against the merged guard.
 **Confidence:** 0.85.
@@ -1279,3 +1279,287 @@ Order and cadence are Abhishek's (D-10, D-13): one PR, then stop. S-38 and S-39 
 **Acceptance:** WHEN the guard refuses a command THEN its reason SHALL still name `keyprompt run NAME -- COMMAND` and SHALL name `git commit -F`; WHEN an agent reads the skill's guard section THEN it SHALL find the same advice; the set of commands the guard refuses SHALL NOT change.
 **Verify:** the new test fails on its own commit and passes after; every existing guard test passes unchanged (`git diff --name-only main -- test/` lists only the new file); `git diff main -- src/guard.mjs` touches only `RUN_INSTEAD`; `npm test`.
 **Must not:** change what the guard refuses or lets through; edit a locked test.
+
+## v0.3 fixes, B-32: the guard misreads some shell syntax (S-66 to S-75, `docs/bugs.md#b-32`)
+
+All ten steps edit `src/guard.mjs`, so they run one after another, never side by side.
+
+**Build order:** S-66 → S-67 → S-68 → S-69 → S-70 → S-71 → S-72 → S-73 → S-74 (only once R-16 is answered) → S-75.
+
+Why that order: S-66 first, so that the extra readings later steps add cannot make the thin timing test fail by chance (item 18). S-67 second, so that from then on, too much work ends in a refusal and never in a pass (item 17), before any step adds parsing. Then the small word rules (S-68, S-69), then the parser steps from least to most risky (S-70, S-71, S-72, S-73), then the step that waits on research (S-74), then the PowerShell cross-check (S-75), which tests everything before it.
+
+### Shared rules for every step below (S-66 to S-75)
+
+1. **Strings only.** A command is only ever fed as a string to `checkCommand` or `preToolUse`. No step, test or check runs a store read, and none runs `security`, `secret-tool`, `Get-StoredCredential` or `cmdkey`. Tests use the placeholder forms the existing tests use (`security find-generic-password -s keyprompt -w`, `Get-StoredCredential -Target keyprompt:X`, the saved name `OPENAI_API_KEY`).
+2. **Locked tests.** Every file in `test/` at the base commit is locked, except where a step names a test-change. New tests go in the step's own new file. Check: `git diff --name-only main -- test/` lists only that new file, and the diff adds no `skip`, `todo` or `only`.
+3. **Failing test first.** Commit the new test file on its own and see it fail on that commit. Then commit the fix and see it pass.
+4. **Break test.** After the fix is committed, undo the one rule the step adds (by hand, in `src/guard.mjs`). Run `npm test`: only the new file's tests fail. Put the file back with `git checkout -- src/guard.mjs`.
+5. **Fresh worktree.** Run `npm ci` first (a new worktree has no `node_modules`; S-65 learned this), then `npm test`, then `KEYPROMPT_STORE_TEST=1 npm test`. `git grep -nE "console\.log|debugger" src/` prints nothing.
+6. **Linear time.** The hook times out after 10 seconds, and then Claude Code runs the command anyway (it fails open, D-17). So every new scan visits each character a fixed number of times. No regular expression with a quantifier inside a quantifier (catastrophic backtracking, where a regex's work can explode on some inputs). No step adds a reading per word.
+7. **Tighten only.** Every command main refuses stays refused, for the Bash tool, the PowerShell tool and Monitor. Check this with a differential run (comparing two versions on the same inputs) on the builder's machine. Do not commit it: a short script that loads `git show main:src/guard.mjs` and the branch's copy, feeds both at least 100,000 strings from a seeded generator (the step's forms, the existing test strings, and random joins of `;`, `|`, `#`, quotes, `$(`, `${`, `((`, `@'`, `` ` ``, line breaks and the read), and prints each string main refuses and the branch lets through. A pass prints none. The PR gives the count and lists a sample of the strings the branch newly refuses, for the senior reviewer to judge. No new dependency: the generator is plain JavaScript (`fast-check` would need Abhishek's yes, invariant 7).
+8. **Mutation testing** (where a tool changes the code on purpose to see whether the tests notice) on a step with real logic: `npx -y -p @stryker-mutator/core@10.1.1 stryker run`, using the command test runner, on the changed lines of `src/guard.mjs`. Only on the builder's machine, under Node 22 (D-23). The exact flags are open flag F10. Each surviving mutant gets a test, or the PR names it as equivalent (it changes nothing) and says why.
+9. **No bash here-documents (D-24).** No step teaches `splitShell` `<<`, `<<-` or `<<<`. A here-document that is refused today stays refused.
+10. **No new dependency**, no network call, no value printed, returned or written (invariants 1, 6, 7). Refusal words stay literally true (invariant 9). Style: ESM, 2 spaces, no semicolons, single quotes.
+
+### S-66 — test-change: the nested-pwsh timing test compares against a flat string timed in the same run (bug B-32 item 18)
+
+**PR:** one.
+**Depends on:** nothing. **Blocks:** S-67 (same test file is the place later timing runs land; done first so later readings do not make it fail by chance).
+**Research:** none.
+**Model:** sonnet.
+**Senior review:** required — it changes a yardstick (the timing test that later guard steps are judged by), so a fresh Opus session that did not build it reads the PR before merge.
+**Confidence:** 0.85 — the cause (one fixed 2 s limit on a loaded machine) and the ratio (3.0× to 4.8×) are measured in B-32; the new limit numbers are set by the builder's own runs.
+**Files:** `test/b25-guard-plain-forms.test.mjs` (only the test at lines 254-278).
+**Locked tests:** every file in `test/` except `test/b25-guard-plain-forms.test.mjs`; in that file, every test except "nested pwsh -c calls away from the command start are each read once, inside the hook timeout".
+**Today:** the test checks each nested shape against a fixed 2,000 ms. It took 1.9 s on CI's macOS and Windows Node 20 jobs and failed once locally at 2,096 ms under load.
+**Change:**
+1. In the same child process (line 257), time a flat string of the same length (`'x ' + 'z '.repeat(n)`, read the same way) before each nested shape.
+2. Fail when nested time > 8 × flat time + 200 ms (catches doubling per level), or when nested time > 6,000 ms (well inside the hook's 10 s).
+3. Keep the 8,000 ms child timeout and the `ok` answer check (`found === null`).
+4. Write the measured ratios from three local runs into the PR body.
+**Acceptance:**
+- WHEN the guard reads the nested shape in time proportional to its length THEN the test SHALL pass on a loaded machine where the old 2 s limit failed.
+- WHEN the once-only tail read (lines 379-380 of `src/guard.mjs`) is removed THEN the changed test SHALL fail.
+- WHEN any other test in the repo runs THEN its result SHALL be unchanged.
+**Verify:** `npm ci`, `npm test` (all pass). Break test: commit, then make line 379 always push the tail as well (the doubling), run `node --test test/b25-guard-plain-forms.test.mjs`: only the changed test fails; `git checkout -- src/guard.mjs`. `git diff main -- test/` touches only lines inside that one test.
+**Must not:** loosen the answer check; add a retry; change `src/`; touch another test; plus the shared rules.
+
+### S-67 — The guard refuses when it cannot finish reading a command that names a store read (bug B-32 items 5, 11, 17)
+
+**PR:** one.
+**Depends on:** S-66 merged. **Blocks:** S-68 (same file), S-59.
+**Research:** none.
+**Model:** sonnet — three small fail-closed rules (a fail-closed rule refuses when unsure) in one function family, each pinned by tests. The senior review covers the budget number.
+**Senior review:** required — loosening or tightening the guard changes access; a fresh Opus session that did not build it reads the PR before merge.
+**Confidence:** 0.75 — the three places are read in the code; the budget's size (how much work is "too much") is set from the builder's measurements,; the new refusal sentence was approved by Abhishek (D-25).
+**Files:** `src/guard.mjs`, `test/b32-guard-unfinished.test.mjs` (new).
+**Locked tests:** every file in `test/` at the base commit.
+**Today:** `readInShell` returns `null` past depth 4 (line 402), so `eval eval eval eval eval <read>` passes. A PowerShell tail read that ends inside `<#` or `'` finds nothing (lines 376-380). The work is linear, but 1 MB behind a later `pwsh` word took 3.7 s read both ways.
+**Change:**
+1. Add `mentionsRead(text)`: true when the text, lowercased and with `\`, `` ` ``, `'`, `"`, `\r` and `\n` removed, contains `find-generic-password`, `dump-keychain`, `secret-tool`, `get-storedcredential` or `credread`. One pass with `includes`, no regex.
+2. Line 402: past depth 4, return a new reason `UNREAD` when `mentionsRead(text)`, else `null` (so `'pwsh -c '.repeat(200) + 'x'` in the locked timing test stays allowed).
+3. `splitShell` also returns `open: true` when the text ends inside a quote, a `<#` comment, `$(` or a backtick. In the PowerShell tail branch (lines 376-380), an `open` tail whose text `mentionsRead` returns `UNREAD`.
+4. A work budget: `checkCommand` (line 472) creates `{ left }` with left = 64 × the command's length + 1,000,000 characters (the builder may change both numbers after measuring, and says so in the PR). Each `splitShell` call subtracts the characters it scans. When `left` drops below 0, reading stops and the answer is `UNREAD` if `mentionsRead(command)`, else `null`.
+5. `UNREAD` (approved, D-25): "keyprompt guard: this command is too long or too deeply nested for the guard to read, and it names the OS password store's read tool, so it is refused." It is followed by `RUN_INSTEAD` like the other reasons.
+**Acceptance:**
+- WHEN `eval` is nested 5 or more deep around a read THEN the guard SHALL deny with the `UNREAD` reason.
+- WHEN B-32 item 11's `find … -exec pwsh -c "<#" \; -exec pwsh -c Write-Output pwsh '; Get-StoredCredential -Target keyprompt:X' \;` (and its `"'"` and `/usr/local/bin/pwsh` forms) is checked as Bash THEN the guard SHALL deny.
+- WHEN any command, at any length, would take more than the budget to read THEN the guard SHALL answer within the budget and SHALL NEVER answer `null` if the command names a read tool (a property test: a seeded generator builds 1,000 long nested `pwsh -c` and `eval` shapes with a read at a random spot; each is denied in under 2 s).
+- WHEN a long command names no read tool THEN the guard SHALL still print nothing (the locked timing tests keep passing).
+**Verify:** shared rules 2 to 8. One break test per rule (depth answer back to `null`; ignore `open`; budget never runs out), each failing only its own new tests. B-32 item 17's 1 MB shape (open flag F13) takes under 2 s read both ways.
+**Must not:** refuse a long or nested command that names no read tool; measure time with a clock inside the guard (results must not depend on machine speed); plus the shared rules.
+
+### S-68 — The guard finds the real command word: past a redefined text-only name, `-c`'s options, `security -p`'s value and zsh's modifiers (bug B-32 items 1, 4, 10, 12)
+
+**PR:** one.
+**Depends on:** S-67 merged. **Blocks:** S-69 (same file), S-59.
+**Research:** lookup — `security`'s global options that take a value (`man security`, macOS); bash's options between `-c` and its script (GNU Bash manual, "Invoking Bash"); zsh's precommand modifiers (zsh manual, "Precommand Modifiers"). Read live, cited with URL and date in the PR (open flags F2, F3, F4).
+**Model:** sonnet.
+**Senior review:** required — loosening or tightening the guard changes access; a fresh Opus session that did not build it reads the PR before merge.
+**Confidence:** 0.85 — four one-place rules, each reproduced in B-32 (items 1, 4, 12 checked in bash or zsh with `echo`). Item 10 is refused without knowing whether `security` would run it (F14), which can only add a refusal.
+**Files:** `src/guard.mjs`, `test/b32-guard-command-word.test.mjs` (new).
+**Locked tests:** every file in `test/` at the base commit.
+**Today:** `echo() { "$@"; }; echo <read>` passes through `TEXT_ONLY` (line 318). `bash -c -- '<read>'` reads `--` as the script (line 365). `security -p x find-generic-password …` takes `x` as the subcommand (line 344). `noglob eval "<read>"` passes, because `eval` counts only as the command's own word (line 339) and `noglob` is not in `WRAPPERS` (line 25).
+**Change:**
+1. Item 1: `checkCommand` works out once whether the whole command defines a function or an alias: `()` after a word, the word `function`, or `alias`, `set-alias`, `new-alias`, `sal`, `nal` as a word. If it does, `readInWords` skips the `TEXT_ONLY` exemption (line 318) for every command in it. This is coarse on purpose, and can only add refusals.
+2. Item 4: for a non-PowerShell shell (line 365), read as scripts each word after the `-c` flag, up to and including the first word that starts with neither `-` nor `+`. Skip `--`. After `-o`, `+o`, `-O` or `+O`, also read the word that follows. Each word once (keyed, as now).
+3. Item 10: where `security`'s subcommand is found (line 344, and `securityRead` line 214), skip the value of each global option that takes one (`-p`, also glued on as `-px`; more if F2 finds them).
+4. Item 12: add `noglob`, `nocorrect`, `coproc` and `-` to `WRAPPERS` (line 25). In `commandStart` (lines 261-274), `repeat` skips itself and its count.
+**Acceptance:**
+- WHEN the text defines a function or alias, and a command whose first word is in `TEXT_ONLY` names a read THEN the guard SHALL deny (both forms in item 1, and PowerShell's `function Write-Output { … }`).
+- WHEN a read is the script of `bash -c -- '…'`, `bash -c -e '…'` or `sh -c -o errexit '…'` THEN the guard SHALL deny.
+- WHEN `security -p x find-generic-password -s keyprompt -w` (also `-px`) is checked THEN the guard SHALL deny.
+- WHEN `noglob`, `nocorrect`, `repeat 1` or `coproc` comes before `eval "<read>"` THEN the guard SHALL deny.
+- WHEN a command in `test/guard.test.mjs`'s LET_THROUGH list is checked THEN the guard SHALL still let it through (locked).
+**Verify:** shared rules 2 to 8. Four break tests, one per rule, each failing only its own cases.
+**Must not:** let any `TEXT_ONLY` command through that main refuses; read a word as a script more than once; plus the shared rules.
+
+### S-69 — Read as PowerShell, `-Name:value` and `$x=Cmdlet` are split into the words PowerShell sees (bug B-32 items 6, 16)
+
+**PR:** one.
+**Depends on:** S-68 merged. **Blocks:** S-70 (same file), S-59.
+**Research:** lookup — PowerShell's colon-bound parameters (`-Name:value`, about_Parameters or about_Parsing) and its assignment operators (about_Assignment_Operators, including `??=`). Read live, cited in the PR (F6, F7).
+**Model:** sonnet.
+**Senior review:** required — loosening or tightening the guard changes access; a fresh Opus session that did not build it reads the PR before merge.
+**Confidence:** 0.85 — the guard's answer was run (B-32); what PowerShell does comes from its grammar, not a run (S-75 later checks it against PowerShell's own parser).
+**Files:** `src/guard.mjs`, `test/b32-guard-powershell-words.test.mjs` (new).
+**Locked tests:** every file in `test/` at the base commit.
+**Today:** `Get-StoredCredential -Target:keyprompt:X` passes, because `namesKeyprompt` (line 202) sees the word `-Target:keyprompt:X`. `$c=Get-StoredCredential -Target keyprompt:X` passes, because the word is `$c=Get-StoredCredential` and `base` (line 51) never gives `get-storedcredential`.
+**Change:**
+1. In `splitShell`'s PowerShell mode only (`powershell` true), when a word ends (`endWord`, line 90), quoted or not (splitting a quoted word can only add a refusal):
+2. a word that starts with `-` and holds a `:` is pushed as two words: up to the first `:`, and the rest (`-Target:keyprompt:X` gives `-Target`, `keyprompt:X`);
+3. a word that starts with `$` and holds one of `=`, `+=`, `-=`, `*=`, `/=`, `%=`, `??=` (list confirmed by F6) is pushed as three words: the name, `=`, and the rest. A plain `=` after the name lets `commandStart` (line 262) start the command at the cmdlet.
+4. Find the operator with `indexOf`, not a regex. Bash mode is unchanged.
+**Acceptance:**
+- WHEN `Get-StoredCredential -Target:keyprompt:X`, or `-Target:OPENAI_API_KEY` with that name saved, is checked as PowerShell or Monitor THEN the guard SHALL deny.
+- WHEN `$c=Get-StoredCredential -Target keyprompt:X` or `$c+=Get-StoredCredential -Target keyprompt:X` is checked as PowerShell or Monitor THEN the guard SHALL deny.
+- WHEN the same strings are checked as Bash THEN the answer SHALL be what main answers (Bash reading unchanged).
+- WHEN `splitShell`'s locked test in `test/guard.test.mjs` runs THEN it SHALL pass unchanged.
+**Verify:** shared rules 2 to 8. Two break tests (no `:` split; no `=` split), each failing only its own cases.
+**Must not:** change the Bash reading; drop any part of a word when splitting it; plus the shared rules.
+
+### S-70 — `splitShell` reads `$'…'`, a `$` joined to `(` by a line continuation, and quotes and comments inside `$( )` (bug B-32 items 2, 3, 20)
+
+**PR:** one.
+**Depends on:** S-69 merged. **Blocks:** S-71 (same file), S-59.
+**Research:** lookup — ANSI-C quoting in bash and zsh (GNU Bash manual, "ANSI-C Quoting"; zsh manual, "Quoting"), read live, cited in the PR (F8).
+**Model:** sonnet.
+**Senior review:** required — loosening or tightening the guard changes access; a fresh Opus session that did not build it reads the PR before merge.
+**Confidence:** 0.8 — items 2 and 20 were run in bash (20 in bash 3.2 by PR #62's review, not re-run). Item 3's shell side is by reading, and a rewritten `subshell()` is the riskiest change in this step.
+**Files:** `src/guard.mjs`, `test/b32-guard-dollar-forms.test.mjs` (new).
+**Locked tests:** every file in `test/` at the base commit.
+**Today:** `true $'\'' ; <read> #'` passes: `$` is a plain character and `'` opens an ordinary quote (lines 147 and 188). `subshell()` (lines 101-112) counts `(` and `)` inside quotes and comments, so `echo $(echo ')'; <read>)` ends early. In double quotes, `"$\`, a line break, then `(<read>)"` keeps `$` and `(` as text (lines 162-172).
+**Change:**
+1. Bash mode only: an unquoted `$'` opens an ANSI-C string. It runs to the next `'` that a `\` does not escape. `\'` and `\\` give `'` and `\`; any other escape is kept as written (the guard does not decode `\x73`, which stays a limit for S-59's docs). The `$` is dropped, so `$'security'` gives the word `security`.
+2. `subshell()`: one pass that skips single-quoted text, double-quoted text (with `\` escapes), backslash pairs and a `#` comment to the end of the line (a `#` at the start or after a blank, `;`, `&`, `|`, `(` or a newline). It counts parentheses only outside them. Nested `$(` inside double quotes still counts.
+3. Item 20: where a `$` is met (lines 167 and 177), look past any line continuations (`\` and a newline) for `(` or `'`, and treat `$`, the continuations and `(` as `$(`. Do the same in the unquoted branch.
+4. PowerShell mode: no change.
+**Acceptance:**
+- WHEN `true $'\'' ; security find-generic-password -s keyprompt -w #'` or `$'security' find-generic-password -s keyprompt -w` is checked as Bash or Monitor THEN the guard SHALL deny.
+- WHEN `echo $(echo ')'; <read>)`, or B-32 item 3's comment form, is checked as Bash THEN the guard SHALL deny.
+- WHEN `echo "$\` + line break + `(security find-generic-password -s keyprompt -w)"` is checked as Bash THEN the guard SHALL deny.
+- WHEN any string is checked THEN `splitShell` SHALL visit each character a fixed number of times (a property test: 1,000 seeded strings of up to 200 KB built from `$'`, `$(`, `'`, `"`, `#`, `\` and line breaks finish in under 2 s in total).
+**Verify:** shared rules 2 to 8. Three break tests (no `$'`; the old `subshell()`; no look-past for continuations), each failing only its own cases.
+**Must not:** decode `\x`, `\0`, `\u` or other escapes inside `$'…'` (a separate change; S-59 names it as a limit); change how backticks are read; plus the shared rules.
+
+### S-71 — `splitShell` reads `${…}` and `(( ))` as one piece, so a `#` or a quote inside them starts nothing (bug B-32 items 13, 14)
+
+**PR:** one.
+**Depends on:** S-70 merged. **Blocks:** S-72 (same file, same comment rule), S-59.
+**Research:** lookup — how PowerShell's tokenizer ends a `${…}` name (tokenizer.cs, `ScanVariable`, at a pinned commit: is `}` the only end, and does a backtick escape it?), read live, cited in the PR (F5).
+**Model:** sonnet.
+**Senior review:** required — loosening or tightening the guard changes access; a fresh Opus session that did not build it reads the PR before merge.
+**Confidence:** 0.75 — item 14 was run in bash 3.2.57 and zsh 5.9 with `printf`; item 13 comes from PowerShell's source, not a run. Nesting inside `${…}` (`${x:-$(…)}`, quotes inside) is the part a builder can get wrong.
+**Files:** `src/guard.mjs`, `test/b32-guard-braces.test.mjs` (new).
+**Locked tests:** every file in `test/` at the base commit.
+**Today:** `true ${x:-a #}; timeout 5 <read>` and `nice ${x:+ #} <read>` pass: the first reading takes ` #` for a comment (line 141), and the second checks only each command's own word. `Write-Output ${a'}; Get-StoredCredential -Target keyprompt:X` passes as PowerShell: the `'` opens a string (line 147).
+**Change:**
+1. Bash mode, unquoted or in double quotes: `${` starts a piece that ends at its matching `}`. Inside it, `'…'`, `"…"` and `\` pairs are skipped, `{`/`}` are counted, and `$(…)` and backticks are still pushed to `nested`. A `#` is never a comment. The piece's text goes into the current word.
+2. Bash mode: `((` where a word starts, and `$((`, start a piece that ends at the matching `))`, read the same way (no comment inside; `$(` inside still nested). `$((` is no longer handed to `subshell()`.
+3. PowerShell mode: `${` starts a name that ends at the first `}` (or as F5 settles). No quote, comment or `<#` inside it.
+4. One forward pass, counters only: no rescanning from the start.
+**Acceptance:**
+- WHEN each form in B-32 item 14 (`true ${x:-a #}; <wrapped read>`, `nice ${x:+ #} <read>`, `eval ${x:+ #} 'timeout 5 <read>'`, `x=; ${x:+ #} <read>`) is checked as Bash or Monitor THEN the guard SHALL deny.
+- WHEN `Write-Output ${a'}; Get-StoredCredential -Target keyprompt:X` is checked as PowerShell or Monitor THEN the guard SHALL deny.
+- WHEN `${x:-$(<read>)}` or `(( $(<read>) ))` is checked as Bash THEN the guard SHALL deny.
+- WHEN `# security find-generic-password -s keyprompt -w` (a whole-line comment) is checked THEN the guard SHALL still let it through (locked in `test/guard.test.mjs`).
+**Verify:** shared rules 2 to 8. Three break tests (no `${…}` piece in Bash; no `(( ))` piece; no PowerShell `${…}`), each failing only its own cases.
+**Must not:** add a reading that looks for a read anywhere with comments off (B-32 item 14 says it would break `test/guard.test.mjs`); plus the shared rules.
+
+### S-72 — A `#` after a line continuation, or right after `(` or `)`, is read both ways where the shells differ (bug B-32 items 9, 15)
+
+**PR:** one.
+**Depends on:** S-71 merged (same comment rule); S-67 merged (this step adds a reading, and the budget must already turn slowness into a refusal). **Blocks:** S-73 (same file), S-59.
+**Research:** none (both items were checked in bash 3.2.57 and zsh 5.9 by S-57's reviews; the round-3 review tried item 15's fix in a scratch copy).
+**Model:** sonnet.
+**Senior review:** required — loosening or tightening the guard changes access; a fresh Opus session that did not build it reads the PR before merge.
+**Confidence:** 0.75 — item 15's fix was tried (41 of 41 guard tests passed, no timing change). Item 9 needs a third reading, because a `#` after `(` or `)` is a comment in one place and part of a word in another, and that costs time (checked here against the S-66 test and the S-67 budget).
+**Files:** `src/guard.mjs`, `test/b32-guard-comment-start.test.mjs` (new).
+**Locked tests:** every file in `test/` at the base commit.
+**Today:** `true $(true)\`, a line break, `# ; timeout 5 <read>` passes: after the continuation, line 141 sees `\n` before the `#` and takes it for a comment. `(true)# don't`, a line break, `<read>` passes: line 141 reads that `#` as part of a word, so the `'` opens a quote that swallows the read. Main swallows it too.
+**Change:**
+1. Item 15: in `splitShell`, keep a `boundary` flag: true at the start and after a blank, `;`, `&`, `|` or newline that is really there; false after any other character. A line continuation (lines 134-140) leaves it as it was. The comment test on line 141 uses `boundary`, not `text[i - 1]`.
+2. Item 9: add an option to `splitShell`, `parenComments`, under which a `#` right after `(` or `)` also starts a comment (Bash and PowerShell modes).
+3. `readBoth` (line 436) adds that third reading next to the two it has: comments on with `parenComments`. Refuse if any of the three finds a read. The third reading reads the scripts it reaches in its own mode only (one more pass per script, never all three ways again), so the work grows by a fixed factor, not per nesting level.
+4. The three readings share S-67's one budget.
+**Acceptance:**
+- WHEN `true $(true)\` + line break + `# ; timeout 5 <read>` is checked as Bash or Monitor, or the same with `<(true)`, `` `true` `` or `a=(x)` THEN the guard SHALL deny.
+- WHEN `(true)# don't` + line break + `<read>`, or `(# don't` / `<read>` / `)` on three lines, is checked as Bash or Monitor THEN the guard SHALL deny.
+- WHEN `(1)# don't` + line break + `Get-StoredCredential -Target keyprompt:X` is checked as PowerShell THEN the guard SHALL deny.
+- WHEN the locked `cat <(true)# ; <read>`, `a=(x)# ; <read>` and `ls (#i)README ; <read>` cases run THEN they SHALL still be denied.
+- WHEN the S-66 timing test runs THEN it SHALL pass.
+**Verify:** shared rules 2 to 8. Two break tests (`text[i - 1]` back in line 141; no third reading), each failing only its own cases. The PR states the slowdown on the S-66 shapes and on B-32 item 17's 1 MB shape (F13).
+**Must not:** replace either of the two existing readings; read nested scripts a third way at every depth (that multiplies the work per level); plus the shared rules.
+
+### S-73 — Read as PowerShell, a here-string's body is cut out and checked as its own script, so its quotes cannot swallow later lines (bug B-32 item 7)
+
+**PR:** one.
+**Depends on:** S-72 merged. **Blocks:** S-74 (same file), S-59.
+**Research:** lookup — PowerShell's here-string rules (about_Quoting_Rules, read live): the opener `@'` or `@"` must end its line; the closer `'@` or `"@` must start a line; whether blanks may come before the closer; whether text may follow it on the same line; and how `\r\n` is treated. Cited in the PR (F5).
+**Model:** sonnet.
+**Senior review:** required — loosening or tightening the guard changes access; a fresh Opus session that did not build it reads the PR before merge.
+**Confidence:** 0.75 — the shell side of item 7 is by reading the docs only, not run. The design keeps the body checked as commands, so a read named in a body stays refused as today. That is why this is not the here-document parsing D-24 rules out (open flag F17 asks the reviewer to confirm).
+**Files:** `src/guard.mjs`, `test/b32-guard-here-strings.test.mjs` (new).
+**Locked tests:** every file in `test/` at the base commit.
+**Today:** `Write-Output @'`, `it's`, `'@`, `Get-StoredCredential -Target keyprompt:X` on four lines passes as PowerShell: the `'` in `it's` opens a string that runs to `'@`, and `'@` then opens one that never closes. The `@"` form with `x"'`, `$(Get-StoredCredential -Target keyprompt:X)`, `'"` and `"@` passes the same way.
+**Change:**
+1. PowerShell mode only, in `splitShell`: `@'` or `@"` followed only by blanks to the end of the line opens a here-string.
+2. The body runs to the first line that starts (after the blanks F5 allows) with the matching `'@` or `"@`. If there is none, the body runs to the end of the text and is read as a script as it is today (by the docs, PowerShell will not parse an unclosed here-string; confirm under F5).
+3. The body is pushed to `nested`, so it is read as a PowerShell script, as it is read today. Reading resumes after the closer.
+4. The `@'`/`@"` and the body add one placeholder word to the current command, so `Write-Output @'…'@` stays one command.
+5. Bash mode: no change. Bash here-documents (`<<`) are not touched (D-24).
+**Acceptance:**
+- WHEN either four-line form in B-32 item 7 is checked as PowerShell or Monitor THEN the guard SHALL deny.
+- WHEN a here-string body itself holds `Get-StoredCredential -Target keyprompt:X` THEN the guard SHALL still deny, as main does (no loosening).
+- WHEN a here-string never closes THEN the guard SHALL refuse it whenever main refuses the same text.
+- WHEN any string main refuses is checked THEN this branch SHALL refuse it too (shared rule 7, with `@'` and `@"` in the generator).
+**Verify:** shared rules 2 to 8. Two break tests (no here-string; body not pushed to `nested`), each failing only its own cases.
+**Must not:** treat a body as text that is never checked; change the Bash reading; plus the shared rules.
+
+### S-74 — `pwsh` and `powershell` scripts handed over with every spelling R-16 finds are read (bug B-32 item 8)
+
+**PR:** one.
+**Depends on:** R-16 answered in `docs/research.md` (open today); S-73 merged. **Blocks:** S-75, S-59 (D-25).
+**Research:** R-16 (lookup: PowerShell's own command-line parser source, and about_PowerShell_exe for 5.1). R-16's answer is a fact, so Abhishek cannot raise this step's confidence by answering; the research can.
+**Model:** sonnet.
+**Senior review:** required — loosening or tightening the guard changes access; a fresh Opus session that did not build it reads the PR before merge.
+**Confidence:** 0.6 — **not ready**. Three things are unknown until R-16 is answered: which prefixes pwsh takes as `-Command` and which as `-CommandWithArgs` or `-ConfigurationName`; what Windows PowerShell 5.1 does with a bare first argument; and whether `/Command` works. Rewrite this block from R-16's answer before it is built.
+**Files:** `src/guard.mjs`, `test/b32-guard-pwsh-spellings.test.mjs` (new).
+**Locked tests:** every file in `test/` at the base commit.
+**Today:** the flag test on line 358 (`/^-c(ommand)?$/i`) knows only `-c` and `-Command`, so `pwsh -Comm "<read>"` and `pwsh -cwa "<read>"` pass.
+**Change (draft, to be confirmed by R-16):**
+1. Replace the PowerShell part of line 358 with a test for every spelling R-16 lists for `-Command` and `-CommandWithArgs`, any case (expected: each prefix of `command` that pwsh does not find ambiguous, plus `-cwa` and the prefixes of `commandwithargs`). Keep it a `Set` lookup or a plain prefix check, not a new regex.
+2. If R-16 finds that `powershell.exe` 5.1 runs a bare first argument as a command, read the words after `powershell`/`powershell.exe` with no flag as the script, at the command start only (the same place as line 366).
+3. If an ambiguous prefix makes pwsh stop with an error, refusing it costs nothing, so the step may refuse every `-c…` prefix rather than only the ones R-16 lists. It says which choice it made.
+**Acceptance:**
+- WHEN `pwsh -Comm "Get-StoredCredential -Target keyprompt:X"`, `pwsh -cwa "…"`, or any spelling R-16 lists is checked as Bash, PowerShell or Monitor THEN the guard SHALL deny.
+- WHEN R-16 finds a bare argument runs as a command in 5.1, and `powershell "Get-StoredCredential -Target keyprompt:X"` is checked THEN the guard SHALL deny.
+- WHEN the locked `pwsh -NoProfile -Command "Write-Output 'Get-StoredCredential'"` case runs THEN it SHALL still pass.
+**Verify:** shared rules 2 to 8. One break test (line 358 back as it was) fails only the new cases. The PR cites R-16's answer.
+**Must not:** start before R-16 is marked answered; guess a spelling from memory; plus the shared rules.
+
+### S-75 — A test compares the guard's PowerShell reading with PowerShell's own parser, wherever PowerShell is installed (bug B-32 item 19)
+
+**PR:** one.
+**Depends on:** S-74 merged (or S-73, if D-25 is ever reversed so that S-59 need not wait for S-74). **Blocks:** nothing (not S-59: it changes no refusal).
+**Research:** lookup — which GitHub-hosted runners have `pwsh` and Windows PowerShell 5.1 (actions/runner-images, read live; F11); the parse-only API (`[System.Management.Automation.Language.Parser]::ParseInput`, Microsoft Learn, read live).
+**Model:** sonnet.
+**Senior review:** required — it adds a yardstick that later PowerShell changes are judged by (mystandard 14a). It changes no refusal.
+**Confidence:** 0.7 — the parse-only API is well known but not read live here, and the runners are not checked. If the test finds a disagreement, this step cannot merge as written (see Must not).
+**Files:** `test/b32-powershell-parser.test.mjs` (new).
+**Locked tests:** every file in `test/` at the base commit.
+**Today:** the PowerShell reading (S-57, S-69, S-71, S-73, S-74) was checked only against PowerShell's docs and source, never against PowerShell itself.
+**Change:**
+1. The test looks for `pwsh`, then `powershell.exe`. If neither is found, it is skipped with a message naming B-32 item 19. This is a skip by design, not a skip marker added to a locked test.
+2. It starts PowerShell once: `-NoProfile -NonInteractive -Command <a fixed script written in the test file>` (inline, so no `.ps1` file and no execution-policy prompt). It sends the strings as JSON on stdin; the strings never go on the command line.
+3. The fixed script only calls `Parser::ParseInput` on each string and, for each, reports whether the syntax tree holds a `CommandAst` named `Get-StoredCredential` (any module prefix) with a `keyprompt:` target or the saved name `OPENAI_API_KEY`. It never runs a string.
+4. The strings: every PowerShell case in the B-25 and B-32 test files, plus 2,000 from a seeded generator (quotes, `<#`, `${`, `@'`, `` ` ``, `;`, line breaks and the read).
+5. It fails when PowerShell finds such a read and `checkCommand(s, ['OPENAI_API_KEY'], 'powershell')` returns `null`. It lists each such string.
+**Acceptance:**
+- WHEN PowerShell's parser finds a `Get-StoredCredential` call on a keyprompt target in a string THEN the guard SHALL deny that string as PowerShell (checked on every CI job where PowerShell is installed).
+- WHEN no PowerShell is installed THEN the test SHALL be skipped and say why.
+- WHEN the test runs THEN no string SHALL be run, only parsed.
+**Verify:** `npm ci`, `npm test` locally, then CI's 6 jobs green, with the PR naming which jobs ran the comparison. Break test: commit, make `checkCommand` return `null` for PowerShell, run the new file where PowerShell is installed: it fails; `git checkout -- src/guard.mjs`.
+**Must not:** call `Invoke-Expression`, `&`, `.`, `-Command` or `-EncodedCommand` with a test string; merge with a known disagreement (log it as a new bug and stop); change `src/` or `.github/`; plus the shared rules.
+
+### Open flags for S-66 to S-75
+
+Facts not checked when these steps were written (no shell, no network). Each says where to check.
+
+- **F1 — R-16 is open** (`docs/research.md:264`). It blocks S-74. Check: PowerShell's command-line parser source on GitHub (PowerShell/PowerShell, at a pinned commit) and about_PowerShell_exe (view powershell-5.1). A Sonnet lookup can answer it.
+- **F2 — `security`'s other global options that take a value** (only `-p` is in B-32). Check: `man security` on macOS. S-68.
+- **F3 — zsh's precommand modifiers**, the full list and whether `repeat`'s count can be an expression. Check: zsh manual, "Precommand Modifiers" and "Complex Commands", read live. S-68.
+- **F4 — bash's options between `-c` and its script**, including `-o NAME` and `+O`, in bash 3.2 and bash 5. Check: GNU Bash manual, "Invoking Bash", and `bash --help` on both. S-68.
+- **F5 — PowerShell tokenizer details.** How `${…}` ends (does a backtick escape `}`?); here-string rules (blanks before the closer, text after it, an unclosed here-string is a parse error). Check: tokenizer.cs (`ScanVariable`, here-string scanning) at a pinned commit, and about_Quoting_Rules, read live. S-71, S-73.
+- **F6 — PowerShell's assignment operators** (is `??=` there in 7.x, and in 5.1?). Check: about_Assignment_Operators, read live. S-69.
+- **F7 — colon-bound parameter syntax** (`-Name:value`; spaces allowed after the colon?). Check: about_Parameters or about_Parsing, read live. S-69.
+- **F8 — ANSI-C quoting in zsh** behaves like bash for `\'` and `\\`. Check: zsh manual, "Quoting". S-70.
+- **F9 — bash 3.2 ends `$( )` at a `)` in a `case` pattern** (PR #62's review hit this with here-documents). S-70's `subshell()` counts that `)` the bash 5 way. Whether bash 3.2 then runs a read the guard misses is not checked. The senior review of S-70 should test it with `printf`, never with a read.
+- **F10 — StrykerJS flags** for "command test runner, changed lines only" (D-23 names `npx -y -p @stryker-mutator/core@10.1.1 stryker run`, not the flags). Check: stryker-mutator.io docs, read live.
+- **F11 — which GitHub runners have `pwsh` and Windows PowerShell 5.1.** Check: actions/runner-images, the README of each image, read live. S-75.
+- **F12 — the hook's limits.** What Claude Code does when the hook times out (B-32 item 17 says this was not checked; D-17/R-13 say it fails open), and the largest tool input that can reach the hook (0.4 confidence in B-32). Check: code.claude.com/docs/en/hooks, read live. S-67.
+- **F13 — the exact 1 MB shape** from S-57's round-3 senior review. Check: https://github.com/abhisheksharma001/keyprompt/pull/60#issuecomment-6761183805. S-67, S-72.
+- **F14 — whether `security -p x find-generic-password …` runs the subcommand** (B-32 item 10, 0.4). It cannot be checked without reading the store. S-68 refuses it anyway, which can only add a refusal.
+- **F15 — the parse-only API** (`[System.Management.Automation.Language.Parser]::ParseInput`) and the `CommandAst` names it gives for a module-qualified cmdlet. Check: Microsoft Learn, read live. S-75.
+- **F16 — S-68's function and alias test is coarse.** Any `()` or `function` in a command removes the text-only exemption for the whole command. Check during S-68's differential run: the PR lists the new refusals, and the senior reviewer judges whether any is common.
+- **F17 — S-73 and D-24.** S-73 parses PowerShell here-strings, not bash here-documents, and keeps the body checked as commands, so it refuses at least what main refuses. The senior reviewer confirms this reading of D-24 before merge.
