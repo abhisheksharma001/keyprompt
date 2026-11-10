@@ -183,8 +183,9 @@ test('the same 1 MB shape with a read in it is refused inside two seconds (item 
 })
 
 test('a command of any length gets an answer in bounded time and, naming a read, a refusal (item 17)', () => {
-  // About 12 MB: more than the largest budget allows reading in all four readings.
-  const command = 'x ' + 'z '.repeat(6000000) + READ
+  // About 12 MB that only names the tool (no read the guard would find): the four readings need about 48 million characters,
+  // more than the largest budget (40 million), so only the budget can refuse it.
+  const command = 'x ' + 'z '.repeat(6000000) + 'find-generic-password'
   const start = Date.now()
   const reason = checkCommand(command, SAVED)?.reason
   const ms = Date.now() - start

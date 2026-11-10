@@ -18,6 +18,25 @@ const SERVICE = 'keyprompt'
 const READS =
   'keyprompt guard: this command reads a secret saved by keyprompt straight from the OS password store.'
 const DUMPS = 'keyprompt guard: this command prints every secret in the keychain, including any saved by keyprompt.'
+/** The reason when the guard cannot finish reading a command that names a read tool: nested too deep, or more work than the budget (S-67, D-25). */
+const UNREAD =
+  "keyprompt guard: this command is too long or too deeply nested for the guard to read, and it names the OS password store's read tool, so it is refused."
+/** The reason when the text after a PowerShell `-c` opens a quote or block comment and never closes it (S-67, B-32 item 11). */
+const UNCLOSED =
+  "keyprompt guard: this command has text after a PowerShell `-c` or `-Command` flag that opens a quote or block comment and never closes it, so the guard cannot finish reading it, and it names the OS password store's read tool, so it is refused."
+/** What a text names when it names a store's read tool, in lower case. */
+const READ_TOOLS = ['find-generic-password', 'dump-keychain', 'secret-tool', 'get-storedcredential', 'credread']
+/**
+ * The work budget (S-67, B-32 item 17): the most characters all the readings of one command may scan together,
+ * `WORK_PER_CHAR` for each character of the command plus `WORK_BASE`, and never more than `WORK_MOST`. Measured
+ * on the builder's machine: the guard scans up to 64 characters per input character on the worst shape known
+ * (a later word named `pwsh` after each nested call), at 20 to 60 ms per million characters.
+ */
+const WORK_PER_CHAR = 16
+const WORK_BASE = 1000000
+const WORK_MOST = 40000000
+/** Thrown when the budget runs out, to stop reading at once. */
+const OUT_OF_WORK = Symbol('out of work')
 const RUN_INSTEAD =
   "Run the command that needs the secret with `keyprompt run NAME -- COMMAND` instead: the value then goes only into that command's environment, and exact copies of it in the output are masked. If the command only quotes such a read as text (a commit message, a pull request body), write that text to a file with your file tool and pass the file instead (`git commit -F FILE`, `gh pr create --body-file FILE`)."
 
@@ -53,6 +72,19 @@ function base(word) {
 }
 
 /**
+ * Whether a text names one of the store's read tools, with quotes, backslashes, backticks and line breaks taken
+ * out of it first (`find-generic-"password"`). It looks at the text as it stands, so it answers for a text the
+ * guard could not read to the end. One pass per tool name with `includes`, no regular expression.
+ *
+ * @param {string} text
+ */
+function mentionsRead(text) {
+  let flat = text.toLowerCase()
+  for (const dropped of ['\\', '`', "'", '"', '\r', '\n']) flat = flat.replaceAll(dropped, '')
+  return READ_TOOLS.some((tool) => flat.includes(tool))
+}
+
+/**
  * Split shell text into simple commands (lists of words, quotes removed) at
  * `;`, `&`, `|`, newlines and parentheses. Text inside `$(...)` or backticks,
  * even within double quotes, comes back as a nested script, because the shell
@@ -71,12 +103,17 @@ function base(word) {
  * backticks run nothing, and `<#` where a word starts opens a comment that
  * ends at the first `#>` (about_Comments; tokenizer.cs, ScanBlockComment).
  *
+ * `open` is true when the text ends inside something it opened and never
+ * closed: a quote, a `<#` comment, `$(` or a backtick (S-67).
+ *
  * @param {string} text
  * @param {boolean} [powershell]
  * @param {boolean} [comments] skip comments
- * @returns {{ commands: string[][], nested: string[] }}
+ * @param {{ left: number }} [limit] the work budget: the text's length is taken off `left`, and reading stops (throws `OUT_OF_WORK`) when it goes below 0
+ * @returns {{ commands: string[][], nested: string[], open: boolean }}
  */
-export function splitShell(text, powershell = false, comments = true) {
+export function splitShell(text, powershell = false, comments = true, limit) {
+  if (limit && (limit.left -= text.length) < 0) throw OUT_OF_WORK
   if (powershell) text = text.replace(/[‘’‚‛]/g, "'").replace(/[“”„]/g, '"')
   const escape = powershell ? '`' : '\\'
   /** @type {string[][]} */
@@ -87,6 +124,7 @@ export function splitShell(text, powershell = false, comments = true) {
   let words = []
   let word = ''
   let inWord = false
+  let open = false
   const endWord = () => {
     if (inWord) words.push(word)
     word = ''
@@ -107,6 +145,7 @@ export function splitShell(text, powershell = false, comments = true) {
       else if (text[j] === ')') depth--
       j++
     }
+    if (depth > 0) open = true
     nested.push(text.slice(start, depth === 0 ? j - 1 : j))
     return j
   }
@@ -114,6 +153,7 @@ export function splitShell(text, powershell = false, comments = true) {
   const backtick = (start) => {
     const end = text.indexOf('`', start)
     const stop = end === -1 ? text.length : end
+    if (end === -1) open = true
     nested.push(text.slice(start, stop))
     return stop + 1
   }
@@ -143,6 +183,7 @@ export function splitShell(text, powershell = false, comments = true) {
       i = end === -1 ? text.length : end
     } else if (comments && powershell && c === '<' && text[i + 1] === '#' && !inWord) {
       const end = text.indexOf('#>', i + 2)
+      if (end === -1) open = true
       i = end === -1 ? text.length : end + 2
     } else if (c === "'") {
       inWord = true
@@ -151,6 +192,7 @@ export function splitShell(text, powershell = false, comments = true) {
         word += text[i]
         i += text[i] === "'" ? 2 : 1
       }
+      if (i >= text.length) open = true
       i++
     } else if (c === '"') {
       inWord = true
@@ -173,6 +215,7 @@ export function splitShell(text, powershell = false, comments = true) {
           i++
         }
       }
+      if (i >= text.length) open = true
       i++
     } else if (c === '$' && text[i + 1] === '(') {
       i = subshell(i + 2)
@@ -191,7 +234,7 @@ export function splitShell(text, powershell = false, comments = true) {
     }
   }
   endCommand()
-  return { commands, nested }
+  return { commands, nested, open }
 }
 
 /**
@@ -309,9 +352,10 @@ function nextMatch(words, test) {
  * @param {Set<string>} names
  * @param {number} depth
  * @param {boolean} comments the words come from a reading that skips comments
+ * @param {{ left: number }} [limit] the work budget
  * @returns {string | null} the reason, when the command is a direct read
  */
-function readInWords(words, names, depth, comments) {
+function readInWords(words, names, depth, comments, limit) {
   let start = commandStart(words)
   if (start >= words.length) return null
   // An option skipped before the first word may have taken it as its value (`env -u echo …`), so only a start past no option counts as text.
@@ -339,7 +383,7 @@ function readInWords(words, names, depth, comments) {
     if (command === 'eval' && i === start) {
       // eval, as the command, runs every word after it as one script, which settles the rest of the command.
       // A word that only ends in `eval` (`X=/bin/eval`, `find -name eval`, an option's value) runs nothing, and joining the words after it would drop their quoting.
-      return readScript(words.slice(i + 1).join(' '), names, depth + 1, false, comments)
+      return readScript(words.slice(i + 1).join(' '), names, depth + 1, false, comments, limit)
     } else if (command === 'security' || command === 'secret-tool') {
       const sub = plain[i + 1]
       const key = `${command} ${words[sub]}`
@@ -357,7 +401,7 @@ function readInWords(words, names, depth, comments) {
       const kind = powershell ? 'powershell' : 'shell'
       flags[kind] ??= nextMatch(words, (w) => (powershell ? /^-c(ommand)?$/i.test(w) : /^-[a-z]{0,3}c[a-z]{0,3}$/.test(w)))
       const flag = flags[kind][i + 1]
-      /** @type {[string, () => string][]} each script to read, under the key that marks it read; built only when read, so a skipped one costs nothing */
+      /** @type {[string, () => string, boolean?][]} each script to read, under the key that marks it read, and whether to refuse one that ends open; built only when read, so a skipped one costs nothing */
       const scripts = []
       if (flag + 1 >= words.length) {
         // No script follows.
@@ -373,16 +417,19 @@ function readInWords(words, names, depth, comments) {
         // those stretches never overlap, which keeps this linear. The whole tail is read once too, for a script that runs past a later
         // word named pwsh (one whole-tail read per `pwsh -c`, over 200 of them, took minutes). With no PowerShell word after the
         // flag, the stretch is the tail, so it is read once for both: reading it twice doubled the work at each nesting level.
+        // Reading the tail once assumes a later flag would see the same words the same way. A tail that ends inside a quote or a block
+        // comment breaks that: a later `pwsh -c` starts outside it, so what runs after it was never read. Such a tail is refused when
+        // the text names a read tool (S-67, B-32 item 11).
         pwshWords ??= nextMatch(words, (w) => SHELLS.has(base(w)) && /^(pwsh|powershell)/.test(base(w)))
         const stop = pwshWords[flag + 1]
-        scripts.push([`powershell ${flag}`, () => words.slice(flag + 1, stop).join(' ')])
+        scripts.push([`powershell ${flag}`, () => words.slice(flag + 1, stop).join(' '), true])
         if (stop === words.length) checked.add('powershell tail')
-        else scripts.push(['powershell tail', () => words.slice(flag + 1).join(' ')])
+        else scripts.push(['powershell tail', () => words.slice(flag + 1).join(' '), true])
       }
-      for (const [key, script] of scripts) {
+      for (const [key, script, refuseOpen] of scripts) {
         if (found || checked.has(key)) continue
         checked.add(key)
-        found = readScript(script(), names, depth + 1, powershell, comments)
+        found = readScript(script(), names, depth + 1, powershell, comments, limit, refuseOpen)
       }
     }
     if (found) return found
@@ -396,13 +443,16 @@ function readInWords(words, names, depth, comments) {
  * @param {number} depth
  * @param {boolean} powershell read the text as PowerShell, not as a POSIX shell
  * @param {boolean} comments skip comments and look for a read anywhere in a command; false is main's reading
+ * @param {{ left: number }} [limit] the work budget
+ * @param {boolean} [refuseOpen] refuse a text that ends inside a quote or block comment and names a read tool, when nothing else was found
  * @returns {string | null}
  */
-function readInShell(text, names, depth, powershell, comments) {
-  if (depth > 4) return null
-  const { commands, nested } = splitShell(text, powershell, comments)
+function readInShell(text, names, depth, powershell, comments, limit, refuseOpen) {
+  // Past the depth limit the text is not read. A text that names a read tool is refused (S-67, B-32 item 5), so too much nesting never reads as "no read".
+  if (depth > 4) return mentionsRead(text) ? UNREAD : null
+  const { commands, nested, open } = splitShell(text, powershell, comments, limit)
   for (const words of commands) {
-    const found = readInWords(words, names, depth, comments)
+    const found = readInWords(words, names, depth, comments, limit)
     if (found) return found
   }
   // Windows: CredRead through Add-Type (how keyprompt itself reads, `src/store/windows.mjs`), naming a keyprompt target or a saved name.
@@ -412,9 +462,10 @@ function readInShell(text, names, depth, powershell, comments) {
     if (lower.includes(`${SERVICE}:`) || [...names].some((name) => wordIn(text, name))) return READS
   }
   for (const script of nested) {
-    const found = readScript(script, names, depth + 1, powershell, comments)
+    const found = readScript(script, names, depth + 1, powershell, comments, limit)
     if (found) return found
   }
+  if (refuseOpen && open && mentionsRead(text)) return UNCLOSED
   return null
 }
 
@@ -431,10 +482,12 @@ function readInShell(text, names, depth, powershell, comments) {
  * @param {Set<string>} names
  * @param {number} depth
  * @param {boolean} powershell
+ * @param {{ left: number }} [limit] the work budget
+ * @param {boolean} [refuseOpen]
  * @returns {string | null}
  */
-function readBoth(text, names, depth, powershell) {
-  return readInShell(text, names, depth, powershell, true) || readInShell(text, names, depth, powershell, false)
+function readBoth(text, names, depth, powershell, limit, refuseOpen) {
+  return readInShell(text, names, depth, powershell, true, limit, refuseOpen) || readInShell(text, names, depth, powershell, false, limit, refuseOpen)
 }
 
 /**
@@ -448,10 +501,12 @@ function readBoth(text, names, depth, powershell) {
  * @param {number} depth
  * @param {boolean} powershell
  * @param {boolean} comments
+ * @param {{ left: number }} [limit] the work budget
+ * @param {boolean} [refuseOpen]
  * @returns {string | null}
  */
-function readScript(text, names, depth, powershell, comments) {
-  return comments ? readInShell(text, names, depth, powershell, true) : readBoth(text, names, depth, powershell)
+function readScript(text, names, depth, powershell, comments, limit, refuseOpen) {
+  return comments ? readInShell(text, names, depth, powershell, true, limit, refuseOpen) : readBoth(text, names, depth, powershell, limit, refuseOpen)
 }
 
 /**
@@ -467,11 +522,21 @@ function wordIn(text, word) {
  * @param {string} command shell text from a Bash or PowerShell tool call
  * @param {Iterable<string>} [savedNames] names from the catalog (never values)
  * @param {'bash' | 'powershell'} [shell] which shell runs the text; when not known, it is read both ways
+ * @param {number} [workLimit] the characters all the readings may scan together (tests lower it); by default the work budget for the command's length
  * @returns {{ reason: string } | null}
  */
-export function checkCommand(command, savedNames = [], shell) {
+export function checkCommand(command, savedNames = [], shell, workLimit = Math.min(WORK_PER_CHAR * command.length + WORK_BASE, WORK_MOST)) {
   const names = new Set(savedNames)
-  const found = (shell !== 'powershell' && readBoth(command, names, 0, false)) || (shell !== 'bash' && readBoth(command, names, 0, true))
+  const limit = { left: workLimit }
+  /** @type {string | null | false} */
+  let found
+  try {
+    found = (shell !== 'powershell' && readBoth(command, names, 0, false, limit)) || (shell !== 'bash' && readBoth(command, names, 0, true, limit))
+  } catch (error) {
+    if (error !== OUT_OF_WORK) throw error
+    // The budget ran out before a read was found: slowness must never turn into a pass, so a command that names a read tool is refused.
+    found = mentionsRead(command) ? UNREAD : null
+  }
   return found ? { reason: `${found} ${RUN_INSTEAD}` } : null
 }
 
