@@ -33,7 +33,9 @@ const READ_TOOLS = ['find-generic-password', 'dump-keychain', 'secret-tool', 'ge
  * shape known (a later word named `pwsh` after each nested call) scans 64 characters per character read both
  * ways. The step's 64 per character let that shape take 2 to 4 s; 12 per character, which still covers the
  * nested shapes the timing tests use (12 per character read both ways), cuts it off in about 0.8 s, and the cap
- * keeps any command under about 1 s of reading, far inside the hook's 10 seconds.
+ * keeps the reading of any command under about 1 s, far inside the hook's 10 seconds. The name check that answers
+ * after the budget runs out (`mentionsRead`) is not charged to it: it is one pass of 3 to 20 ns per character, measured on
+ * the worst shapes found (CPU time, not wall time), so even 60 MB, more than a model can emit, costs about a second.
  */
 const WORK_PER_CHAR = 12
 const WORK_BASE = 1000000
@@ -74,83 +76,66 @@ function base(word) {
   return word.slice(Math.max(word.lastIndexOf('/'), word.lastIndexOf('\\')) + 1).toLowerCase()
 }
 
-/** What `mentionsRead` takes out of a text: the quote characters and escapes the parser takes out of a word, and PowerShell's curly quotes. */
-const DROPPED = ['\\', '`', "'", '"', '\r', '\n', '\u2018', '\u2019', '\u201a', '\u201b', '\u201c', '\u201d', '\u201e']
-
-/** How many open spans `spanLevels` tracks one by one; deeper ones are only counted. */
-const MOST_OPEN = 64
-/** How many nesting levels `spanLevels` keeps apart: one per tracked span, and the last one holds everything deeper. */
-const LEVELS = MOST_OPEN + 1
+/** For each read tool and each character code below 128, the places in the tool's name where that character stands, one bit per place. */
+const NAME_BITS = READ_TOOLS.map((tool) => {
+  const bits = new Int32Array(128)
+  for (let i = 0; i < tool.length; i++) bits[tool.charCodeAt(i)] |= 1 << i
+  return bits
+})
+/** For each character code below 128, the tools (one bit each) whose name starts with it. */
+const STARTS = new Int32Array(128)
+READ_TOOLS.forEach((tool, t) => (STARTS[tool.charCodeAt(0)] |= 1 << t))
 
 /**
- * The text split by how deep each character sits in `$( … )` spans and backtick spans, one string per level (level 0 is outside
- * every span). The parser reads the inside of a span as a script of its own and takes the span out of the word around it, so
- * `find-generic-pass$()word` is the tool's name at level 0, and `$(security find-generic-pass$()word -w)` is the name at level 1.
- * Each character lands in one level, so the strings together are as long as the text. It follows bare `(` and `)` inside a `$(`
- * (`$(echo (x))`), but not quotes or escapes, so it can only put more text at the same level than the parser does, never less.
- * With `ticks` false a backtick opens no span, which is how PowerShell reads it and how a stray backtick in front of a
- * `$( )` is read when it shifts the pairing. One pass over the text, a slice per span edge.
+ * Whether a text holds one of the store's read tools' names, the way the parser would put it together out of a word. The parser
+ * takes out of a word the quote characters (`'`, `"`, curly quotes), the escape character, line breaks, and any `$( … )` or
+ * backtick span, whatever is inside it; what is left is the name (`find-generic-"pass"$(true)word`). So the name is looked for
+ * with those characters allowed between its letters, and with a span allowed between any two letters: it opens at a `$(` or a
+ * backtick and ends at ANY later `)` or backtick. Letting every `)` end it, instead of working out which one the parser pairs
+ * it with, makes this a superset of the parser (escapes, backticks inside `$( )`, `$(` inside backticks, nesting), which two
+ * senior reviews found a pairing count could not be. It looks at the text as it stands, so it answers for a text the guard could
+ * not read to the end. One pass over the text, nothing allocated per character, no regular expression.
  *
- * @param {string} text
- * @param {boolean} ticks whether a backtick opens and closes a span
- */
-function spanLevels(text, ticks) {
-  /** @type {string[][]} */
-  const pieces = Array.from({ length: LEVELS }, () => [])
-  /** The open spans, innermost last: -1 for a backtick span, otherwise the number of bare `(` open inside a `$(`. @type {number[]} */
-  const open = []
-  let uncounted = 0
-  let from = 0
-  const flush = (/** @type {number} */ to) => {
-    if (to > from) pieces[Math.min(open.length + uncounted, LEVELS - 1)].push(text.slice(from, to))
-  }
-  for (let i = 0; i < text.length; i++) {
-    const c = text.charCodeAt(i)
-    const top = open.length - 1
-    if (c === 36 && text.charCodeAt(i + 1) === 40) {
-      flush(i)
-      if (uncounted > 0 || open.length >= MOST_OPEN) uncounted++
-      else open.push(0)
-      i++
-      from = i + 1
-    } else if (c === 96 && ticks && uncounted === 0) {
-      flush(i)
-      if (top >= 0 && open[top] === -1) open.pop()
-      else if (open.length < MOST_OPEN) open.push(-1)
-      from = i + 1
-    } else if (c === 40 && top >= 0 && open[top] >= 0 && uncounted === 0) {
-      open[top]++
-    } else if (c === 41 && (uncounted > 0 || (top >= 0 && open[top] >= 0))) {
-      if (uncounted === 0 && open[top] > 0) {
-        open[top]--
-      } else {
-        flush(i)
-        if (uncounted > 0) uncounted--
-        else open.pop()
-        from = i + 1
-      }
-    }
-  }
-  flush(text.length)
-  return pieces.map((level) => level.join(''))
-}
-
-/**
- * Whether a text names one of the store's read tools, in any of three views of it, because the parser reads each as the name:
- * the text with quotes, backslashes, backticks, line breaks and curly quotes taken out (`find-generic-"password"`), and each level
- * of `spanLevels` (`find-generic-pass$()word`, and the same inside a span), made with backticks as spans and without. It looks
- * at the text as it stands, so it answers for a text the guard could not read to the end. `includes`, no regular expression.
+ * It is not exact in the other direction: it also refuses a text that only looks like a split name, such as "`secret-` and
+ * `tool`" in a pull request body. That is the cost of refusing when unsure, and it applies only to commands too long or too deeply
+ * nested to read.
  *
  * @param {string} text
  */
 function mentionsRead(text) {
   const lower = text.toLowerCase()
-  const names = (/** @type {string} */ view) => {
-    for (const dropped of DROPPED) view = view.replaceAll(dropped, '')
-    return READ_TOOLS.some((tool) => view.includes(tool))
+  const tools = READ_TOOLS.length
+  // Per tool, bit j set: the first j letters of its name have been read (bit 0 is always set, since a name can start anywhere).
+  const plain = new Int32Array(tools).fill(1)
+  // The same, but with a span opened after those letters and not yet ended. Once set, it stays: a later `)` may still end the span.
+  const inSpan = new Int32Array(tools)
+  // The tools (one bit each) that have read a letter of their name or opened a span: only they, and the ones this character starts, need work.
+  let live = 0
+  for (let i = 0; i < lower.length; i++) {
+    const c = lower.charCodeAt(i)
+    const dollar = c === 36 && lower.charCodeAt(i + 1) === 40
+    if (dollar) i++
+    const todo = live | (c < 128 ? STARTS[c] : 0)
+    if (todo === 0) continue
+    const tick = c === 96
+    // Not part of a name, and taken out by the parser: backslash, `'`, `"`, CR, LF, a backtick, and the curly quotes U+2018 to U+201E.
+    const dropped = tick || c === 92 || c === 39 || c === 34 || c === 13 || c === 10 || (c >= 0x2018 && c <= 0x201e)
+    const ends = c === 41 || tick
+    for (let t = 0; t < tools; t++) {
+      if ((todo & (1 << t)) === 0) continue
+      const was = plain[t]
+      let now = 1
+      if (dropped) now |= was
+      if (c < 128) now |= (was & NAME_BITS[t][c]) << 1
+      if (ends) now |= inSpan[t]
+      if (dollar || tick) inSpan[t] |= was
+      plain[t] = now
+      if (now & (1 << READ_TOOLS[t].length)) return true
+      if (now > 1 || inSpan[t] > 1) live |= 1 << t
+      else live &= ~(1 << t)
+    }
   }
-  if (names(lower)) return true
-  return (lower.includes('$(') || lower.includes('`')) && [true, false].some((ticks) => spanLevels(lower, ticks).some(names))
+  return false
 }
 
 /**
