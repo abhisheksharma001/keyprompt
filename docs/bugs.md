@@ -395,6 +395,15 @@ The deadline is the real-world path. Someone presses Save near the end of the 5 
 18. Thin timing headroom: the nested-pwsh timing test in `test/b25-guard-plain-forms.test.mjs` took 1.9 s in total on both macOS Node 20 and Windows Node 20 in CI, against a 2 s limit per case. It failed once on 2026-11-10, locally, at 2,096 ms, while StrykerJS ran six workers on the same machine during the S-58 work (main took 0.7 to 2.1 s for its shape under that load too): a flaky-test bug (section 5 of the standard), not a retry. A fix: time a flat string of the same size in the same run and compare against it (the nested shape is 3.0× to 4.8× the flat one now). Changing that test is a test-change step of its own (rule 19).
 19. The PowerShell reading has been checked only against PowerShell's docs and source, never against PowerShell itself. A test on CI's Windows jobs could compare the guard's reading with PowerShell's own parser, which parses a script without running it.
 20. `echo "$\` then a line break then `(<read>)"`: bash 3.2 joins the backslash-newline inside double quotes into `$(…)` and runs the read; main lets it through. Reported by PR #62's senior review (checked there with `printf` in bash 3.2.57; not re-run here).
+Found by S-67 (PR #69, 2026-11-11) and its four senior reviews, 21 to 27. Strings only; nothing was run against the store.
+21. Item 11 is only half closed. S-67's open-tail rule refuses a PowerShell tail that ends inside `'`, `"`, `<#` or `$(`. A closer put after the read ends the tail cleanly, so the rule never fires: `; #>`, `; #'`, or a trailing `-name '#>'` after the read (S-67's builder; the same on main and on the branch). Not a regression.
+22. Past its limits (nesting deeper than 4, or the work budget), the guard looks only for the read tool's name, and `mentionsRead` does not decode `$'a'`, `${x}` or `\x73`; a name written that way is not found there. Today the parser does not read those forms either (items 2 and 3), so this adds no new pass; it matters when S-70 starts decoding them: see S-70's warning (S-67 round 4, N5), which says the fallback must be redesigned then, not only widened. S-59's words must say that past the limits the guard looks for the tool's name only.
+23. A false refusal, not a pass: the S-67 builder recorded that a fan-out of many `pwsh -c` words on the Monitor tool is refused from about 50 KB. Not re-measured for this entry.
+24. `mentionsRead` is not charged to the work budget. It is one pass of 3 to 50 ns per character on the worst shapes found (about 60 MB in 2.4 s in S-67 round 4; 3.4 to 4.6 s in the builder's runs of 62 MB). Past that size a model could not emit the command, but it is a time outside the budget.
+25. N1 (S-67 round 4; the same on main): `readInShell`'s `Add-Type` path builds a fresh regular expression per saved name for every nested text, and the budget does not charge it. `'$(Add-Type credread)'` repeated to 1.3 MB cost 3.2 s with 20 saved names and 15.3 s with 100 (main: 15.1 s). Past 10 s the hook times out and fails open (D-17). A fix: one regular expression for all names per check, or charge length × names to the budget.
+26. N3 (cosmetic): an `UNCLOSED` tail found early wins over a definite plain read later in the same command. Both refuse; main says the command "reads a secret", this says the reading is unfinished.
+27. Bash text sent on the PowerShell tool: this repo's own PR body, written as a bash-quoted `bash -c "…$(cat <<EOF …)"`, goes 5 deep in PowerShell's reading and gets `UNREAD`; main lets it through (S-67 round 4). Rare, accepted as a false refusal. The workaround is the usual one: write the text to a file and pass the file.
+**Open for Abhishek (invariant 9, N4):** both `UNREAD` and `UNCLOSED` say the command "names the OS password store's read tool". The fallback is a superset: past the limits it also fires on text that only looks split (`echo secret-$x (y)tool`), so on those the sentence is not literally true. "may name" would be true on every path. Wording is his call; no change was made.
 **Requirement:** G1 in `docs/prd/v0-3.md`.
 **Needs first:** nothing (S-58 was dropped, D-24); R-16 for item 8 is answered (2026-11-10).
 **Blocks:** B-27 (its docs must name what is still let through).
@@ -403,7 +412,7 @@ The deadline is the real-world path. Someone presses Save near the end of the 5 
 **Introduced by:** PR #41, bc20dbe (S-38), the parser; item 1 also PR #60 (S-57), whose text-only list keeps it passing.
 **Escaped past:** S-38's tests and S-57's tests and first `/code-review`; found by S-57's senior review and second `/code-review`.
 **New check:** one new test file per step, `test/b32-guard-*.test.mjs` (S-67 to S-74) and `test/b32-powershell-parser.test.mjs` (S-75), with one case per item (each fails on main before its fix). Item 18 changes the timing test in `test/b25-guard-plain-forms.test.mjs` (S-66).
-**Fix step:** S-66 (item 18, test-change), S-67 (5, 11, 17), S-68 (1, 4, 10, 12), S-69 (6, 16), S-70 (2, 3, 20), S-71 (13, 14), S-72 (9, 15), S-73 (7), S-74 (8, after R-16) and S-75 (19, a test only), built in that order (`docs/steps.md`). All but S-75 come before S-59 (D-23, D-25), so the docs describe the result.
+**Fix step:** S-66 (item 18, test-change; it went blind to a doubled read once S-67 landed: B-36, fixed by S-76), S-67 (5, 17 and the open-tail half of 11; PR #69, merged 2026-11-11), S-68 (1, 4, 10, 12), S-69 (6, 16), S-70 (2, 3, 20), S-71 (13, 14), S-72 (9, 15), S-73 (7), S-74 (8, after R-16) and S-75 (19, a test only), built in that order (`docs/steps.md`), with S-76 (B-36) between S-67 and S-68. All but S-75 come before S-59 (D-23, D-25), so the docs describe the result. Items 21 to 27 have no step yet: Abhishek decides which become steps (21 and 25 change what the guard refuses or how long it takes, so they would need a senior review).
 
 ### B-33 — `keyprompt log` says the log keeps the newest 1000 even when it cannot
 
@@ -443,3 +452,16 @@ The deadline is the real-world path. Someone presses Save near the end of the 5 
 **Escaped past:** S-38's tests and every review since (B-25 to B-32): none looked at how else a script reaches `pwsh`.
 **New check:** a test that the base64 of a script naming a store read tool is refused after each spelling, for `pwsh` and `powershell`, and that the base64 of a script that only prints text passes (must fail on main before the fix).
 **Fix step:** not written yet. It follows S-74.
+
+### B-36 — The S-66 timing test cannot see a doubled read once the guard has a work budget
+
+**Seen:** 2026-11-11, by S-67's builder (memo item O-6), reading `checkCommand` after PR #69 gave it a work budget as its fourth argument. The nested-pwsh timing test in `test/b25-guard-plain-forms.test.mjs` (changed by S-66, PR #67) feeds a command that names no read tool. When a reading is doubled by mistake, the work budget runs out sooner, the guard answers `null` and stops, and the test finishes quickly and passes. By reading the code; not shown by a run. The test change S-76 starts by making the tail read twice on main and running the test.
+**Requirement:** none of its own: S-66 exists so that later readings cannot be added without a timing check.
+**Needs first:** S-67 merged (done).
+**Blocks:** S-68 (the next reading added to the guard).
+**Files:** `test/b25-guard-plain-forms.test.mjs` (the one timing test); a test-change step of its own (rule 19).
+**Research:** none · **Model:** sonnet · **Confidence:** 0.7 that the blind spot is real (read, not run).
+**Introduced by:** PR #69 (S-67), which added the budget; S-66 (PR #67) wrote the test before it existed.
+**Escaped past:** S-67's tests and four senior reviews did not catch it; the builder found it afterwards.
+**New check:** S-76's break test: make the tail read twice, and the changed test fails. Before the change, the same break should pass the test; if it already fails, the bug is not real and S-76 is closed.
+**Fix step:** S-76 (`docs/steps.md`): pass `Infinity` as the fourth argument inside the test's child process, so the test measures the reading and not the cut-off.
