@@ -14,9 +14,11 @@ const READS_REASON = 'keyprompt guard: this command reads a secret saved by keyp
 // Approved by Abhishek (D-25).
 const UNREAD_REASON =
   "keyprompt guard: this command is too long or too deeply nested for the guard to read, and it names the OS password store's read tool, so it is refused."
-// The tail rule's sentence: the approved one says "too long or too deeply nested", which is not true of a tail that opens a quote.
+// The tail rule's sentence. The approved one says "too long or too deeply nested", which is not true of a tail that opens a quote,
+// and a sentence that says the words after the flag "open" a quote was not true of a quote opened by a later word in double quotes
+// (senior review of PR #69), so this one says that the guard read them as PowerShell. Abhishek approves it with the merge.
 const UNCLOSED_REASON =
-  "keyprompt guard: this command has text after a PowerShell `-c` or `-Command` flag that opens a quote, a block comment or `$(` and never closes it, so the guard cannot finish reading it, and it names the OS password store's read tool, so it is refused."
+  "keyprompt guard: read as PowerShell, the words after a `-c` or `-Command` flag in this command open a quote, a block comment or `$(` that never closes, so the guard cannot finish reading them, and the command names the OS password store's read tool, so it is refused."
 
 /** @param {string | undefined} shell */
 function refusal(command, shell) {
@@ -168,6 +170,104 @@ test('a read tool is named through quotes, backslashes, backticks and line break
   assert.equal(checkCommand('x password-generic-find y', SAVED, 'bash', 1), null)
 })
 
+// The parser takes `$( … )` spans, backtick spans and (in PowerShell) curly quotes out of a word, so a tool name split by one
+// is the tool name to it. The fallback that runs when the guard cannot finish reading has to see the same name (senior review of PR #69).
+const SPLIT_READS = {
+  'security, $() inside the name': 'security find-generic-pass$()word -s keyprompt -w',
+  'security, $(true) inside the name': 'security find-generic-pass$(true)word -s keyprompt -w',
+  'security, a backtick span inside the name': 'security find-generic-pass`true`word -s keyprompt -w',
+  'security dump-keychain split by $()': 'security dump-key$()chain -d',
+  'secret-tool split by $(true)': 'secret-to$(true)ol lookup service keyprompt',
+  'secret-tool split by a nested $( )': 'secret-to$(echo $(true))ol lookup service keyprompt',
+  'secret-tool split by two spans': 'sec$()ret-to`x`ol lookup service keyprompt',
+  'Get-StoredCredential split by $()': 'Get-Stored$()Credential -Target keyprompt:X',
+  'Get-StoredCredential split by curly single quotes': 'Get-Stored‘’Credential -Target keyprompt:X',
+  'Get-StoredCredential split by curly double quotes': 'Get-Stored“”Credential -Target keyprompt:X',
+  'Get-StoredCredential split by low and reversed curly quotes': 'Get-Stored‚‛„’Credential -Target keyprompt:X',
+  'CredRead split by $()': 'Add-Type x; [Cred]::Cred$()Read(1)',
+}
+
+test('a read tool name split by a $( ) span, a backtick span or curly quotes is found when the budget runs out (item 17, review of PR #69)', () => {
+  // A budget of 1 character runs out at once, so the answer comes from naming alone.
+  for (const [what, command] of Object.entries(SPLIT_READS)) {
+    for (const shell of ['bash', 'powershell', undefined]) {
+      const reason = checkCommand(`echo hi; ${command}`, SAVED, shell, 1)?.reason
+      assert.ok(reason?.startsWith(UNREAD_REASON), `${what} (${shell ?? 'both'}): ${reason?.slice(0, 80)}`)
+    }
+  }
+})
+
+test('a read tool name split by a $( ) span is found past the depth limit as well (item 5, review of PR #69)', () => {
+  const nested = 'echo $('.repeat(5) + 'security find-generic-pass$()word -s keyprompt -w' + ')'.repeat(5)
+  const reason = refusal(nested, 'bash')
+  assert.ok(reason.startsWith(UNREAD_REASON) || reason.startsWith(READS_REASON), reason.slice(0, 80))
+})
+
+test('a name that is only near a span, or a span that holds only part of it, is not taken for the tool (item 17)', () => {
+  for (const command of [
+    'echo find-generic-pass $(date) word',
+    'echo secret- $(true) tool',
+    'echo $(find-generic-pass)word',
+    'echo find-generic-pass‘ ’word',
+  ]) {
+    assert.equal(checkCommand(command, SAVED, 'bash', 1), null, command)
+  }
+})
+
+test('the same split names, in a command too long for the default budget, are still refused (item 17, review of PR #69)', () => {
+  // Main reads these (the parser takes the span out of the word) and refuses them at any length. The shape is the one
+  // item 17 describes, about 100 KB of it, which runs the default budget out before the read at its end is reached.
+  const pad = nestLater('z '.repeat(50000))
+  assert.ok(pad.length > 100000)
+  /** @type {[string, (string | undefined)[]][]} */
+  const cases = [
+    ['security find-generic-pass$()word -s keyprompt -w', ['bash', undefined]],
+    ['security find-generic-pass`true`word -s keyprompt -w', ['bash', undefined]],
+    ['secret-to$(true)ol lookup service keyprompt', ['bash', undefined]],
+    ['Get-Stored$()Credential -Target keyprompt:X', ['powershell', undefined]],
+    ['Get-Stored‘’Credential -Target keyprompt:X', ['powershell', undefined]],
+  ]
+  for (const [read, shells] of cases) {
+    for (const shell of shells) {
+      const reason = checkCommand(`${pad}; ${read}`, SAVED, shell)?.reason
+      assert.ok(reason, `${shell ?? 'both'}: ${read}`)
+      assert.ok(reason.startsWith(UNREAD_REASON) || reason.startsWith(READS_REASON), reason.slice(0, 80))
+    }
+  }
+})
+
+test('curly quotes inside a read tool name are found in a command of about 20 KB, as the Monitor tool reads it (item 17, review of PR #69)', () => {
+  const command = `${nestLater('z '.repeat(10000))}; Get-Stored‘’Credential -Target keyprompt:X`
+  assert.ok(command.length > 20000)
+  for (const shell of ['powershell', undefined]) {
+    const reason = checkCommand(command, SAVED, shell)?.reason
+    assert.ok(reason, `${shell ?? 'both'} should refuse`)
+  }
+})
+
+// --- The tail rule's sentence is true on the path where a later word opens the quote --------------------------
+
+test('a find command whose later word has an apostrophe in double quotes is refused with a sentence that is true of it (item 11, review of PR #69)', () => {
+  // No word after the first `-c` opens a quote as bash reads it: the apostrophe is inside double quotes. Read as PowerShell, the
+  // later words do open one, which is what the sentence says. It names a read tool, so it is refused rather than let through.
+  const commands = [
+    `find . -exec pwsh -c 'Write-Host $args' {} \; -o -name "Bob's secret-tool notes.md" -exec pwsh -File lint.ps1 {} \;`,
+    `find . -name '*.ps1' -exec pwsh -c 'Get-Content $args[0]' {} \; -exec grep -l "don't call secret-tool" {} \; -exec pwsh -c 'Write-Host done' \;`,
+  ]
+  for (const command of commands) {
+    for (const shell of ['bash', undefined]) {
+      assert.ok(refusal(command, shell).startsWith(UNCLOSED_REASON), `${shell ?? 'both'}: ${command.slice(0, 80)}`)
+    }
+    assert.equal(checkCommand(command.replace(/secret-tool/g, 'a tool'), SAVED, 'bash'), null, 'the same command that names no read tool is allowed')
+  }
+})
+
+test('the unclosed-text sentence says what the guard did and does not claim more (invariant 9)', () => {
+  assert.ok(UNCLOSED_REASON.startsWith('keyprompt guard: read as PowerShell, the words after a `-c` or `-Command` flag'))
+  assert.ok(!/too long|too deeply nested/.test(UNCLOSED_REASON), 'it is not the sentence for depth or length')
+  assert.ok(!/text after a PowerShell `-c` or `-Command` flag that opens/.test(UNCLOSED_REASON), 'it does not claim that the text after the flag, as written, opens the quote')
+})
+
 test('the work budget is spent at its limit and not before (item 17)', () => {
   assert.ok(checkCommand(READ, SAVED, 'bash', READ.length)?.reason.startsWith(READS_REASON), 'a limit of exactly the text is enough for the first reading')
   assert.ok(checkCommand(READ, SAVED, 'bash', READ.length - 1)?.reason.startsWith(UNREAD_REASON), 'one character fewer is not')
@@ -272,7 +372,7 @@ function withRead(rand, words, read) {
 /** PowerShell quoting: wrap a script as `pwsh -c '…'`, doubling its quotes. */
 const wrap = (script) => `pwsh -c '${script.replace(/'/g, "''")}'`
 
-/** @type {((rand: () => number) => { command: string, shell: 'bash' | 'powershell' | undefined })[]} */
+/** @type {((rand: () => number) => { command: string, shell: 'bash' | 'powershell' | undefined, limit?: number })[]} */
 const SHAPES = [
   // eval around a read, five or more deep
   (rand) => ({
@@ -296,14 +396,20 @@ const SHAPES = [
     const pad = filler(rand).join(' ')
     return { command: `find . ${fakes.join(' ')} ${pad} -exec pwsh -c Write-Output pwsh '; ${PS_READ}' \\;`, shell: pick(rand, ['bash', undefined]) }
   },
+  // a tool name split by a $( ) span, a backtick span or curly quotes, in a command the budget cannot finish (review of PR #69)
+  (rand) => ({
+    command: withRead(rand, filler(rand), pick(rand, Object.values(SPLIT_READS))).join(' '),
+    shell: pick(rand, ['bash', 'powershell', undefined]),
+    limit: between(rand, 1, 40),
+  }),
 ]
 
 test('1,000 seeded long nested shapes that name a read are each refused inside two seconds (property)', () => {
   const rand = seeded(20261110)
   for (let n = 0; n < 1000; n++) {
-    const { command, shell } = SHAPES[n % SHAPES.length](rand)
+    const { command, shell, limit } = SHAPES[n % SHAPES.length](rand)
     const start = Date.now()
-    const found = checkCommand(command, SAVED, shell)
+    const found = checkCommand(command, SAVED, shell, limit)
     const ms = Date.now() - start
     assert.ok(found, `shape ${n} (${n % SHAPES.length}, ${shell ?? 'both'}, ${command.length} characters) came back as "no read": ${command.slice(0, 200)}`)
     assert.ok(ms < 2000, `shape ${n} took ${ms} ms`)
