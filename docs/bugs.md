@@ -302,7 +302,7 @@ The deadline is the real-world path. Someone presses Save near the end of the 5 
 
 ### B-27 — `SECURITY.md` and the README say the guard refuses more than it does
 
-**Seen:** 2026-11-09, S-56 audit. `SECURITY.md:19` and `README.md:280` say the guard refuses "a Bash or PowerShell command that runs the store's own read tool on a keyprompt item", and the limits they list (`SECURITY.md:20`, `README.md:285`) name only a script file, an encoded command and another tool. The B-25 forms run the store's read tool on a keyprompt item and are none of those, so the sentence is not literally true. Nor are two forms the audit does not count against G1 (the PRD's "Honest limits" allow them) but that pass the guard: a read built from a shell variable (`S=keyprompt; security find-generic-password -s $S -w`, re-run 2026-11-10) and text piped into a shell (`echo "<read>" | bash`). S-57 found a third (re-run 2026-11-10 on its branch): a read inside one quoted string that a command other than a shell or `eval` runs, as `env -S "<read>"`, `watch "<read>"`, `ssh host "<read>"`, `git rebase --exec "<read>"`, PowerShell's `Invoke-Expression "<read>"` and `cmd /c "<read>"` do.
+**Seen:** 2026-11-09, S-56 audit. `SECURITY.md:19` and `README.md:280` say the guard refuses "a Bash or PowerShell command that runs the store's own read tool on a keyprompt item", and the limits they list (`SECURITY.md:20`, `README.md:285`) name only a script file, an encoded command and another tool. The B-25 forms run the store's read tool on a keyprompt item and are none of those, so the sentence is not literally true. Nor are two forms the audit does not count against G1 (the PRD's "Honest limits" allow them) but that pass the guard: a read built from a shell variable (`S=keyprompt; security find-generic-password -s $S -w`, re-run 2026-11-10) and text piped into a shell (`echo "<read>" | bash`). S-57 found a third (re-run 2026-11-10 on its branch): a read inside one quoted string that a command other than a shell or `eval` runs, as `env -S "<read>"`, `watch "<read>"`, `ssh host "<read>"`, `git rebase --exec "<read>"`, PowerShell's `Invoke-Expression "<read>"` and `cmd /c "<read>"` do. S-57's senior review found a fourth (checked with `echo` on zsh 5.9; bash 3.2 rejects the name, bash 5 not checked): zsh's `printf -v 'a[$(<read>)]' x` runs the command substitution inside the name it is given, and that name is one quoted word, which the guard never reads.
 **Requirement:** G4 in `docs/prd/v0-3.md`; invariant 9.
 **Needs first:** S-57 and S-58 merged, so the words describe what the guard then refuses and what it still misses.
 **Blocks:** nothing.
@@ -369,3 +369,26 @@ The deadline is the real-world path. Someone presses Save near the end of the 5 
 **Escaped past:** the review of each step's spec against its own code.
 **New check:** none possible as a test of meaning; S-63's Verify quotes each corrected sentence next to the code line it describes.
 **Fix step:** S-63.
+
+### B-32 — The guard misreads some shell syntax, so a direct read passes
+
+**Seen:** 2026-11-10, by S-57's senior review (https://github.com/abhisheksharma001/keyprompt/pull/60#issuecomment-6750956360, its findings 4 to 11) and S-57's fix round (items 9 and 10). Each input was fed as a string to `checkCommand` from main (07019ad) and from the S-57 branch, and passes both, so Claude Code would run it; no store read was run. "Bash runs it" means checked with `echo` in place of the read on macOS bash 3.2.57 and zsh 5.9.
+1. A function or alias that redefines a text-only name: `echo() { "$@"; }; echo security find-generic-password -s keyprompt -w`, and `function grep { "$@"; }; grep …` (bash runs it). S-57's `TEXT_ONLY` exemption lets it through; main looked at the first word only.
+2. ANSI-C quoting: `true $'\'' ; security find-generic-password -s keyprompt -w #'` (bash and zsh run the second command); `splitShell` knows no `$'…'`.
+3. `echo $(echo ')'; security find-generic-password -s keyprompt -w)`: `subshell()` counts parentheses and ignores quotes (by reading).
+4. `bash -c -- '<read>'` and `bash -c -e '<read>'`: the word right after `-c` is taken as the script (bash and zsh run both).
+5. `eval eval eval eval eval <read>`: past depth 4, `readInShell` answers "no read"; it could refuse instead.
+6. `Get-StoredCredential -Target:keyprompt:X`, PowerShell's colon-bound parameter: the check matches whole words only (by reading).
+7. A PowerShell here-string, `Write-Output @"`, then `x"'`, `$(Get-StoredCredential -Target keyprompt:X)`, `'"` and `"@` on their own lines: here-strings are not read, quotes inside one are text and `@"` runs `$( )` (about_Quoting_Rules, live, 2026-11-10; by reading).
+8. Other ways to hand `pwsh` or `powershell` a script: an abbreviated `-Command` (`-Comm`), `-cwa` (`-CommandWithArgs`), and perhaps a bare argument to Windows PowerShell 5.1; the check knows only `-c` and `-Command`. R-16.
+9. A quote inside a comment that follows a subshell's `(` or `)`: `(true)# don't`, a line break, then the read; or `(# don't`, the read and `)` on three lines (bash and zsh run the read, because there the `#` starts a comment). S-57 reads a `#` after `(` or `)` as part of a word, which it is after `<(…)`, `a=(…)` and zsh's `(#i)`, so the quote swallows the next line. PowerShell's `(1)# don't` before a `Get-StoredCredential` line likewise (by reading). Main read no comments, so its quote swallowed the line too.
+10. A fake `pwsh -c` holding a stray quote before a real one: `find . -name pwsh -o -name -c -o -name "'" -o -exec pwsh -c 'Get-StoredCredential -Target keyprompt:X' \;`. A `pwsh -c` away from the command start is checked once, over the words after it joined, where the `'` swallows the rest, so the real one is skipped. Without the `"'"` S-57 refuses it; main did not.
+**Requirement:** G1 in `docs/prd/v0-3.md`.
+**Needs first:** S-58 merged (same file); R-16 for item 8.
+**Blocks:** B-27 (its docs must name what is still let through).
+**Files:** `src/guard.mjs`; a new test file.
+**Research:** lookup (R-16) · **Model:** opus · **Confidence:** 0.9 that items 1, 2, 4, 9 and 10 pass and run (both checked); 0.7 for 3, 5, 6 and 7 (by reading); 0.5 for 8 (R-16). On a fix, 0.7: 1, 4, 5 and 6 are small (no exemption for a name the text defines; skip `--` and options between `-c` and its script; refuse past the depth cap; split `-Name:value`); 2, 3, 7 and 10 need the parser to know more syntax; 9 needs both readings, because a `#` after `(` or `)` is a comment in one place and part of a word in another.
+**Introduced by:** PR #41, bc20dbe (S-38), the parser; item 1 also PR #60 (S-57), whose text-only list keeps it passing.
+**Escaped past:** S-38's tests and S-57's tests and first `/code-review`; found by S-57's senior review.
+**New check:** test/b32-guard-syntax.test.mjs, one case per item (must fail on main before the fix).
+**Fix step:** not written yet. It edits the same file as S-58, so it comes after S-58; whether it comes before S-59, so the docs describe the result, or S-59 names these as limits, is Abhishek's call.
