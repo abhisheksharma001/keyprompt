@@ -154,6 +154,8 @@ test('a long command is checked well inside the hook timeout, so it cannot time 
     const cases = [
       ['eval '.repeat(60) + 'x; ' + read, 'bash', true],
       ['pwsh -c '.repeat(200) + 'x', 'bash', false],
+      // Away from the command start each pwsh -c could read its whole tail again (S-57 senior review fix).
+      ['x ' + 'pwsh -c y '.repeat(200), 'bash', false],
       ['sh '.repeat(5000) + '-c x', 'bash', false],
       ['security find-generic-password '.repeat(2000), 'bash', false],
       ['secret-tool lookup '.repeat(2000), 'bash', false],
