@@ -191,6 +191,9 @@ const SPLIT_READS = {
   'dump-keychain split by $((1)) inside a $( ) that never closes': 'echo hi; $(security dump-$((1))keychain -d',
   'Get-StoredCredential split by two spans inside a $( )': 'x $(Get-Stored$(a)$(b)Credential -Target keyprompt:X)',
   'a tick span around a $( ) in the name': 'security find-generic-`$(x)`password -s keyprompt -w',
+  'a tick span that holds a bare paren, between the halves': 'echo find-generic-`(x)`pass$(true)word -s keyprompt -w',
+  'a ) inside a tick span, which closes nothing': 'echo find-generic-`x)`password -s keyprompt -w',
+  'a $ in front of the name that opens no span': 'echo $find-generic-pass$(true)word -s keyprompt -w',
 }
 
 test('a read tool name split by a $( ) span, a backtick span or curly quotes is found when the budget runs out (item 17, review of PR #69)', () => {
@@ -199,6 +202,24 @@ test('a read tool name split by a $( ) span, a backtick span or curly quotes is 
     for (const shell of ['bash', 'powershell', undefined]) {
       const reason = checkCommand(`echo hi; ${command}`, SAVED, shell, 1)?.reason
       assert.ok(reason?.startsWith(UNREAD_REASON), `${what} (${shell ?? 'both'}): ${reason?.slice(0, 80)}`)
+    }
+  }
+})
+
+test('a split name is found inside, after and beyond 64 open spans, which the guard tracks one by one (item 5, review of PR #69)', () => {
+  // 64 open spans are tracked and kept apart; deeper ones are only counted, so a name split inside more than 64 spans is a known
+  // limit (the guard reads four deep). It must not crash there, and a name outside the spans is found at any depth.
+  const split = 'secret-to$(true)ol lookup service keyprompt'
+  for (const depth of [3, 8, 63, 64, 70, 200]) {
+    const open = '$('.repeat(depth)
+    const close = ')'.repeat(depth)
+    for (const command of [`${open}${split}${close}`, `${open}${split}`]) {
+      const reason = checkCommand(command, SAVED, 'bash', 1)?.reason
+      if (depth < 64) assert.ok(reason?.startsWith(UNREAD_REASON), `${depth} deep, inside: ${command.slice(-50)}`)
+    }
+    for (const command of [`${open}${close} ${split}`, `${open}echo hi${close}; ${split}`, `${close} ${split}`]) {
+      const reason = checkCommand(command, SAVED, 'bash', 1)?.reason
+      assert.ok(reason?.startsWith(UNREAD_REASON), `${depth} deep, after: ${command.slice(0, 20)}... ${command.slice(-50)}`)
     }
   }
 })
@@ -223,6 +244,8 @@ test('a name that is only near a span, or a span that holds only part of it, is 
   for (const command of [
     'echo find-generic-pass $(date) word',
     'echo secret- $(true) tool',
+    'echo find-generic-pass)word', // a ) outside every span is a plain character and separates words
+    'echo find-generic-pass(x)word',
     'echo $(find-generic-pass)word',
     'echo find-generic-pass‘ ’word',
   ]) {

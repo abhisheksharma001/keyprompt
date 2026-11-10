@@ -77,10 +77,10 @@ function base(word) {
 /** What `mentionsRead` takes out of a text: the quote characters and escapes the parser takes out of a word, and PowerShell's curly quotes. */
 const DROPPED = ['\\', '`', "'", '"', '\r', '\n', '\u2018', '\u2019', '\u201a', '\u201b', '\u201c', '\u201d', '\u201e']
 
-/** How many nesting levels `spanLevels` keeps apart: the guard reads four deep, so everything below the fifth level shares the last. */
-const LEVELS = 6
 /** How many open spans `spanLevels` tracks one by one; deeper ones are only counted. */
 const MOST_OPEN = 64
+/** How many nesting levels `spanLevels` keeps apart: one per tracked span, and the last one holds everything deeper. */
+const LEVELS = MOST_OPEN + 1
 
 /**
  * The text split by how deep each character sits in `$( … )` spans and backtick spans, one string per level (level 0 is outside
