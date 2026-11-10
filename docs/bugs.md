@@ -361,7 +361,7 @@ The deadline is the real-world path. Someone presses Save near the end of the 5 
 4. G3 says that on uninstall "only those entries SHALL go"; a pre-existing empty `"hooks": {}` or event array is removed too (`src/install-guard.mjs:149-152`). Claude Code reads no difference.
 5. "MCP server (S-45)" says the card's "who is asking" is the client's own name; with no `clientInfo` name it falls back to "Claude Code in <folder>" (when `CLAUDECODE` is set) or "a command in <folder>" (`src/cli.mjs:351`, 653-655).
 **Requirement:** the standard's rule that the spec is corrected where it is wrong (mystandard section 5).
-**Needs first:** Abhishek's choice on item 3 (say so, or trim without the lock when the lock path is not a file); the others are words.
+**Needs first:** nothing (Abhishek chose words for item 3, 2026-11-10).
 **Blocks:** nothing.
 **Files:** `docs/prd/v0-3.md`; `src/activity.mjs` only if item 3 changes code.
 **Research:** none · **Model:** sonnet · **Confidence:** 0.9.
@@ -401,3 +401,16 @@ The deadline is the real-world path. Someone presses Save near the end of the 5 
 **Escaped past:** S-38's tests and S-57's tests and first `/code-review`; found by S-57's senior review and second `/code-review`.
 **New check:** test/b32-guard-syntax.test.mjs, one case per item (must fail on main before the fix).
 **Fix step:** not written yet. It edits the same file as S-58, so it comes after S-58; whether it comes before S-59, so the docs describe the result, or S-59 names these as limits, is Abhishek's call.
+
+### B-33 — `keyprompt log` says the log keeps the newest 1000 even when it cannot
+
+**Seen:** 2026-11-10, by S-63's builder. `activityReport` (`src/activity.mjs:297`) ends every report with "it keeps the newest 1000 and never a value." While the lock file cannot be made (something that is not a file at its path, or a folder that cannot be written beside a log that can), nothing trims the file and it grows past 1,000 lines (B-31 item 3; S-63 says so in the PRD, the README and `SECURITY.md`). The CLI sentence is then not literally true.
+**Requirement:** invariant 9.
+**Needs first:** nothing.
+**Blocks:** nothing.
+**Files:** `src/activity.mjs`; `test/activity.test.mjs:93` and `test/cli.test.mjs:1125` pin the sentence, so the fix is a test-change step of its own (standard, rule 19).
+**Research:** none · **Model:** sonnet · **Confidence:** 0.9 (the trim skip was run by S-63's builder: 1,101 lines after a write with a folder at the lock path).
+**Introduced by:** PR #56, S-54 (the lock that the trim needs).
+**Escaped past:** S-54's review: the sentence was checked against the trim, not against the cases where the trim is skipped.
+**New check:** the changed tests pin the new sentence.
+**Fix step:** not written yet. Small: "it keeps about the newest 1000" is still not true; a sentence such as "it is trimmed to the newest 1000" with a pointer to `SECURITY.md`, or no number at all, is Abhishek's wording call.
