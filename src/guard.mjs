@@ -438,8 +438,8 @@ export function checkCommand(command, savedNames = [], shell) {
   const names = new Set(savedNames)
   // Each way is read twice: skipping comments and looking for a read anywhere in a command, then as main read it, with no
   // comments and only each command's own word. A # starts no comment inside `${…}`, `(( ))`, an unquoted here-document line
-  // or PowerShell's `${…}`, so the first reading can miss a read there; the second refuses everything main refused, and
-  // still lets through a comment that only mentions a read (S-57 senior review, round 2).
+  // or PowerShell's `${…}`, so the first reading can miss a read there that main, which read no comments, refused; the
+  // second uses main's rules for both, and a comment that only mentions a read still passes, as on main (S-57 review, round 2).
   /** @param {boolean} powershell */
   const read = (powershell) => readInShell(command, names, 0, powershell, true) || readInShell(command, names, 0, powershell, false)
   const found = (shell !== 'powershell' && read(false)) || (shell !== 'bash' && read(true))
