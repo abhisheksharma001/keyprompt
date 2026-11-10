@@ -203,6 +203,16 @@ test('a read tool name split by a $( ) span, a backtick span or curly quotes is 
   }
 })
 
+test('a stray backtick before a tick span around a $( ) in the name does not hide the name (item 17, review of PR #69)', () => {
+  // The first backtick has no partner, so the others pair up the wrong way round: with backticks read as spans, `$(x)` lands on the
+  // same level as the two halves of the name. The other reading, with backticks as plain characters, puts it a level down.
+  const command = "`\nbash -c '(a) security find-generic-`$(x)`password -s keyprompt -w}(a) "
+  for (const shell of ['powershell', undefined]) {
+    assert.ok(checkCommand(command, SAVED, shell), `read in full (${shell ?? 'both'})`)
+    assert.ok(checkCommand(command, SAVED, shell, 1)?.reason.startsWith(UNREAD_REASON), `the fallback names it too (${shell ?? 'both'})`)
+  }
+})
+
 test('a read tool name split by a $( ) span is found past the depth limit as well (item 5, review of PR #69)', () => {
   const nested = 'echo $('.repeat(5) + 'security find-generic-pass$()word -s keyprompt -w' + ')'.repeat(5)
   const reason = refusal(nested, 'bash')
