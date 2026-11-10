@@ -233,6 +233,32 @@ for (const [tool, list] of [['Bash', FAKE_COMMENT_BASH], ['PowerShell', FAKE_COM
   }
 }
 
+test('nested pwsh -c calls away from the command start are each read once, inside the hook timeout', () => {
+  // Found by the senior review of PR #60, round 2: with no later PowerShell word, a pwsh -c's own stretch and the tail
+  // are the same text, and reading both doubled the work at each nesting level (2.4 s for 1 MB as Bash, before the fix).
+  const code = `
+    const { checkCommand } = await import(${JSON.stringify(new URL('../src/guard.mjs', import.meta.url).href)})
+    const nest = (filler) => {
+      const l3 = 'x pwsh -c ' + filler
+      const l2 = "x pwsh -c '" + l3 + "'"
+      const l1 = "x pwsh -c '" + l2.replace(/'/g, "''") + "'"
+      return 'x pwsh -c "' + l1.replace(/"/g, '\\\\"') + '"'
+    }
+    const results = [250000, 500000].map((n) => {
+      const start = Date.now()
+      const found = checkCommand(nest('z '.repeat(n)), ['OPENAI_API_KEY'])
+      return { ms: Date.now() - start, ok: found === null }
+    })
+    process.stdout.write(JSON.stringify(results))
+  `
+  const child = spawnSync(process.execPath, ['--input-type=module', '-e', code], { encoding: 'utf8', timeout: 8000 })
+  assert.equal(child.status, 0, `the check did not finish within 8 seconds (signal ${child.signal}) ${child.stderr}`)
+  for (const [index, { ms, ok }] of JSON.parse(child.stdout).entries()) {
+    assert.ok(ok, `case ${index}: wrong answer`)
+    assert.ok(ms < 2000, `case ${index}: took ${ms} ms`)
+  }
+})
+
 test('keyprompt guard pre-tool-use denies a B-25 form end to end', () => {
   const home = mkdtempSync(join(tmpdir(), 'keyprompt-b25-'))
   writeFileSync(join(home, 'catalog.json'), JSON.stringify({ MY_SAVED_NAME: { store: 'test', updatedAt: '2026-11-10T00:00:00.000Z' } }))
