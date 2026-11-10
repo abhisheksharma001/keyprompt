@@ -29,12 +29,15 @@ const READ_TOOLS = ['find-generic-password', 'dump-keychain', 'secret-tool', 'ge
 /**
  * The work budget (S-67, B-32 item 17): the most characters all the readings of one command may scan together,
  * `WORK_PER_CHAR` for each character of the command plus `WORK_BASE`, and never more than `WORK_MOST`. Measured
- * on the builder's machine: the guard scans up to 64 characters per input character on the worst shape known
- * (a later word named `pwsh` after each nested call), at 20 to 60 ms per million characters.
+ * on the builder's machine: reading takes 20 to 60 ms per million characters scanned, and 1 MB of the worst
+ * shape known (a later word named `pwsh` after each nested call) scans 64 characters per character read both
+ * ways. The step's 64 per character let that shape take 2 to 4 s; 12 per character, which still covers the
+ * nested shapes the timing tests use (12 per character read both ways), cuts it off in about 0.8 s, and the cap
+ * keeps any command under about 1 s of reading, far inside the hook's 10 seconds.
  */
-const WORK_PER_CHAR = 16
+const WORK_PER_CHAR = 12
 const WORK_BASE = 1000000
-const WORK_MOST = 40000000
+const WORK_MOST = 16000000
 /** Thrown when the budget runs out, to stop reading at once. */
 const OUT_OF_WORK = Symbol('out of work')
 const RUN_INSTEAD =
