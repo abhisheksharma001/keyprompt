@@ -155,6 +155,51 @@ test('an ordinary command is read with the default budget (item 17)', () => {
   assert.equal(checkCommand('echo hello', SAVED), null)
 })
 
+test('a read tool is named through quotes, backslashes, backticks and line breaks inside its name (item 17)', () => {
+  // A budget of 1 character runs out at once, so the answer comes from naming alone.
+  for (const junk of ["'", '"', '\\', '`', '\n', '\r']) {
+    for (const name of ['find-generic-password', 'dump-keychain', 'secret-tool', 'Get-StoredCredential', 'CredRead']) {
+      const command = `x ${name.slice(0, 4)}${junk}${name.slice(4)} y`
+      const reason = checkCommand(command, SAVED, 'bash', 1)?.reason
+      assert.ok(reason?.startsWith(UNREAD_REASON), JSON.stringify(command))
+    }
+  }
+  assert.equal(checkCommand('x find-generic-pass y', SAVED, 'bash', 1), null, 'part of a name is not the name')
+  assert.equal(checkCommand('x password-generic-find y', SAVED, 'bash', 1), null)
+})
+
+test('the work budget is spent at its limit and not before (item 17)', () => {
+  assert.ok(checkCommand(READ, SAVED, 'bash', READ.length)?.reason.startsWith(READS_REASON), 'a limit of exactly the text is enough for the first reading')
+  assert.ok(checkCommand(READ, SAVED, 'bash', READ.length - 1)?.reason.startsWith(UNREAD_REASON), 'one character fewer is not')
+})
+
+test('command substitution nested five deep around a read is refused as unreadable, and four deep is read (item 5)', () => {
+  const deep = (levels) => 'echo $('.repeat(levels) + READ + ')'.repeat(levels)
+  assert.ok(refusal(deep(5), 'bash').startsWith(UNREAD_REASON))
+  assert.ok(refusal(deep(8), undefined).startsWith(UNREAD_REASON))
+  assert.ok(refusal(deep(4), 'bash').startsWith(READS_REASON))
+})
+
+test('a read in a later $( ) of a command is found after an earlier one that holds none (item 5)', () => {
+  assert.ok(refusal(`echo $(true) $(${READ})`, 'bash').startsWith(READS_REASON))
+})
+
+/** Four levels of quoting around a script, the shape the timing tests in b25-guard-plain-forms.test.mjs use. */
+function nest4(filler) {
+  const l3 = 'x pwsh -c ' + filler
+  const l2 = "x pwsh -c '" + l3 + "'"
+  const l1 = "x pwsh -c '" + l2.replace(/'/g, "''") + "'"
+  return 'x pwsh -c "' + l1.replace(/"/g, '\\"') + '"'
+}
+
+test('the default work budget grows with the length of the command, so a long nested read is still found (item 17)', () => {
+  // About 500 KB. Reading down to the read at its end takes about 2 million characters, more than the 1 million base budget.
+  const command = nest4('z '.repeat(250000) + PS_READ)
+  assert.ok(command.length > 500000)
+  const reason = checkCommand(command, SAVED)?.reason
+  assert.ok(reason?.startsWith(READS_REASON), reason?.slice(0, 120))
+})
+
 /** A flat filler and the shape B-32 item 17 describes: every nested `pwsh -c` is followed by another word named pwsh. */
 function nestLater(filler) {
   const l3 = 'x pwsh -c ' + filler + ' pwsh y'

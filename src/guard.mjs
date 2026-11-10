@@ -422,10 +422,11 @@ function readInWords(words, names, depth, comments, limit) {
         // flag, the stretch is the tail, so it is read once for both: reading it twice doubled the work at each nesting level.
         // Reading the tail once assumes a later flag would see the same words the same way. A tail that ends inside a quote or a block
         // comment breaks that: a later `pwsh -c` starts outside it, so what runs after it was never read. Such a tail is refused when
-        // the text names a read tool (S-67, B-32 item 11).
+        // the text names a read tool (S-67, B-32 item 11). The stretch needs no such check: a read it leaves out sits behind a later word
+        // named pwsh, which the tail covers.
         pwshWords ??= nextMatch(words, (w) => SHELLS.has(base(w)) && /^(pwsh|powershell)/.test(base(w)))
         const stop = pwshWords[flag + 1]
-        scripts.push([`powershell ${flag}`, () => words.slice(flag + 1, stop).join(' '), true])
+        scripts.push([`powershell ${flag}`, () => words.slice(flag + 1, stop).join(' ')])
         if (stop === words.length) checked.add('powershell tail')
         else scripts.push(['powershell tail', () => words.slice(flag + 1).join(' '), true])
       }
