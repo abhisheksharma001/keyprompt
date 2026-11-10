@@ -233,6 +233,24 @@ for (const [tool, list] of [['Bash', FAKE_COMMENT_BASH], ['PowerShell', FAKE_COM
   }
 }
 
+// Found by the /code-review of that fix: main's reading checked only the first word of a script it reached, too,
+// so a wrapper inside one (`timeout`, `xargs`, `env -u`, a nested `sh -c`) hid the read again.
+const FAKE_COMMENT_WRAPPED = [
+  `cat > notes.md <<EOF\n# Notes $(timeout 5 ${READ})\nEOF`,
+  `cat > notes.md <<EOF\n# $(xargs ${READ})\nEOF`,
+  `cat > notes.md <<EOF\n# $(env -u X ${READ})\nEOF`,
+  `cat > notes.md <<EOF\n# $(sh -c "timeout 5 ${READ}")\nEOF`,
+  `bash \${x:+ #} -c 'timeout 5 ${READ}'`,
+]
+
+for (const command of FAKE_COMMENT_WRAPPED) {
+  test(`refuses a wrapped read in a script behind a # that starts no comment: ${JSON.stringify(command)}`, () => {
+    for (const name of ['Bash', 'Monitor']) {
+      assert.equal(preToolUse({ tool_name: name, tool_input: { command } }, SAVED)?.hookSpecificOutput.permissionDecision, 'deny', name)
+    }
+  })
+}
+
 test('nested pwsh -c calls away from the command start are each read once, inside the hook timeout', () => {
   // Found by the senior review of PR #60, round 2: with no later PowerShell word, a pwsh -c's own stretch and the tail
   // are the same text, and reading both doubled the work at each nesting level (2.4 s for 1 MB as Bash, before the fix).
