@@ -1150,14 +1150,14 @@ Order and cadence are Abhishek's (D-10, D-13): one PR, then stop. S-38 and S-39 
 ### S-59 — The guard's docs say what it refuses and what it misses (bug B-27)
 
 **PR:** one.
-**Depends on:** S-57 and S-58 merged. **Blocks:** nothing.
+**Depends on:** S-57, S-58 and the B-32 fix merged (D-23: the docs describe the fixed guard). **Blocks:** nothing.
 **Research:** none. **Model:** sonnet.
 **Senior review:** not required — words only, each checked against the merged guard.
 **Confidence:** 0.85.
 **Files:** `SECURITY.md`, `README.md`, `skill/SKILL.md` (if it repeats the sentence), `CHANGELOG.md`, test/b27-guard-docs.test.mjs (new).
 **Locked tests:** every file in `test/` at the base commit.
 **Today:** `SECURITY.md:19` and `README.md:280` say every command that runs a read on a keyprompt item is refused; the limits name only a script file, an encoded command and another tool.
-**Change:** keep "the obvious direct reads"; say that the guard reads a read written out as words in a Bash or PowerShell command; and name in the limits the kinds of command text it does not see: a read whose words come from a variable or a file, text piped or fed into a shell or handed as one string to another command that runs it (`env -S`, `watch`, `ssh`, `git rebase --exec`, `Invoke-Expression`, `cmd /c`; B-27), an encoded command, a script file and another tool. A list of kinds can be checked, where "every form" cannot. The new test pins those kinds, as test/b24-security-limits.test.mjs does for the log.
+**Change:** keep "the obvious direct reads"; say that the guard reads a read written out as words in a Bash or PowerShell command; and name in the limits the kinds of command text it does not see: a read whose words come from a variable or a file, text piped or fed into a shell or handed as one string to another command that runs it (`env -S`, `watch`, `ssh`, `git rebase --exec`, `Invoke-Expression`, `cmd /c`; B-27), an encoded command, a script file and another tool. A list of kinds can be checked, where "every form" cannot. The new test pins those kinds, as test/b24-security-limits.test.mjs does for the log. Also `README.md:285`: since S-58 a `cat <<EOF` block written to a file passes unless it runs a read, so its example of a harmless command the guard can refuse needs another (a `git commit -F - <<'EOF'` that quotes a read, or a `$(cat <<'EOF' …)` given to a command that is not text-only).
 **Acceptance:** WHEN a person reads `SECURITY.md` or the README THEN they SHALL find each of those five kinds named as a limit, and every form listed in B-25 SHALL be refused.
 **Verify:** run each B-25 form, `S=keyprompt; security find-generic-password -s $S -w`, `echo "<read>" | bash` and a base64-encoded PowerShell command through the guard: the B-25 forms are denied, and each of the others matches a named limit; `npm test`.
 **Must not:** change `src/` or `bin/`; edit a locked test.

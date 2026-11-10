@@ -35,7 +35,8 @@ const WRAPPERS = new Set(['sudo', 'doas', 'env', 'command', 'builtin', 'exec', '
  * here: `git bisect run` or `git rebase --exec` runs a command, and a
  * mention inside a quoted commit message or pull request body (`-m "…"`,
  * `--body "…"`) is one word, which the read check never matches. A
- * here-document body is read as commands (B-26, S-58).
+ * here-document body fed to one of these is text too (B-26, S-58; see
+ * splitShell).
  */
 const TEXT_ONLY = new Set(['echo', 'printf', 'cat', 'tee', 'grep', 'egrep', 'fgrep', 'rg', 'write-output', 'write-host'])
 /** Shells whose `-c` argument is a script that runs. */
@@ -261,21 +262,25 @@ export function splitShell(text, powershell = false, comments = true, strict = f
     }
     words = []
   }
-  /** @param {number} start index just after `$(` @returns {number} index after the matching `)` */
-  const subshell = (start) => {
+  /**
+   * @param {number} start index just after `$(`
+   * @param {number} [limit] where the text it can run to ends (a here-document body's end)
+   * @returns {number} index after the matching `)`
+   */
+  const subshell = (start, limit = text.length) => {
     let depth = 1
     let j = start
     /** @type {{ delim: string, quoted: boolean, strip: boolean }[]} */
     let docs = []
-    while (j < text.length && depth > 0) {
+    while (j < limit && depth > 0) {
       if (text[j] === escape) j++
       else if (text[j] === '(') depth++
       else if (text[j] === ')') depth--
       else if (!powershell && text[j] === '<' && text[j + 1] === '<') {
         // A here-document's body can hold any `)` (`item 1)` in a commit message), so it is passed over to its delimiter line.
-        const doc = text[j + 2] === '<' ? null : heredocAt(text, j)
+        const doc = heredocAt(text, j)
         if (doc) docs.push(doc)
-        j = doc ? doc.next - 1 : j + (text[j + 2] === '<' ? 2 : 1)
+        j = doc ? doc.next - 1 : j + 1
       } else if (text[j] === '\n' && docs.length > 0) {
         let next = j + 1
         for (const doc of docs) next = bodyEnd(text, next, doc).next
@@ -295,15 +300,21 @@ export function splitShell(text, powershell = false, comments = true, strict = f
   const substitute = (start) => {
     const at = nested.length
     const end = subshell(start)
-    if (!powershell && !rest && parens === 0 && blocks === 0 && takesText(words) && catText(nested[at])) texts.push(...nested.splice(at))
+    // A command with more than 64 words before it is read as before S-58: checking its start for every `$( )` would not be linear.
+    const top = !powershell && !rest && parens === 0 && blocks === 0 && words.length <= 64
+    if (top && takesText(words) && catText(nested[at])) texts.push(...nested.splice(at))
     return end
   }
-  /** An unquoted text body: its `$( )` and backticks run, so they are nested. @param {number} from @param {number} to */
+  /**
+   * An unquoted text body: its `$( )` and backticks run, so they are nested. Bash expands the body only once it has
+   * read it, so neither runs past the body's end; stopping there also keeps many unclosed ones linear.
+   * @param {number} from @param {number} to
+   */
   const expansions = (from, to) => {
     for (let j = from; j < to; ) {
       if (text[j] === '\\') j += 2
-      else if (text[j] === '$' && text[j + 1] === '(') j = subshell(j + 2)
-      else if (text[j] === '`') j = backtick(j + 1)
+      else if (text[j] === '$' && text[j + 1] === '(') j = subshell(j + 2, to)
+      else if (text[j] === '`') j = backtick(j + 1, to)
       else j++
     }
   }
@@ -319,7 +330,8 @@ export function splitShell(text, powershell = false, comments = true, strict = f
     texts = []
     let next = at
     if (pending.length > 0) {
-      if (!rest && !piped && pending.every((doc) => doc.top && textOnly(doc.words))) {
+      // Each command is checked once, however many here-documents it has.
+      if (!rest && !piped && pending.every((doc) => doc.top) && [...new Set(pending.map((doc) => doc.words))].every(textOnly)) {
         for (const doc of pending) {
           const body = bodyEnd(text, next, doc)
           if (!doc.quoted) expansions(next, body.end)
@@ -330,16 +342,14 @@ export function splitShell(text, powershell = false, comments = true, strict = f
       }
       pending = []
     }
-    // Once a line pipes its output on or opens `(`, every later body is read as commands too (`exec > >(bash)` is such a line).
-    if (piped) rest = true
     piped = false
     lineStart = commands.length
     return next
   }
-  /** @param {number} start index just after the opening backtick @returns {number} */
-  const backtick = (start) => {
+  /** @param {number} start index just after the opening backtick @param {number} [limit] @returns {number} */
+  const backtick = (start, limit = text.length) => {
     const end = text.indexOf('`', start)
-    const stop = end === -1 ? text.length : end
+    const stop = end === -1 || end > limit ? limit : end
     nested.push(text.slice(start, stop))
     return stop + 1
   }
@@ -404,7 +414,8 @@ export function splitShell(text, powershell = false, comments = true, strict = f
       i = substitute(i + 2)
     } else if (c === '`') {
       i = backtick(i + 1)
-    } else if (!powershell && c === '<' && text.startsWith('<<', i) && text[i + 2] !== '<' && !inWord && (braced === -1 || braced > i)) {
+    } else if (!powershell && c === '<' && text[i + 1] === '<' && !inWord && (braced === -1 || braced > i)) {
+      // Only where a word starts: bash starts no here-document inside `a[x<<EOF]=1`. A `<<<` here-string has no WORD, so heredocAt gives null.
       const doc = heredocAt(text, i)
       if (doc) {
         pending.push({ ...doc, words, top: parens === 0 && blocks === 0 })

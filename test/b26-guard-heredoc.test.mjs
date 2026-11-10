@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { test } from 'node:test'
-import { preToolUse } from '../src/guard.mjs'
+import { preToolUse, splitShell } from '../src/guard.mjs'
 
 // B-26 (docs/bugs.md), step S-58: a here-document body that bash leaves as text is not a command.
 // Every input here is a string handed to the guard; none is run.
@@ -44,6 +44,37 @@ const TEXT = [
   `cat > notes.md <<'EOF'\n${BODY}\nEOF`,
   `tee notes.md <<'EOF' >/dev/null\n${BODY}\nEOF`,
   `cat <<EOF\n${READ}\nEOF\necho done`,
+  // Found by mutation testing (StrykerJS 10.1.1): each rule below changes an answer, so each is pinned.
+  `cat << 'EOF'\n${READ}\nEOF`,
+  `cat <<\t'EOF'\n${READ}\nEOF`,
+  `git commit -m "$(cat  <<'EOF'\n${READ}\nEOF\n)"`,
+  `git commit -m "$(cat <<'EOF'\n${READ}\nEOF\n\n)"`,
+  `git commit -m "$(cat <<-'EOF'\n\t${READ}\n\t\tEOF\n)"`,
+  // Without <<- a tab before the delimiter is part of the line, and <<- strips only leading tabs.
+  `cat <<'EOF'\n\tEOF\n${READ}\nEOF`,
+  `cat <<-'EOF'\nEO\tF\n${READ}\nEOF`,
+  // A quoted body joins no lines; in an unquoted one \$( is text, and so is a ( alone.
+  `cat <<'EOF'\nEO\\\nF\n${READ}\nEOF`,
+  `cat <<EOF\nKey: \\$(${READ})\nEOF`,
+  `cat <<EOF\nitem (${READ})\nEOF`,
+  `cat <<'A' <<'B'\nx\nA\n${READ}\nB`,
+  `git tag -a v1 -m "$(cat <<'EOF'\n${READ}\nEOF\n)"`,
+  `git notes add -m "$(cat <<'EOF'\n${READ}\nEOF\n)"`,
+  `gh issue create --title x --body "$(cat <<'EOF'\n${READ}\nEOF\n)"`,
+  `gh release create v1 --notes "$(cat <<'EOF'\n${READ}\nEOF\n)"`,
+  `echo "$(cat <<'EOF'\n${READ}\nEOF\n)"`,
+  // A shell that runs cat only prints the body.
+  `bash -c "cat <<'EOF'\n${READ}\nEOF"`,
+  // || is not a pipe; a group or loop that has closed, or a keyword that is not a command's first word, no longer counts.
+  `cat <<'EOF' || bash\n${READ}\nEOF`,
+  `(true)\ncat <<'EOF'\n${READ}\nEOF`,
+  `echo if while\ncat <<'EOF'\n${READ}\nEOF`,
+  `if true; then echo; fi\ncat <<'EOF'\n${READ}\nEOF`,
+  `for i in 1; do echo; done\ncat <<'EOF'\n${READ}\nEOF`,
+  `case x in x) echo ;; esac\ncat <<'EOF'\n${READ}\nEOF`,
+  `{ echo; }\ncat <<'EOF'\n${READ}\nEOF`,
+  `echo concat(x)\ncat <<'EOF'\n${READ}\nEOF`,
+  '{ echo hi; }',
 ]
 
 for (const command of TEXT) {
@@ -94,7 +125,56 @@ const FED = [
   `cat <<EOF\nEO\\\nF\n${READ}\nEOF`,
   `cat <<'EOF'\nEOF\n${READ}`,
   `cat <<'EOF'\n${READ}\n\tEOF\nEOF\n${READ}`,
+  `cat <<EOF\nEO\\\\\nEOF\n${READ}`,
+  `a[x<<EOF]=1\n${READ}\nEOF]=1`,
+  `cat <<<'x'\n${READ}`,
+  // Found by mutation testing: each rule below keeps a read refused.
+  // A text-only name the command redefines, in each way REDEFINES knows.
+  `cat () { bash; }; cat <<'EOF'\n${READ}\nEOF`,
+  `true;cat(){ bash;}; cat <<'EOF'\n${READ}\nEOF`,
+  `function tee { bash; }; tee <<'EOF'\n${READ}\nEOF`,
+  `alias cat=bash\ncat <<'EOF'\n${READ}\nEOF`,
+  `alias -- 'cat=bash'\ncat <<'EOF'\n${READ}\nEOF`,
+  `hash -p /bin/bash cat; cat <<'EOF'\n${READ}\nEOF`,
+  `functions[cat]=bash; cat <<'EOF'\n${READ}\nEOF`,
+  `aliases[cat]=bash; cat <<'EOF'\n${READ}\nEOF`,
+  // A group or loop piped on after it closes, on a later line.
+  `{\ncat <<'EOF'\n${READ}\nEOF\n} | bash`,
+  `if true; then\ncat <<'EOF'\n${READ}\nEOF\nfi | bash`,
+  `while true; do\ncat <<'EOF'\n${READ}\nEOF\ndone | bash`,
+  `until false; do\ncat <<'EOF'\n${READ}\nEOF\ndone | sh`,
+  `select x in a; do\ncat <<'EOF'\n${READ}\nEOF\ndone | bash`,
+  `case x in x)\ncat <<'EOF'\n${READ}\nEOF\n;; esac | bash`,
+  `(\ncat <<'EOF'\n${READ}\nEOF\n) | bash`,
+  // A shell's script whose output is piped on, there or after its group closes.
+  `bash -c "cat <<'EOF'\n${READ}\nEOF" | sh`,
+  `{\nbash -c "cat <<'EOF'\n${READ}\nEOF"\n} | sh`,
+  `(\nbash -c "cat <<'EOF'\n${READ}\nEOF"\n) | sh`,
+  // Output sent on by exec or a coprocess, with no pipe on the line.
+  `bash < f & exec 1> f\ncat <<'EOF'\n${READ}\nEOF`,
+  `coproc bash\ncat <<'EOF' >&p\n${READ}\nEOF`,
+  // $(cat <<…) taken as text, then piped or grouped.
+  `echo "$(cat <<'EOF'\n${READ}\nEOF\n)" | bash`,
+  `{ echo "$(cat <<'EOF'\n${READ}\nEOF\n)"; } | bash`,
+  // A $( ) script that runs more than cat, or is not cat, is read.
+  `git commit -m "$(${READ}; cat <<'EOF'\nx\nEOF\n)"`,
+  `git commit -m "$(cat <<'EOF'\nx\nEOF\n${READ}\n)"`,
+  `git commit -m "$(cat <<'EOF'; ${READ}\nx\nEOF\n)"`,
+  `git commit -m "$(xcat <<'EOF'\n${READ}\nEOF\n)"`,
+  `eval "$(cat <<'EOF'\n${READ}\n)"`,
+  // Lines read one by one by a loop that runs them: a here-document among them is not one.
+  `while read -r l; do eval "$l"; done <<'X'\ncat <<'Y'\n${READ}\nY\nX`,
+  `cat <<'A' && bash <<'B'\nx\nA\n${READ}\nB`,
+  // Kept as before S-58, on the safe side: an option before the command, and a delimiter the guard does not read.
+  `env -u FOO git commit -m "$(cat <<'EOF'\n${READ}\nEOF\n)"`,
+  `git commit -m "$(cat <<'EOF'\n${READ}\n)"`,
+  `cat <<$X\n${READ}\n$X`,
+  `cat <<'E\nX'\n${READ}\nE\nX`,
 ]
+
+test('splitShell reads here-documents and comments by default', () => {
+  assert.deepEqual(splitShell(`cat <<'EOF' # note\n${READ}\nEOF`).commands, [['cat']])
+})
 
 for (const command of FED) {
   test(`a here-document that runs a read is refused: ${JSON.stringify(command.slice(0, 70))}`, () => {
@@ -113,6 +193,13 @@ test('here-documents are read in linear time, inside the hook timeout', () => {
       ['bash <<E\\n'.repeat(20000) + read, true],
       ["cat <<'E' ".repeat(20000) + '\\n' + 'x\\n'.repeat(20000), false],
       ['echo "' + "$(cat <<'E'\\nx\\nE\\n)".repeat(20000) + '"', false],
+      // Found by the builder's own review: an unclosed $( or backtick in a body once ran to the end of the text, every time,
+      // and the start of a command was worked out again for every $( ).
+      ['cat <<E\\n$(\\nE\\n'.repeat(20000), false],
+      ['cat <<E\\n\`\\nE\\n'.repeat(20000), false],
+      ['sudo '.repeat(10000) + 'echo ' + "\\"$(cat <<'E'\\nx\\nE\\n)\\" ".repeat(10000), false],
+      ['sudo ' + "sudo $(cat <<'E'\\nx\\nE\\n) ".repeat(20000), false],
+      ['sudo '.repeat(20000) + "cat <<'E' ".repeat(20000) + '\\nx\\nE\\n', false],
       // Time only: past the depth cap the answer is B-32's item 5, not this step's.
       ['$('.repeat(5000) + "cat <<'E'\\n" + read + '\\nE\\n' + ')'.repeat(5000), undefined],
     ]
