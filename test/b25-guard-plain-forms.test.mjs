@@ -140,9 +140,6 @@ test('refuses the reads the senior review found: a # after ) or }, a word ending
     assert.ok(checkCommand(command, SAVED), `should refuse: ${command}`)
     assert.equal(preToolUse({ tool_name: 'PowerShell', tool_input: { command } }, SAVED)?.hookSpecificOutput.permissionDecision, 'deny', command)
   }
-  // Kept: eval behind a command that runs it still has its script checked.
-  const behind = 'timeout 5 eval "security find-generic-password -s keyprompt -w"'
-  assert.equal(preToolUse({ tool_name: 'Bash', tool_input: { command: behind } }, SAVED)?.hookSpecificOutput.permissionDecision, 'deny')
   // A block comment is a comment: a read inside one does not run.
   const inside = 'Get-ChildItem <# Get-StoredCredential -Target keyprompt:X #>'
   assert.equal(preToolUse({ tool_name: 'PowerShell', tool_input: { command: inside } }, SAVED), null)

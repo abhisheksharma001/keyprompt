@@ -25,11 +25,14 @@ const RUN_INSTEAD =
 const WRAPPERS = new Set(['sudo', 'doas', 'env', 'command', 'builtin', 'exec', 'time', 'nohup', 'nice', 'rtk', '{', '}', '!', 'if', 'then', 'else', 'elif', 'do', 'while', 'until'])
 /**
  * Commands that only print, search or store text and cannot run another
- * command from their words, so a read they mention is text (S-57). `git` and
- * `gh` are not here: `git bisect run` or `git rebase --exec` runs a command,
- * and a mention inside a quoted commit message or pull request body
- * (`-m "…"`, `--body "…"`) is one word, which the read check never matches.
- * A here-document body is read as commands (B-26, S-58).
+ * command from their options, so a read they mention is text (S-57). Two
+ * limits, both logged in docs/bugs.md (B-27, B-32): a command can define
+ * its own `echo` or `grep` as a function or alias, and zsh's `printf -v` runs
+ * the command substitution inside a name it is given. `git` and `gh` are not
+ * here: `git bisect run` or `git rebase --exec` runs a command, and a
+ * mention inside a quoted commit message or pull request body (`-m "…"`,
+ * `--body "…"`) is one word, which the read check never matches. A
+ * here-document body is read as commands (B-26, S-58).
  */
 const TEXT_ONLY = new Set(['echo', 'printf', 'cat', 'tee', 'grep', 'egrep', 'fgrep', 'rg', 'write-output', 'write-host'])
 /** Shells whose `-c` argument is a script that runs. */
@@ -49,14 +52,18 @@ function base(word) {
  * `;`, `&`, `|`, newlines and parentheses. Text inside `$(...)` or backticks,
  * even within double quotes, comes back as a nested script, because the shell
  * runs it; a single- or double-quoted string otherwise stays one word. A `#`
- * that starts a word comments out the rest of the line, and a line
- * continuation joins two lines.
+ * at the start of the text or after a blank, `;`, `&`, `|` or a newline
+ * comments out the rest of the line; after anything else, such as `)` or `}`,
+ * it can be part of a word (`cat <(true)#`, `a=(x)#`, zsh's `(#i)`,
+ * PowerShell's `${a}#`), so it is read as text. A line continuation joins two
+ * lines.
  *
  * With `powershell`, the text is read the way PowerShell reads it
  * (about_Quoting_Rules, about_Parsing): the backtick is the escape character
  * and `\` is a plain character, a doubled quote inside quotes is a quote,
- * curly quotes are quotes (CharTraits.cs), braces also end a command, and
- * backticks run nothing.
+ * curly quotes are quotes (CharTraits.cs), braces also end a command,
+ * backticks run nothing, and `<#` where a word starts opens a comment that
+ * ends at the first `#>` (about_Comments; tokenizer.cs, ScanBlockComment).
  *
  * @param {string} text
  * @param {boolean} [powershell]
@@ -73,13 +80,10 @@ export function splitShell(text, powershell = false) {
   let words = []
   let word = ''
   let inWord = false
-  // True right after a `$( )` or backticks outside quotes: a `#` glued to them is part of a word, not a comment.
-  let glued = false
   const endWord = () => {
     if (inWord) words.push(word)
     word = ''
     inWord = false
-    glued = false
   }
   const endCommand = () => {
     endWord()
@@ -127,9 +131,12 @@ export function splitShell(text, powershell = false) {
         inWord = true
       }
       i += skip || 2
-    } else if (c === '#' && !inWord && !glued) {
+    } else if (c === '#' && !inWord && (i === 0 || ' \t\n;&|'.includes(text[i - 1]))) {
       const end = text.indexOf('\n', i)
       i = end === -1 ? text.length : end
+    } else if (powershell && c === '<' && text[i + 1] === '#' && !inWord) {
+      const end = text.indexOf('#>', i + 2)
+      i = end === -1 ? text.length : end + 2
     } else if (c === "'") {
       inWord = true
       i++
@@ -162,10 +169,8 @@ export function splitShell(text, powershell = false) {
       i++
     } else if (c === '$' && text[i + 1] === '(') {
       i = subshell(i + 2)
-      glued = true
     } else if (c === '`') {
       i = backtick(i + 1)
-      glued = true
     } else if (separators.includes(c)) {
       endCommand()
       i++
@@ -306,8 +311,9 @@ function readInWords(words, names, depth) {
     const command = base(words[i])
     /** @type {string | null} */
     let found = null
-    if (command === 'eval') {
-      // eval runs every word after it as one script, which settles the rest of the command.
+    if (command === 'eval' && i === start) {
+      // eval, as the command, runs every word after it as one script, which settles the rest of the command.
+      // A word that only ends in `eval` (`X=/bin/eval`, `find -name eval`, an option's value) runs nothing, and joining the words after it would drop their quoting.
       return readInShell(words.slice(i + 1).join(' '), names, depth + 1, false)
     } else if (command === 'security' || command === 'secret-tool') {
       const sub = plain[i + 1]
@@ -326,12 +332,14 @@ function readInWords(words, names, depth) {
       const kind = powershell ? 'powershell' : 'shell'
       flags[kind] ??= nextMatch(words, (w) => (powershell ? /^-c(ommand)?$/i.test(w) : /^-[a-z]{0,3}c[a-z]{0,3}$/.test(w)))
       const flag = flags[kind][i + 1]
-      const key = `${kind} ${flag}`
+      // A PowerShell script is every word after the flag, so each check reads the whole tail. Only the first one away from the command start is made,
+      // because a later tail is a shorter copy of the same words (one check per `pwsh -c`, over 200 of them, took minutes).
+      const key = powershell && i !== start ? 'powershell elsewhere' : `${kind} ${flag}`
       if (flag + 1 < words.length && !checked.has(key)) {
         checked.add(key)
         found = readInShell(powershell ? words.slice(flag + 1).join(' ') : words[flag + 1], names, depth + 1, powershell)
-        // A PowerShell script is every word after the flag, so the words past it are checked.
-        if (powershell) end = Math.min(end, flag + 1)
+        // As the command, pwsh takes every word after the flag as its script, so that check covers the rest. Elsewhere (`find -name pwsh -o -name -c`) it may be no call at all, so the scan goes on.
+        if (powershell && i === start) end = Math.min(end, flag + 1)
       }
     }
     if (found) return found
