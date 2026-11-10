@@ -473,6 +473,9 @@ const ROUND_3 = {
   'a backslash before $, ( and ), under eval': 'eval security find-generic-pa\\$\\(x\\)ssword -w -s keyprompt',
   'a whole span between $ and (, under eval "…"': 'eval "security find-generic-pa$$(true)(x)ssword -w -s keyprompt"',
   'adjacent double quotes between $ and (, under eval "…"': 'eval "secret-to$""(x)ol lookup service keyprompt"',
+  // Round 4 (N2): a backtick span between the `$` and the `(` that itself holds a `$`. Only a `$` that stays remembered until the `(` finds these.
+  'a backtick span, holding a $, between $ and (, under eval "…"': 'eval "secret-$`sec$`(x)tool lookup service keyprompt"',
+  'the same inside a store subcommand, under eval "…"': 'eval "security find-generic-pa$`find$`(x)ssword -w -s keyprompt"',
 }
 
 test('a $( that only an outer reading puts together does not hide the name when the budget runs out (item 17, round 3 of the review of PR #69)', () => {
