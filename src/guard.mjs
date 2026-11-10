@@ -286,11 +286,12 @@ function nextMatch(words, test) {
  * needed (`timeout 5 …`, `xargs …`, `find … -exec …`), unless the command only
  * prints, searches or stores text (S-57).
  *
- * Each kind of read, and each script, is checked once, at its first word: a
- * later one sees only the tail of the same words, read the same way, so it
- * can find nothing new. That keeps the check linear in the command's length,
- * because the hook times out after 10 seconds and Claude Code then runs the
- * command (`src/install-guard.mjs`).
+ * Each kind of read is checked once, at its first word: a later one sees only
+ * the tail of the same words, read the same way, so it can find nothing new.
+ * A shell's script is read once per `-c` word, and a PowerShell tail once (see
+ * below). That keeps the check linear in the command's length, because the
+ * hook times out after 10 seconds and Claude Code then runs the command
+ * (`src/install-guard.mjs`).
  *
  * @param {string[]} words one simple command
  * @param {Set<string>} names
@@ -306,6 +307,8 @@ function readInWords(words, names, depth) {
   const plain = nextMatch(words, (w) => !w.startsWith('-'))
   /** @type {Record<string, number[]>} */
   const flags = {}
+  /** @type {number[] | undefined} */
+  let pwshWords
   let end = words.length
   for (let i = 0; i < end; i++) {
     const command = base(words[i])
@@ -332,14 +335,30 @@ function readInWords(words, names, depth) {
       const kind = powershell ? 'powershell' : 'shell'
       flags[kind] ??= nextMatch(words, (w) => (powershell ? /^-c(ommand)?$/i.test(w) : /^-[a-z]{0,3}c[a-z]{0,3}$/.test(w)))
       const flag = flags[kind][i + 1]
-      // A PowerShell script is every word after the flag, so each check reads the whole tail. Only the first one away from the command start is made,
-      // because a later tail is a shorter copy of the same words (one check per `pwsh -c`, over 200 of them, took minutes).
-      const key = powershell && i !== start ? 'powershell elsewhere' : `${kind} ${flag}`
-      if (flag + 1 < words.length && !checked.has(key)) {
+      /** @type {[string, () => string][]} each script to read, under the key that marks it read; built only when read, so a skipped one costs nothing */
+      const scripts = []
+      if (flag + 1 >= words.length) {
+        // No script follows.
+      } else if (!powershell) {
+        scripts.push([`shell ${flag}`, () => words[flag + 1]])
+      } else if (i === start) {
+        // As the command, pwsh takes every word after the flag as its script, so that check settles the rest.
+        scripts.push([`powershell ${flag}`, () => words.slice(flag + 1).join(' ')])
+        end = Math.min(end, flag + 1)
+      } else {
+        // Elsewhere (`find … -exec pwsh -c …`) it may be no call at all (`find -name pwsh -o -name -c`), and its words can open a quote or a
+        // block comment that hides a real call after it. So the words up to the next PowerShell word are read on their own, once per flag:
+        // those stretches never overlap, which keeps this linear. The whole tail is read once too, for a script that runs past a later
+        // word named pwsh (one whole-tail read per `pwsh -c`, over 200 of them, took minutes).
+        pwshWords ??= nextMatch(words, (w) => SHELLS.has(base(w)) && /^(pwsh|powershell)/.test(base(w)))
+        const stop = pwshWords[flag + 1]
+        scripts.push([`powershell ${flag}`, () => words.slice(flag + 1, stop).join(' ')])
+        scripts.push(['powershell tail', () => words.slice(flag + 1).join(' ')])
+      }
+      for (const [key, script] of scripts) {
+        if (found || checked.has(key)) continue
         checked.add(key)
-        found = readInShell(powershell ? words.slice(flag + 1).join(' ') : words[flag + 1], names, depth + 1, powershell)
-        // As the command, pwsh takes every word after the flag as its script, so that check covers the rest. Elsewhere (`find -name pwsh -o -name -c`) it may be no call at all, so the scan goes on.
-        if (powershell && i === start) end = Math.min(end, flag + 1)
+        found = readInShell(script(), names, depth + 1, powershell)
       }
     }
     if (found) return found
