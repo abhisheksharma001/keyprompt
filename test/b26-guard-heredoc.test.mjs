@@ -84,6 +84,10 @@ const TEXT = [
   `git commit ${'-q '.repeat(61)}-m "$(cat <<'EOF'\n${READ}\nEOF\n)"`,
   'cat <<EOF',
   "cat <<'EOF",
+  `echo "$(cat <<<x\n)"`,
+  `cat <<EOF\n$X ${READ}\nEOF`,
+  `ls | head\ncat <<'EOF'\n${READ}\nEOF`,
+  `echo mycommands[x]=1\ncat <<'EOF'\n${READ}\nEOF`,
 ]
 
 for (const command of TEXT) {
@@ -196,6 +200,12 @@ const FED = [
   `commands[cat]=/bin/sh\ncat <<'EOF'\n${READ}\nEOF`,
   `eval 'ca''t() { bash; }'\ncat <<'EOF'\n${READ}\nEOF`,
   `. ./defs.sh\ncat <<'EOF'\n${READ}\nEOF`,
+  `source ./defs.sh\ncat <<'EOF'\n${READ}\nEOF`,
+  `enable -f ./cat.so cat\ncat <<'EOF'\n${READ}\nEOF`,
+  `autoload cat\ncat <<'EOF'\n${READ}\nEOF`,
+  `trap 'source ./x' DEBUG\ncat <<'EOF'\n${READ}\nEOF`,
+  `repeat 2 do\ncat <<'EOF'\n${READ}\nEOF\ndone | bash`,
+  `echo "$(cat <<'EOF'\n${READ}\nEOF\n)" > >(bash)`,
   // Found by mutation testing: both here-documents on a line must be top-level, a single < is not <<, a $( ) ends
   // where bash ends it, and a ) on the operator's line comes before the body (bash 3.2 ran each read).
   `cat <<'A'; { cat <<'B'\nx\nA\n${READ}\nB\n} | bash`,

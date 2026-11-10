@@ -56,14 +56,16 @@ function base(word) {
 /**
  * Words after which the guard no longer trusts that a here-document body, or
  * `$(cat <<'EOF' …)`, is only text, for the rest of the text (S-58). Each can
- * send later output to a shell or change what a name runs: a group or a loop
- * can be piped on after it closes (`{ … } | bash`), `exec` and `coproc` rewire
- * output, and `eval`, `source`, `alias`, `hash`, `enable`, `trap`, `autoload`
- * and `function` define or redirect commands (`cat() { bash; }` also has a
- * `(`, which counts too). The flag never goes back down, so no later word can
- * make a group look closed (S-58's `/code-review`).
+ * send later output to a shell or change what a name runs: a group, an `if`
+ * or a loop's `do` can be piped on after it closes (`{ … } | bash`), `exec`
+ * and `coproc` rewire output, and `eval`, `source`, `alias`, `hash`,
+ * `enable`, `trap` and `autoload` define or redirect commands. A function
+ * definition, a `case` pattern and a subshell bring a `(`, `)` or `{`, which
+ * count too, and every closing word follows one of these. The flag never goes
+ * back down, so no later word can make a group look closed (S-58's
+ * `/code-review`).
  */
-const UNTRUSTED = new Set(['{', '}', 'if', 'then', 'else', 'elif', 'fi', 'while', 'until', 'for', 'select', 'do', 'done', 'case', 'esac', 'function', 'exec', 'coproc', 'eval', 'source', 'alias', 'hash', 'enable', 'trap', 'autoload'])
+const UNTRUSTED = new Set(['{', 'if', 'do', 'exec', 'coproc', 'eval', 'source', 'alias', 'hash', 'enable', 'trap', 'autoload'])
 /** zsh's tables of functions, aliases and command paths: `functions[cat]=…`, `commands[cat]=/bin/sh`. */
 const ZSH_TABLES = /^(?:functions|aliases|galiases|saliases|builtins|commands)\[/
 
@@ -91,9 +93,8 @@ function heredocAt(text, at) {
     const c = text[k]
     if (c === "'" || c === '"') {
       const close = text.indexOf(c, k + 1)
-      const part = close === -1 ? '' : text.slice(k + 1, close)
-      if (close === -1 || /[\n\\$`]/.test(part)) return null
-      delim += part
+      if (close === -1 || /[\n\\$`]/.test(text.slice(k + 1, close))) return null
+      delim += text.slice(k + 1, close)
       quoted = true
       k = close + 1
     } else if (c === '\\') {
@@ -152,8 +153,8 @@ function bodyEnd(text, from, doc, limit = text.length) {
  * @param {string} script
  */
 function catText(script) {
-  const head = /^[ \t\n]*cat[ \t]+<</.exec(script)
-  const doc = head && heredocAt(script, head[0].length - 2)
+  const head = /^[ \t\n]*cat[ \t]+(?=<<)/.exec(script)
+  const doc = head && heredocAt(script, head.index + head[0].length)
   const line = doc && /^[ \t]*\n/.exec(script.slice(doc.next))
   if (!doc || !line) return false
   const from = doc.next + line[0].length
