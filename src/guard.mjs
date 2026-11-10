@@ -372,11 +372,13 @@ function readInWords(words, names, depth, comments) {
         // Elsewhere (`find … -exec pwsh -c …`) it may be no call at all (`find -name pwsh -o -name -c`), and its words can open a quote or a
         // block comment that hides a real call after it. So the words up to the next PowerShell word are read on their own, once per flag:
         // those stretches never overlap, which keeps this linear. The whole tail is read once too, for a script that runs past a later
-        // word named pwsh (one whole-tail read per `pwsh -c`, over 200 of them, took minutes).
+        // word named pwsh (one whole-tail read per `pwsh -c`, over 200 of them, took minutes). With no PowerShell word after the
+        // flag, the stretch is the tail, so it is read once for both: reading it twice doubled the work at each nesting level.
         pwshWords ??= nextMatch(words, (w) => SHELLS.has(base(w)) && /^(pwsh|powershell)/.test(base(w)))
         const stop = pwshWords[flag + 1]
         scripts.push([`powershell ${flag}`, () => words.slice(flag + 1, stop).join(' ')])
-        scripts.push(['powershell tail', () => words.slice(flag + 1).join(' ')])
+        if (stop === words.length) checked.add('powershell tail')
+        else scripts.push(['powershell tail', () => words.slice(flag + 1).join(' ')])
       }
       for (const [key, script] of scripts) {
         if (found || checked.has(key)) continue
