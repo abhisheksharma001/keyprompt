@@ -21,7 +21,7 @@ const DUMPS = 'keyprompt guard: this command prints every secret in the keychain
 /** The reason when the guard cannot finish reading a command that names a read tool: nested too deep, or more work than the budget (S-67, D-25). */
 const UNREAD =
   "keyprompt guard: this command is too long or too deeply nested for the guard to read, and it names the OS password store's read tool, so it is refused."
-/** The reason when the words after a PowerShell `-c` flag, read as PowerShell, open a quote, a block comment or `$(` and never close it (S-67, B-32 item 11). It says "read as PowerShell" because a quote can be opened only by the guard's second reading of those words (a bash-quoted apostrophe in a later word of a `find` command). */
+/** The reason when the words after a PowerShell `-c` flag, read as PowerShell, open a quote, a block comment or `$(` and never close it (S-67, B-32 item 11). It says "read as PowerShell" because the quote may be opened only by the guard's reading of those words as PowerShell, not by the text as written (an apostrophe inside bash double quotes in a later word of a `find` command). */
 const UNCLOSED =
   "keyprompt guard: read as PowerShell, the words after a `-c` or `-Command` flag in this command open a quote, a block comment or `$(` that never closes, so the guard cannot finish reading them, and the command names the OS password store's read tool, so it is refused."
 /** What a text names when it names a store's read tool, in lower case. Keep in step with `READ_SUBCOMMANDS`, the `get-storedcredential` branch of `readInWords` and the `credread` rule of `readInShell`: a read added there and not here is refused when read, but not past the depth or work limit. */
