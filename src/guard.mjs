@@ -54,15 +54,18 @@ function base(word) {
 }
 
 /**
- * A text-only name that the command text defines as a function or an alias,
- * or points at another program (B-32 item 1). Then no here-document body is
- * read as text, because `cat() { bash; }` makes `cat <<'EOF'` run its body.
+ * Words after which the guard no longer trusts that a here-document body, or
+ * `$(cat <<'EOF' …)`, is only text, for the rest of the text (S-58). Each can
+ * send later output to a shell or change what a name runs: a group or a loop
+ * can be piped on after it closes (`{ … } | bash`), `exec` and `coproc` rewire
+ * output, and `eval`, `source`, `alias`, `hash`, `enable`, `trap`, `autoload`
+ * and `function` define or redirect commands (`cat() { bash; }` also has a
+ * `(`, which counts too). The flag never goes back down, so no later word can
+ * make a group look closed (S-58's `/code-review`).
  */
-const REDEFINES =
-  /(?:^|[\s;&|(){}])(?:echo|printf|cat|tee|grep|egrep|fgrep|rg)[ \t]*\(|\bfunction[ \t]+(?:echo|printf|cat|tee|grep|egrep|fgrep|rg)\b|\balias[ \t]+(?:-\S*[ \t]+)*['"]?(?:echo|printf|cat|tee|grep|egrep|fgrep|rg)=|\bhash[ \t]+-p\b|\b(?:functions|aliases)\[/
-/** Words that open and close a compound command; a here-document inside one may have its output piped on after it closes. */
-const OPENERS = new Set(['{', 'if', 'while', 'until', 'for', 'select', 'case'])
-const CLOSERS = new Set(['}', 'fi', 'done', 'esac'])
+const UNTRUSTED = new Set(['{', '}', 'if', 'then', 'else', 'elif', 'fi', 'while', 'until', 'for', 'select', 'do', 'done', 'case', 'esac', 'function', 'exec', 'coproc', 'eval', 'source', 'alias', 'hash', 'enable', 'trap', 'autoload'])
+/** zsh's tables of functions, aliases and command paths: `functions[cat]=…`, `commands[cat]=/bin/sh`. */
+const ZSH_TABLES = /^(?:functions|aliases|galiases|saliases|builtins|commands)\[/
 
 /**
  * A here-document operator (`<<WORD` or `<<-WORD`) at `at`: its delimiter
@@ -117,15 +120,16 @@ function heredocAt(text, at) {
  * @param {string} text
  * @param {number} from index where the body starts
  * @param {{ delim: string, quoted: boolean, strip: boolean }} doc
- * @returns {{ end: number, next: number }} where the body's text ends, and the index after the delimiter line (both `text.length` when there is none)
+ * @param {number} [limit] where the text it may run to ends (the end of a `$( )` inside a body)
+ * @returns {{ end: number, next: number }} where the body's text ends, and the index after the delimiter line (both `limit` when there is none)
  */
-function bodyEnd(text, from, doc) {
+function bodyEnd(text, from, doc, limit = text.length) {
   let start = from
   let line = ''
   let pos = from
-  while (pos < text.length) {
+  while (pos < limit) {
     const nl = text.indexOf('\n', pos)
-    const stop = nl === -1 ? text.length : nl
+    const stop = nl === -1 || nl > limit ? limit : nl
     let piece = text.slice(pos, stop)
     if (doc.strip) piece = piece.replace(/^\t+/, '')
     pos = stop + 1
@@ -133,11 +137,11 @@ function bodyEnd(text, from, doc) {
       line += piece.slice(0, -1)
       continue
     }
-    if (line + piece === doc.delim) return { end: start, next: Math.min(pos, text.length) }
+    if (line + piece === doc.delim) return { end: start, next: Math.min(pos, limit) }
     line = ''
     start = pos
   }
-  return { end: text.length, next: text.length }
+  return { end: limit, next: limit }
 }
 
 /**
@@ -174,7 +178,7 @@ function takesText(words) {
   if (textOnly(words)) return true
   const start = commandStart(words)
   const subcommands = start < words.length ? MESSAGE_TAKERS[base(words[start])] : undefined
-  return Boolean(subcommands?.includes(words[start + 1]) && !words.slice(0, start).some((w) => w.startsWith('-')))
+  return Boolean(subcommands?.includes(words[start + 1]) && !optionBefore(words, start))
 }
 
 /**
@@ -201,10 +205,9 @@ function takesText(words) {
  * has a body: the lines after the end of its line, up to the delimiter line.
  * The body is text, skipped, only when every here-document on the line feeds
  * a command that only prints or stores text (`cat`, `tee`: TEXT_ONLY), no
- * command on the line pipes its output on or opens `(` (`| bash`, `>(bash)`,
- * `<(…)`), none sits inside a group or loop whose output can be piped on
- * after it closes, the text defines no text-only name (REDEFINES), and the
- * text is not `strict`. An unquoted text body still runs `$( )` and
+ * command on the line pipes its output on (`| bash`), no `(`, `)` or word in
+ * UNTRUSTED came before it anywhere in the text (a group, a loop, `exec`,
+ * `eval`, a function or an alias), and the text is not `strict`. An unquoted text body still runs `$( )` and
  * backticks, which are checked. Otherwise the body is read as commands, as
  * before S-58, and so is every here-document after it in the text. `$( )`
  * and backtick scripts are read `strict`, because their output can be run;
@@ -229,13 +232,11 @@ export function splitShell(text, powershell = false, comments = true, strict = f
   let words = []
   let word = ''
   let inWord = false
-  /** @type {{ delim: string, quoted: boolean, strip: boolean, words: string[], top: boolean }[]} here-documents whose body starts after this line */
+  /** @type {{ delim: string, quoted: boolean, strip: boolean, words: string[] }[]} here-documents whose body starts after this line */
   let pending = []
   /** @type {string[]} `$( )` scripts on this line not read, as text (see takesText) */
   let texts = []
   let piped = false
-  let parens = 0
-  let blocks = 0
   let rest = strict
   /** @type {boolean[]} for each command, whether its output may be run: its own scripts are then read strict */
   const runs = []
@@ -243,12 +244,8 @@ export function splitShell(text, powershell = false, comments = true, strict = f
   const braced = powershell ? 0 : text.indexOf('${')
   const endWord = () => {
     if (inWord) {
-      if (words.length === 0 && !powershell) {
-        if (OPENERS.has(word)) blocks++
-        else if (CLOSERS.has(word)) blocks = Math.max(0, blocks - 1)
-        // `exec > >(bash)` sends every later line's output to a shell, and a coprocess can take it; so is every body after them.
-        else if (word === 'exec' || word === 'coproc') rest = true
-      }
+      // `.` only as a command (`git add .` is common); the rest anywhere, quoted or not, which only errs towards refusing.
+      if (!powershell && (UNTRUSTED.has(word) || ZSH_TABLES.test(word) || (word === '.' && words.length === 0))) rest = true
       words.push(word)
     }
     word = ''
@@ -258,7 +255,7 @@ export function splitShell(text, powershell = false, comments = true, strict = f
     endWord()
     if (words.length > 0) {
       commands.push(words)
-      runs.push(rest || parens > 0 || blocks > 0)
+      runs.push(rest)
     }
     words = []
   }
@@ -283,7 +280,7 @@ export function splitShell(text, powershell = false, comments = true, strict = f
         j = doc ? doc.next - 1 : j + 1
       } else if (text[j] === '\n' && docs.length > 0) {
         let next = j + 1
-        for (const doc of docs) next = bodyEnd(text, next, doc).next
+        for (const doc of docs) next = bodyEnd(text, next, doc, limit).next
         docs = []
         j = next - 1
       }
@@ -301,8 +298,7 @@ export function splitShell(text, powershell = false, comments = true, strict = f
     const at = nested.length
     const end = subshell(start)
     // A command with more than 64 words before it is read as before S-58: checking its start for every `$( )` would not be linear.
-    const top = !powershell && !rest && parens === 0 && blocks === 0 && words.length <= 64
-    if (top && takesText(words) && catText(nested[at])) texts.push(...nested.splice(at))
+    if (!powershell && !rest && words.length <= 64 && takesText(words) && catText(nested[at])) texts.push(...nested.splice(at))
     return end
   }
   /**
@@ -331,7 +327,7 @@ export function splitShell(text, powershell = false, comments = true, strict = f
     let next = at
     if (pending.length > 0) {
       // Each command is checked once, however many here-documents it has.
-      if (!rest && !piped && pending.every((doc) => doc.top) && [...new Set(pending.map((doc) => doc.words))].every(textOnly)) {
+      if (!rest && !piped && [...new Set(pending.map((doc) => doc.words))].every(textOnly)) {
         for (const doc of pending) {
           const body = bodyEnd(text, next, doc)
           if (!doc.quoted) expansions(next, body.end)
@@ -418,7 +414,7 @@ export function splitShell(text, powershell = false, comments = true, strict = f
       // Only where a word starts: bash starts no here-document inside `a[x<<EOF]=1`. A `<<<` here-string has no WORD, so heredocAt gives null.
       const doc = heredocAt(text, i)
       if (doc) {
-        pending.push({ ...doc, words, top: parens === 0 && blocks === 0 })
+        pending.push({ ...doc, words })
         i = doc.next
       } else {
         word += '<<'
@@ -427,8 +423,8 @@ export function splitShell(text, powershell = false, comments = true, strict = f
       }
     } else if (separators.includes(c)) {
       if (c === '(' || (c === '|' && text[i + 1] !== '|' && text[i - 1] !== '|')) piped = true
-      if (c === '(') parens++
-      else if (c === ')') parens = Math.max(0, parens - 1)
+      // A subshell, a process substitution, a function's `()` or a `case` pattern's `)`: see UNTRUSTED.
+      if (!powershell && (c === '(' || c === ')')) rest = true
       endCommand()
       i++
       if (c === '\n') i = endLine(i)
@@ -534,7 +530,18 @@ function commandStart(words, from = 0) {
  */
 function textOnly(words) {
   const start = commandStart(words)
-  return start < words.length && TEXT_ONLY.has(base(words[start])) && !words.slice(0, start).some((w) => w.startsWith('-'))
+  return start < words.length && TEXT_ONLY.has(base(words[start])) && !optionBefore(words, start)
+}
+
+/**
+ * Whether an option comes before the command's first word, where it may have
+ * taken that word as its value (`env -u echo …`).
+ *
+ * @param {string[]} words
+ * @param {number} start
+ */
+function optionBefore(words, start) {
+  return words.slice(0, start).some((w) => w.startsWith('-'))
 }
 
 /** @type {Record<string, string[]>} the subcommands of each store's read tool that read */
@@ -737,8 +744,7 @@ function wordIn(text, word) {
  */
 export function checkCommand(command, savedNames = [], shell) {
   const names = new Set(savedNames)
-  const strict = REDEFINES.test(command)
-  const found = (shell !== 'powershell' && readBoth(command, names, 0, false, strict)) || (shell !== 'bash' && readBoth(command, names, 0, true, strict))
+  const found = (shell !== 'powershell' && readBoth(command, names, 0, false, false)) || (shell !== 'bash' && readBoth(command, names, 0, true, false))
   return found ? { reason: `${found} ${RUN_INSTEAD}` } : null
 }
 

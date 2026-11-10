@@ -65,16 +65,25 @@ const TEXT = [
   `echo "$(cat <<'EOF'\n${READ}\nEOF\n)"`,
   // A shell that runs cat only prints the body.
   `bash -c "cat <<'EOF'\n${READ}\nEOF"`,
-  // || is not a pipe; a group or loop that has closed, or a keyword that is not a command's first word, no longer counts.
+  // || is not a pipe.
   `cat <<'EOF' || bash\n${READ}\nEOF`,
-  `(true)\ncat <<'EOF'\n${READ}\nEOF`,
-  `echo if while\ncat <<'EOF'\n${READ}\nEOF`,
-  `if true; then echo; fi\ncat <<'EOF'\n${READ}\nEOF`,
-  `for i in 1; do echo; done\ncat <<'EOF'\n${READ}\nEOF`,
-  `case x in x) echo ;; esac\ncat <<'EOF'\n${READ}\nEOF`,
-  `{ echo; }\ncat <<'EOF'\n${READ}\nEOF`,
-  `echo concat(x)\ncat <<'EOF'\n${READ}\nEOF`,
   '{ echo hi; }',
+  // `.` counts only as a command, so `git add .` before a commit message changes nothing.
+  `git add . && git commit -m "$(cat <<'EOF'\n${READ}\nEOF\n)"`,
+  `ls . && cat <<'EOF'\n${READ}\nEOF`,
+  // A ${ after the here-document, as in its body, does not stop it being read.
+  `cat <<'EOF'\n\${HOME}\n${READ}\nEOF`,
+  // Found by mutation testing: an unquoted body's text before a $( is not a script, a one-letter delimiter
+  // holds its body's ), and a joined line with a \\ inside it still joins.
+  `cat <<EOF\nx ${READ}\nEOF`,
+  `cat <<EOF\n$(true) ${READ}\nEOF`,
+  `git commit -m "$(cat <<F\n${READ} 1)\nF\n)"`,
+  `cat <<EOF\nx\\\\y\\\nEOF\n${READ}\nEOF`,
+  `cat <<'A'\nx\nA\ncat <<'B'\n${READ}\nB`,
+  `sudo git commit -m "$(cat <<'EOF'\n${READ}\nEOF\n)"`,
+  `git commit ${'-q '.repeat(61)}-m "$(cat <<'EOF'\n${READ}\nEOF\n)"`,
+  'cat <<EOF',
+  "cat <<'EOF",
 ]
 
 for (const command of TEXT) {
@@ -165,7 +174,45 @@ const FED = [
   // Lines read one by one by a loop that runs them: a here-document among them is not one.
   `while read -r l; do eval "$l"; done <<'X'\ncat <<'Y'\n${READ}\nY\nX`,
   `cat <<'A' && bash <<'B'\nx\nA\n${READ}\nB`,
+  // After a group, a loop, a ( or ) or one of those words anywhere before, every later body is read as commands:
+  // the flag never goes down, so no later word can make a group look closed (S-58's /code-review).
+  `(true)\ncat <<'EOF'\n${READ}\nEOF`,
+  `echo if while\ncat <<'EOF'\n${READ}\nEOF`,
+  `if true; then echo; fi\ncat <<'EOF'\n${READ}\nEOF`,
+  `for i in 1; do\ncat <<'EOF'\n${READ}\nEOF\ndone | bash`,
+  `case x in x) echo ;; esac\ncat <<'EOF'\n${READ}\nEOF`,
+  `{ echo; }\ncat <<'EOF'\n${READ}\nEOF`,
+  `echo concat(x)\ncat <<'EOF'\n${READ}\nEOF`,
+  // Each bypass S-58's /code-review found in the counters it replaced (bash 3.2 ran each).
+  `time { cat <<'EOF'\n${READ}\nEOF\n} | bash`,
+  `! { cat <<'EOF'\n${READ}\nEOF\n} | bash`,
+  `(\ncase y in y) ;; esac\ncat <<'EOF'\n${READ}\nEOF\n) | bash`,
+  `{\n'}'\ncat <<'EOF'\n${READ}\nEOF\n} | bash`,
+  `{ exec > >(bash); }\ncat <<'EOF'\n${READ}\nEOF`,
+  `command exec > >(bash)\ncat <<'EOF'\n${READ}\nEOF`,
+  `if true; then exec > >(bash); fi\ncat <<'EOF'\n${READ}\nEOF`,
+  `git() { eval "$3"; }\ngit commit -m "$(cat <<'EOF'\n${READ}\nEOF\n)"`,
+  `hash cat=/bin/sh\ncat <<'EOF'\n${READ}\nEOF`,
+  `commands[cat]=/bin/sh\ncat <<'EOF'\n${READ}\nEOF`,
+  `eval 'ca''t() { bash; }'\ncat <<'EOF'\n${READ}\nEOF`,
+  `. ./defs.sh\ncat <<'EOF'\n${READ}\nEOF`,
+  // Found by mutation testing: both here-documents on a line must be top-level, a single < is not <<, a $( ) ends
+  // where bash ends it, and a ) on the operator's line comes before the body (bash 3.2 ran each read).
+  `cat <<'A'; { cat <<'B'\nx\nA\n${READ}\nB\n} | bash`,
+  `cat < f\n${READ}\nf`,
+  `echo "$(cat < f\n)"; ${READ}; echo "x"`,
+  `echo "$(cat <<'EOF' )"\n${READ}\nEOF`,
+  `(\ngit commit -m "$(cat <<'EOF'\n${READ}\nEOF\n)"\n) | sh`,
+  `{\ngit commit -m "$(cat <<'EOF'\n${READ}\nEOF\n)"\n} | sh`,
+  `env -u git commit -m "$(cat <<'EOF'\n${READ}\nEOF\n)"`,
+  `git commit ${'-q '.repeat(62)}-m "$(cat <<'EOF'\n${READ}\nEOF\n)"`,
+  `eval ${READ}`,
+  `eval 'security \\\nfind-generic-password -s keyprompt -w'`,
+  `# don't\n$(timeout 5 ${READ})`,
   // Kept as before S-58, on the safe side: an option before the command, and a delimiter the guard does not read.
+  `cat <<\`x\`\n${READ}\n\`x\``,
+  `cat <<\\\nEOF\n${READ}\nEOF`,
+  `git commit -m "$(cat <<'EOF';true\n${READ}\nEOF\n)"`,
   `env -u FOO git commit -m "$(cat <<'EOF'\n${READ}\nEOF\n)"`,
   `git commit -m "$(cat <<'EOF'\n${READ}\n)"`,
   `cat <<$X\n${READ}\n$X`,
@@ -200,6 +247,8 @@ test('here-documents are read in linear time, inside the hook timeout', () => {
       ['sudo '.repeat(10000) + 'echo ' + "\\"$(cat <<'E'\\nx\\nE\\n)\\" ".repeat(10000), false],
       ['sudo ' + "sudo $(cat <<'E'\\nx\\nE\\n) ".repeat(20000), false],
       ['sudo '.repeat(20000) + "cat <<'E' ".repeat(20000) + '\\nx\\nE\\n', false],
+      // Found by S-58's /code-review: a here-document inside a $( ) inside a body once took in the rest of the text.
+      ['cat <<EOF\\n$(<<x\\nEOF\\n'.repeat(12000) + read, true],
       // Time only: past the depth cap the answer is B-32's item 5, not this step's.
       ['$('.repeat(5000) + "cat <<'E'\\n" + read + '\\nE\\n' + ')'.repeat(5000), undefined],
     ]
