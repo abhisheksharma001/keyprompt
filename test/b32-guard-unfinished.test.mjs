@@ -464,6 +464,247 @@ test('20,000 seeded split reads with 1 to 5 odd tokens in the middle: whatever t
   assert.ok(found > 500, `only ${found} of the generated commands hold a read the guard finds, so the property says little`)
 })
 
+// --- Round 3 of the senior review: a `$(` that only an outer reading puts together ------------------------------------------
+
+// An outer reading (eval, a shell's -c) takes out what stands between the `$` and the `(`: adjacent quotes, a backslash, a whole span.
+// The inner reading then sees `$(x)` and takes it out of the tool's name. Main refuses each of these at any length.
+const ROUND_3 = {
+  "adjacent single quotes between $ and (, under bash -c '…'": `bash -c 'security find-generic-pa$''(x)ssword -w -s keyprompt'`,
+  'a backslash before $, ( and ), under eval': 'eval security find-generic-pa\\$\\(x\\)ssword -w -s keyprompt',
+  'a whole span between $ and (, under eval "…"': 'eval "security find-generic-pa$$(true)(x)ssword -w -s keyprompt"',
+  'adjacent double quotes between $ and (, under eval "…"': 'eval "secret-to$""(x)ol lookup service keyprompt"',
+}
+
+test('a $( that only an outer reading puts together does not hide the name when the budget runs out (item 17, round 3 of the review of PR #69)', () => {
+  for (const [what, command] of Object.entries(ROUND_3)) {
+    assert.ok(refusal(command, 'bash').startsWith(READS_REASON), `read in full: ${what}`)
+    for (const shell of ['bash', 'powershell', undefined]) {
+      const reason = checkCommand(command, SAVED, shell, 1)?.reason
+      assert.ok(reason?.startsWith(UNREAD_REASON), `${what} (${shell ?? 'both'}): ${reason?.slice(0, 80)}`)
+    }
+  }
+})
+
+test('the same four, behind about 100 KB that runs the default budget out, are denied through the hook (item 17, round 3)', () => {
+  const pad = nestLater('z '.repeat(50000))
+  assert.ok(pad.length > 100000)
+  for (const [what, command] of Object.entries(ROUND_3)) {
+    const out = preToolUse({ tool_name: 'Bash', tool_input: { command: `${pad}; ${command}` } }, SAVED)
+    assert.equal(out?.hookSpecificOutput.permissionDecision, 'deny', what)
+    assert.ok(out.hookSpecificOutput.permissionDecisionReason.startsWith(UNREAD_REASON), what)
+  }
+})
+
+// --- The rule of the name check, written out the slow way ----------------------------------------------------------------------
+
+/**
+ * Whether `out` can be what is left of `text` when, between two characters of `out`, only whole pieces are left out: a dropped
+ * character (backslash, quote, CR, LF, backtick, curly quote); `$` … `(` … `)` or backtick; backtick … backtick or `)`.
+ * A blank in `out` stands for anything (a join puts blanks in, and a quoted blank is kept). This is the rule `mentionsRead`
+ * in src/guard.mjs states, with sets of states and no bit tricks.
+ *
+ * @param {string} text
+ * @param {string} out
+ */
+function madeFrom(text, out) {
+  const chars = []
+  const free = []
+  let gapFree = true
+  for (const ch of out) {
+    if (ch === ' ') gapFree = true
+    else {
+      chars.push(ch)
+      free.push(gapFree)
+      gapFree = false
+    }
+  }
+  const n = chars.length
+  if (n === 0) return true
+  let plain = new Array(n + 1).fill(false)
+  const anywhere = new Array(n + 1).fill(false)
+  const dollar = new Array(n + 1).fill(false)
+  const span = new Array(n + 1).fill(false)
+  anywhere[0] = true
+  for (const c of text) {
+    const code = c.charCodeAt(0)
+    const tick = c === '`'
+    const dropped = tick || c === '\\' || c === "'" || c === '"' || c === '\r' || c === '\n' || (code >= 0x2018 && code <= 0x201e)
+    const next = new Array(n + 1).fill(false)
+    for (let k = 0; k <= n; k++) {
+      if (k < n && (plain[k] || anywhere[k]) && chars[k] === c) next[k + 1] = true
+      if (dropped && plain[k]) next[k] = true
+      if ((c === ')' || tick) && span[k]) next[k] = true
+    }
+    for (let k = 0; k <= n; k++) {
+      if (tick && plain[k]) span[k] = true
+      if (c === '$' && plain[k]) dollar[k] = true
+      if (c === '(' && dollar[k]) span[k] = true
+    }
+    plain = next
+    if (plain[n]) return true
+    for (let k = 1; k < n; k++) if (plain[k] && free[k]) anywhere[k] = true
+  }
+  return false
+}
+const TOOL_NAMES = ['find-generic-password', 'dump-keychain', 'secret-tool', 'get-storedcredential', 'credread']
+
+test('the parser leaves out of a word only what the name check allows between two letters: every text of up to 4 special characters, every two letters with up to 4 between them, and 20,000 longer texts (the rule, half 1)', () => {
+  // The name check is sound because of one fact about splitShell: a command it returns is the text with whole pieces left out, and
+  // a nested script is a piece of the text. This checks that fact on splitShell itself, read all four ways. A parser that learns
+  // to take something new out of a word (say `${x}`) fails here until the name check in src/guard.mjs allows it too.
+  const ALPHABET = ['a', ' ', '\n', '\r', '\\', "'", '"', '`', '$', '(', ')', '#', '<', '>', '“', ';', '{', '\t', '’']
+  const LETTERS = 'abcdefghijklmnopqrstuvwxyz'
+  const curly = (text) => text.replace(/[‘’‚‛]/g, "'").replace(/[“”„]/g, '"')
+  let readings = 0
+  const check = (raw) => {
+    // Every letter is a different one, so a letter in a word can only have come from its own place in the text.
+    let n = 0
+    const text = raw.replace(/a/g, () => LETTERS[n++ % 26])
+    for (const powershell of [false, true]) {
+      for (const comments of [true, false]) {
+        const { commands, nested } = splitShell(text, powershell, comments)
+        const from = powershell ? curly(text) : text
+        readings++
+        for (const words of commands) {
+          if (!madeFrom(from, words.join(' '))) assert.fail(`not the text with pieces left out: ${JSON.stringify({ text, powershell, comments, words })}`)
+        }
+        for (const script of nested) if (!from.includes(script)) assert.fail(`not a piece of the text: ${JSON.stringify({ text, powershell, comments, script })}`)
+      }
+    }
+  }
+  const SYMBOLS = ALPHABET.slice(0, 15)
+  /** Every text of up to `left` more symbols, each put through `shape`. */
+  const all = (text, left, shape) => {
+    check(shape(text))
+    if (left > 0) for (const symbol of SYMBOLS) all(text + symbol, left - 1, shape)
+  }
+  all('', 4, (text) => text)
+  // What matters is what stands between two letters, so: two letters with up to 4 symbols between them, and the same with up to
+  // 3 between them after one symbol that may have opened a quote or a span.
+  all('', 4, (text) => `a${text}a`)
+  for (const symbol of SYMBOLS) all('', 3, (text) => `${symbol}a${text}a`)
+  const rand = seeded(20261113)
+  for (let k = 0; k < 20000; k++) check(Array.from({ length: between(rand, 5, 24) }, () => (rand() < 0.25 ? 'a' : pick(rand, ALPHABET))).join(''))
+  assert.ok(readings > 700000, `${readings} readings`)
+})
+
+test('the name check answers exactly as its rule written out the slow way, on 30,000 seeded texts (the rule, half 2)', () => {
+  const TOKENS = ['$', '(', ')', '`', '\\', '"', "'", '\n', '\r', ' ', 'x', '‘', '”', '$(', '$()', ';', '#', '{', 'K', 'K', 'İ']
+  const rand = seeded(20261114)
+  let yes = 0
+  for (let n = 0; n < 30000; n++) {
+    const name = pick(rand, ['find-generic-password', 'dump-keychain', 'secret-tool', 'Get-StoredCredential', 'CredRead'])
+    let text = pick(rand, ['', 'x', '$', '`', '$('])
+    for (let i = 0; i < name.length; i++) {
+      for (let k = rand() < 0.15 ? between(rand, 1, 3) : 0; k > 0; k--) text += pick(rand, TOKENS)
+      if (rand() < 0.99) text += name[i]
+    }
+    text += pick(rand, ['', ')', ' y'])
+    const rule = TOOL_NAMES.some((tool) => madeFrom(text.toLowerCase(), tool))
+    // A budget of 1 character runs out at once, so the answer is the name check's.
+    assert.equal(checkCommand(text, SAVED, 'bash', 1) !== null, rule, JSON.stringify(text))
+    if (rule) yes++
+  }
+  assert.ok(yes > 3000 && yes < 27000, `${yes} of 30,000 named a tool, so both answers were tested`)
+})
+
+test('9,000 seeded reads, obfuscated and then quoted again for 0 to 3 outer shells: whatever the guard finds a read in, the fallback names it too (property, round 3)', () => {
+  // The class the two generators above could not reach: the split name is encoded again for each outer shell (eval, bash -c, sh -lc,
+  // pwsh -c, find -exec, $( )), with quotes or backslashes, and sometimes a pair of quotes, a span or a backslash is dropped in at a
+  // random place (`$''(`, `$$(true)(`).
+  const READS = [
+    ['security ', 'find-generic-password', ' -w -s keyprompt'],
+    ['security ', 'dump-keychain', ' -d'],
+    ['', 'secret-tool', ' lookup service keyprompt'],
+    ['', 'Get-StoredCredential', ' -Target keyprompt:X'],
+    ['Add-Type x; [Cred]::', 'CredRead', '(1)'],
+  ]
+  const JUNK = ['$()', '$(true)', '$(x)', '`true`', '``', "''", '""', '\\', '‘’', '“”', '$(echo (x))', '$(a)$(b)', '$((1))', '`$(x)`', '$(\\))', '$(`)', '(x)', '$', '$x', '"$(x)"', "'$(x)'", '$""(x)', "$''(x)", '$$(true)(x)', '\\\n', '`\n']
+  const sq = (s) => `'${s.replace(/'/g, `'\\''`)}'`
+  const dq = (s) => `"${s.replace(/[\\"$`]/g, '\\$&')}"`
+  const dqWeak = (s) => `"${s.replace(/"/g, '\\"')}"` // leaves `$( )` and backticks for this level to take out
+  const bs = (s) => s.replace(/[^A-Za-z0-9 \n-]/g, '\\$&')
+  const psq = (s) => `'${s.replace(/'/g, "''")}'`
+  const pdq = (s) => `"${s.replace(/[`$]/g, '`$&').replace(/"/g, '""')}"`
+  const WRAPS = [
+    (s) => `eval ${s}`,
+    (s) => `eval ${bs(s)}`,
+    (s) => `eval ${sq(s)}`,
+    (s) => `eval ${dq(s)}`,
+    (s) => `eval ${dqWeak(s)}`,
+    (s) => `bash -c ${sq(s)}`,
+    (s) => `bash -c ${dq(s)}`,
+    (s) => `bash -c ${dqWeak(s)}`,
+    (s) => `sh -lc ${sq(s)}`,
+    (s) => `sh -lc ${dq(s)}`,
+    (s) => `pwsh -c ${psq(s)}`,
+    (s) => `pwsh -c ${pdq(s)}`,
+    (s) => `pwsh -c ${s}`,
+    (s) => `powershell -Command ${sq(s)}`,
+    (s) => `find . -exec bash -c ${sq(s)} \\;`,
+    (s) => `find . -exec sh -c ${dq(s)} \\;`,
+    (s) => `echo $(${s})`,
+    (s) => `$(${s})`,
+    (s) => `x \`${s}\``,
+    (s) => `echo "$(${s})"`,
+  ]
+  const DROPS = ["''", '""', '\\', '$(true)', '`x`', '‘’', '$', '(', ')', '`', "'", '"']
+  const rand = seeded(20261115)
+  const dropIn = (s) => {
+    const at = between(rand, 0, s.length)
+    return s.slice(0, at) + pick(rand, DROPS) + s.slice(at)
+  }
+  let found = 0
+  let nested = 0
+  for (let n = 0; n < 9000; n++) {
+    const [before, name, after] = pick(rand, READS)
+    const cuts = [between(rand, 1, name.length - 1)]
+    if (rand() < 0.4) cuts.push(between(rand, 1, name.length - 1))
+    cuts.sort((a, b) => a - b)
+    let command = before
+    let last = 0
+    for (const cut of cuts) {
+      command += name.slice(last, cut) + (rand() < 0.85 ? pick(rand, JUNK) : '')
+      last = cut
+    }
+    command += name.slice(last) + after
+    const levels = between(rand, 0, 3)
+    for (let level = levels; level > 0; level--) {
+      command = pick(rand, WRAPS)(command)
+      if (rand() < 0.25) command = dropIn(command)
+    }
+    for (let k = rand() < 0.3 ? between(rand, 1, 2) : 0; k > 0; k--) command = dropIn(command)
+    for (const shell of ['bash', 'powershell', undefined]) {
+      const reason = checkCommand(command, SAVED, shell)?.reason
+      if (!reason || reason.startsWith(UNREAD_REASON) || reason.startsWith(UNCLOSED_REASON)) continue
+      found++
+      if (levels >= 2) nested++
+      assert.ok(checkCommand(command, SAVED, shell, 1), `read in full, but the fallback lets it through (${shell ?? 'both'}): ${JSON.stringify(command)}`)
+    }
+  }
+  assert.ok(found > 5000, `only ${found} of the generated commands hold a read the guard finds, so the property says little`)
+  assert.ok(nested > 1500, `only ${nested} of them sit under two or more outer shells`)
+})
+
+test('what the wider name check costs: a $ … ( … ) between the halves of a name is refused past the budget, a blank next to a half is not (item 17, round 3)', () => {
+  // Refused, though no shell would put these together: the price of covering `$''(` and `$$(true)(`. Only past the budget or the depth limit.
+  for (const command of ['echo secret-$x (y)tool', 'echo find-generic-pass$HOME/a (b)word']) {
+    assert.ok(checkCommand(command, SAVED, 'bash', 1)?.reason.startsWith(UNREAD_REASON), command)
+    assert.equal(checkCommand(command, SAVED, 'bash'), null, `read in full, it is allowed: ${command}`)
+  }
+  for (const command of [
+    'echo secret- $x (y) tool',
+    'echo "the secret-" $(date) "(tool)"',
+    'echo find-generic-pass $x (y)word',
+    'echo find-generic-pass$x (y) word',
+    'echo cred$x (read)',
+    'case $tool in secret-) tool=1;; esac',
+    'echo "a secret - tool (and $more)"',
+  ]) {
+    assert.equal(checkCommand(command, SAVED, 'bash', 1), null, command)
+  }
+})
+
 // --- The property: no long nested shape that names a read comes back as "no read" -----------------------------
 
 /** A small seeded generator (mulberry32), so a failure can be replayed from its seed. */
