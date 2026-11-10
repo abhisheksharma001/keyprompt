@@ -278,10 +278,11 @@ test('a find command whose later word has an apostrophe in double quotes is refu
   }
 })
 
-test('the unclosed-text sentence says what the guard did and does not claim more (invariant 9)', () => {
-  assert.ok(UNCLOSED_REASON.startsWith('keyprompt guard: read as PowerShell, the words after a `-c` or `-Command` flag'))
-  assert.ok(!/too long|too deeply nested/.test(UNCLOSED_REASON), 'it is not the sentence for depth or length')
-  assert.ok(!/text after a PowerShell `-c` or `-Command` flag that opens/.test(UNCLOSED_REASON), 'it does not claim that the text after the flag, as written, opens the quote')
+test('the unclosed-text sentence the guard gives says what it did and does not claim more (invariant 9)', () => {
+  const reason = refusal(ITEM_11['a fake call that opens <#'], 'bash')
+  assert.ok(reason.startsWith('keyprompt guard: read as PowerShell, the words after a `-c` or `-Command` flag'), reason.slice(0, 100))
+  assert.ok(!/too long|too deeply nested/.test(reason), 'it is not the sentence for depth or length')
+  assert.ok(!/text after a PowerShell `-c` or `-Command` flag that opens/.test(reason), 'it does not claim that the text after the flag, as written, opens the quote')
 })
 
 test('the work budget is spent at its limit and not before (item 17)', () => {
