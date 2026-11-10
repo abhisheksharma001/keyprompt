@@ -145,6 +145,25 @@ test('refuses the reads the senior review found: a # after ) or }, a word ending
   assert.equal(preToolUse({ tool_name: 'PowerShell', tool_input: { command: inside } }, SAVED), null)
 })
 
+// Found by the second /code-review of PR #60: a fake pwsh -c whose words open a quote or a block comment
+// hid a real one after it, because only the first pwsh -c away from the command start was read.
+const FAKE_THEN_REAL_PWSH = [
+  `find . -maxdepth 0 -name pwsh -o -name -c -o -name "'" -o -exec pwsh -c "Get-StoredCredential -Target keyprompt:X" \\;`,
+  `xargs -a /dev/null pwsh -c "<#" -o pwsh -c "Get-StoredCredential -Target keyprompt:X"`,
+  `xargs -a /dev/null pwsh -c "'" -o pwsh -c "Get-StoredCredential -Target keyprompt:X"`,
+  `find . -exec pwsh -c "<#" \\; -exec pwsh -c "Get-StoredCredential -Target keyprompt:X" \\;`,
+]
+
+test('refuses a real pwsh -c behind a fake one whose words open a quote or a comment (G1)', () => {
+  for (const command of FAKE_THEN_REAL_PWSH) {
+    assert.ok(checkCommand(command, SAVED), `should refuse: ${command}`)
+    assert.equal(preToolUse({ tool_name: 'Bash', tool_input: { command } }, SAVED)?.hookSpecificOutput.permissionDecision, 'deny', command)
+  }
+  // Kept: a script that runs past a later word named pwsh is still read whole.
+  const past = `find . -exec pwsh -c Write-Output pwsh '; Get-StoredCredential -Target keyprompt:X' \\;`
+  assert.equal(preToolUse({ tool_name: 'Bash', tool_input: { command: past } }, SAVED)?.hookSpecificOutput.permissionDecision, 'deny')
+})
+
 test('a long command is checked well inside the hook timeout, so it cannot time the guard out', () => {
   // The hook times out after 10 seconds (src/install-guard.mjs) and Claude Code then lets the command run.
   // Run in a child process, so a slow check is killed and fails this test instead of hanging the suite.
