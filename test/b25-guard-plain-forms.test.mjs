@@ -105,6 +105,49 @@ test('a Bash command is read with Bash quoting, and a PowerShell command with Po
   assert.equal(preToolUse({ tool_name: 'PowerShell', tool_input: { command: backticks } }, SAVED), null)
 })
 
+// Found by the senior review of PR #60: reads that main refused and the first version of this fix let through,
+// and PowerShell block comments, which hid the code after them.
+const REVIEW_BASH_READS = [
+  // A # straight after ) or } is still part of a word, in bash and in zsh.
+  'cat <(true)# ; security find-generic-password -s keyprompt -w',
+  'tee >(cat)# ; security find-generic-password -s keyprompt -w',
+  'diff <(true) <(true)# ; security find-generic-password -s keyprompt -w',
+  'a=(x)# ; security find-generic-password -s keyprompt -w',
+  'ls (#i)README ; security find-generic-password -s keyprompt -w',
+  // A word that only ends in eval or pwsh, or is an option's value, is not the command, so it ends nothing.
+  `X=/bin/eval Y="'" security find-generic-password -s keyprompt -w`,
+  'X=/bin/eval Y="a #" security find-generic-password -s keyprompt -w',
+  'env X=/x/eval Y="a #" security find-generic-password -s keyprompt -w',
+  `sudo -u eval Y="'" security find-generic-password -s keyprompt -w`,
+  `find . -maxdepth 0 -name eval -o -name "'" -o -exec security find-generic-password -s keyprompt -w \\;`,
+  `find . -maxdepth 0 -name pwsh -o -name -c -o -name "'" -o -exec security find-generic-password -s keyprompt -w \\;`,
+]
+
+const REVIEW_POWERSHELL_READS = [
+  // `${a}#` is one argument (PowerShell's tokenizer.cs), so the ; still ends the command.
+  'Write-Output ${a}# ; Get-StoredCredential -Target keyprompt:X',
+  // Code after a <# … #> block comment runs (about_Comments).
+  '<# x #> Get-StoredCredential -Target keyprompt:X',
+  '<#\n#> Get-StoredCredential -Target keyprompt:X',
+]
+
+test('refuses the reads the senior review found: a # after ) or }, a word ending in eval, a block comment (G1)', () => {
+  for (const command of REVIEW_BASH_READS) {
+    assert.ok(checkCommand(command, SAVED), `should refuse: ${command}`)
+    assert.equal(preToolUse({ tool_name: 'Bash', tool_input: { command } }, SAVED)?.hookSpecificOutput.permissionDecision, 'deny', command)
+  }
+  for (const command of REVIEW_POWERSHELL_READS) {
+    assert.ok(checkCommand(command, SAVED), `should refuse: ${command}`)
+    assert.equal(preToolUse({ tool_name: 'PowerShell', tool_input: { command } }, SAVED)?.hookSpecificOutput.permissionDecision, 'deny', command)
+  }
+  // Kept: eval behind a command that runs it still has its script checked.
+  const behind = 'timeout 5 eval "security find-generic-password -s keyprompt -w"'
+  assert.equal(preToolUse({ tool_name: 'Bash', tool_input: { command: behind } }, SAVED)?.hookSpecificOutput.permissionDecision, 'deny')
+  // A block comment is a comment: a read inside one does not run.
+  const inside = 'Get-ChildItem <# Get-StoredCredential -Target keyprompt:X #>'
+  assert.equal(preToolUse({ tool_name: 'PowerShell', tool_input: { command: inside } }, SAVED), null)
+})
+
 test('a long command is checked well inside the hook timeout, so it cannot time the guard out', () => {
   // The hook times out after 10 seconds (src/install-guard.mjs) and Claude Code then lets the command run.
   // Run in a child process, so a slow check is killed and fails this test instead of hanging the suite.
