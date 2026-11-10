@@ -258,6 +258,21 @@ test('a name that is only near a span, or a span that holds only part of it, is 
   }
 })
 
+test('only the curly quotes U+2018 to U+201E count as left out of a name: the characters on both sides of that range, and an accented letter, break it (item 17, Stryker on the name check)', () => {
+  // U+2017 and U+201F are the neighbours of the range, U+00E9 is below it and U+2026 above it. The parser does not leave them out
+  // of a word, so a name split by one of them is not the tool, in full reading or in the fallback.
+  for (const gap of ['‗', '‟', 'é', '…']) {
+    for (const command of [`echo find-generic-pass${gap}word`, `echo secret${gap}-tool`, `echo dump${gap}-keychain`]) {
+      assert.equal(checkCommand(command, SAVED, 'bash', 1), null, JSON.stringify(command))
+      assert.equal(checkCommand(command, SAVED, 'bash'), null, `read in full: ${JSON.stringify(command)}`)
+    }
+  }
+  // And the two ends of the range itself are left out, as the parser leaves them out.
+  for (const gap of ['‘', '„']) {
+    assert.ok(checkCommand(`echo find-generic-pass${gap}word`, SAVED, 'bash', 1) !== null, gap)
+  }
+})
+
 test('the same split names, in a command too long for the default budget, are still refused (item 17, review of PR #69)', () => {
   // Main reads these (the parser takes the span out of the word) and refuses them at any length. The shape is the one
   // item 17 describes, about 100 KB of it, which runs the default budget out before the read at its end is reached.
