@@ -194,6 +194,15 @@ const SPLIT_READS = {
   'a tick span that holds a bare paren, between the halves': 'echo find-generic-`(x)`pass$(true)word -s keyprompt -w',
   'a ) inside a tick span, which closes nothing': 'echo find-generic-`x)`password -s keyprompt -w',
   'a $ in front of the name that opens no span': 'echo $find-generic-pass$(true)word -s keyprompt -w',
+  // Round 2 of the senior review (A to G): spans the parser pairs differently from a plain left-to-right count.
+  'A: an escaped ) inside $( )': 'security find-generic-pass$(\\))word -w -s keyprompt',
+  'B: an escaped ( inside $( )': 'security find-generic-pass$(\\()word -w -s keyprompt',
+  'C: a $( inside a backtick span': 'security find-generic-pass`$(`word -w -s keyprompt',
+  'D: a backtick inside $( )': 'security find-gen`x`eric-pass$(`)word -w -s keyprompt',
+  'E: a backtick inside $( ), PowerShell name': 'Get-Stored$(`))Credential -Target keyprompt:X',
+  'F: a $( inside a backtick span, secret-tool': 'secret-to`$(`ol lookup service keyprompt',
+  'G: a backtick inside $( ), dump-keychain': 'security dump-key$(`))chain -d',
+  'residual: $(( then a $( inside a backtick span': '$((secret-to`$(`ol lookup service keyprompt',
 }
 
 test('a read tool name split by a $( ) span, a backtick span or curly quotes is found when the budget runs out (item 17, review of PR #69)', () => {
@@ -215,7 +224,7 @@ test('a split name is found inside, after and beyond 64 open spans, which the gu
     const close = ')'.repeat(depth)
     for (const command of [`${open}${split}${close}`, `${open}${split}`]) {
       const reason = checkCommand(command, SAVED, 'bash', 1)?.reason
-      if (depth < 64) assert.ok(reason?.startsWith(UNREAD_REASON), `${depth} deep, inside: ${command.slice(-50)}`)
+      assert.ok(reason?.startsWith(UNREAD_REASON), `${depth} deep, inside: ${command.slice(-50)}`)
     }
     for (const command of [`${open}${close} ${split}`, `${open}echo hi${close}; ${split}`, `${close} ${split}`]) {
       const reason = checkCommand(command, SAVED, 'bash', 1)?.reason
@@ -246,6 +255,8 @@ test('a name that is only near a span, or a span that holds only part of it, is 
     'echo secret- $(true) tool',
     'echo find-generic-pass)word', // a ) outside every span is a plain character and separates words
     'echo find-generic-pass(x)word',
+    'x $(secret-)$(tool lookup service keyprompt)', // two spans next to each other are two scripts, not one word
+    'x$(secret-)$(tool)',
     'echo $(find-generic-pass)word',
     'echo find-generic-pass‘ ’word',
   ]) {
@@ -265,6 +276,12 @@ test('the same split names, in a command too long for the default budget, are st
     ['secret-to$(true)ol lookup service keyprompt', ['bash', undefined]],
     ['Get-Stored$()Credential -Target keyprompt:X', ['powershell', undefined]],
     ['Get-Stored‘’Credential -Target keyprompt:X', ['powershell', undefined]],
+    [SPLIT_READS['A: an escaped ) inside $( )'], ['bash', undefined]],
+    [SPLIT_READS['C: a $( inside a backtick span'], ['bash', undefined]],
+    [SPLIT_READS['D: a backtick inside $( )'], ['bash', undefined]],
+    [SPLIT_READS['E: a backtick inside $( ), PowerShell name'], ['powershell', undefined]],
+    [SPLIT_READS['G: a backtick inside $( ), dump-keychain'], ['powershell', undefined]],
+    [SPLIT_READS['residual: $(( then a $( inside a backtick span'], ['bash', undefined]],
   ]
   for (const [read, shells] of cases) {
     for (const shell of shells) {
@@ -273,6 +290,14 @@ test('the same split names, in a command too long for the default budget, are st
       assert.ok(reason.startsWith(UNREAD_REASON) || reason.startsWith(READS_REASON), reason.slice(0, 80))
     }
   }
+})
+
+test('a split name in a plain command past the 16 million cap is refused, though main reads it (item 17, review of PR #69)', () => {
+  // 16.5 MB with nothing nested: main reads it in about a second. The first reading charges more than the cap, so the name check answers.
+  const command = 'true '.repeat(3300000) + '; ' + SPLIT_READS['A: an escaped ) inside $( )']
+  assert.ok(command.length > 16500000)
+  const reason = checkCommand(command, SAVED, 'bash')?.reason
+  assert.ok(reason?.startsWith(UNREAD_REASON), reason?.slice(0, 80))
 })
 
 test('curly quotes inside a read tool name are found in a command of about 20 KB, as the Monitor tool reads it (item 17, review of PR #69)', () => {
@@ -418,6 +443,31 @@ test('6,000 seeded commands: whatever the guard finds a read in, the fallback na
     }
   }
   assert.ok(found > 2000, `only ${found} of the generated commands hold a read the guard finds, so the property says little`)
+})
+
+test('6,000 seeded split reads with 1 to 5 odd tokens in the middle: whatever the guard finds a read in, the fallback names it too (property, round 2 generator)', () => {
+  // The generator of the second senior reviewer: a read split in two, with 1 to 5 tokens from this list between the halves and 0 to 2 before.
+  const READS = [
+    ['security find-generic-pass', 'word -w -s keyprompt'],
+    ['secret-to', 'ol lookup service keyprompt'],
+    ['Get-Stored', 'Credential -Target keyprompt:X'],
+    ['security dump-key', 'chain -d'],
+  ]
+  const TOKENS = ['$(', ')', '(', '`', '\\', '"', "'", '$((', '))', '#', '<#', '#>', '\n', ' ', ';', '|', '{', '}', '‘', '“', 'x', '\\`', '``', '$', '\\)', '\\(', '`)', '`(', '\\$(', '`$(', '${', '\r\n', "@'", "'@"]
+  const rand = seeded(20261112)
+  const tokens = (count) => Array.from({ length: count }, () => pick(rand, TOKENS)).join('')
+  let found = 0
+  for (let n = 0; n < 6000; n++) {
+    const [first, second] = pick(rand, READS)
+    const command = tokens(between(rand, 0, 2)) + first + tokens(between(rand, 1, 5)) + second
+    for (const shell of ['bash', 'powershell', undefined]) {
+      const reason = checkCommand(command, SAVED, shell)?.reason
+      if (!reason || reason.startsWith(UNREAD_REASON) || reason.startsWith(UNCLOSED_REASON)) continue
+      found++
+      assert.ok(checkCommand(command, SAVED, shell, 1), `read in full, but the fallback lets it through (${shell ?? 'both'}): ${JSON.stringify(command)}`)
+    }
+  }
+  assert.ok(found > 1000, `only ${found} of the generated commands hold a read the guard finds, so the property says little`)
 })
 
 // --- The property: no long nested shape that names a read comes back as "no read" -----------------------------
