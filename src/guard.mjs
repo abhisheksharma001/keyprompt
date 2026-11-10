@@ -19,7 +19,7 @@ const READS =
   'keyprompt guard: this command reads a secret saved by keyprompt straight from the OS password store.'
 const DUMPS = 'keyprompt guard: this command prints every secret in the keychain, including any saved by keyprompt.'
 const RUN_INSTEAD =
-  "Run the command that needs the secret with `keyprompt run NAME -- COMMAND` instead: the value then goes only into that command's environment, and exact copies of it in the output are masked."
+  "Run the command that needs the secret with `keyprompt run NAME -- COMMAND` instead: the value then goes only into that command's environment, and exact copies of it in the output are masked. If the command only quotes such a read as text (a commit message, a pull request body), write that text to a file with your file tool and pass the file instead (`git commit -F FILE`, `gh pr create --body-file FILE`)."
 
 /** Words that come before the real command without changing which command runs. */
 const WRAPPERS = new Set(['sudo', 'doas', 'env', 'command', 'builtin', 'exec', 'time', 'nohup', 'nice', 'rtk', '{', '}', '!', 'if', 'then', 'else', 'elif', 'do', 'while', 'until'])
