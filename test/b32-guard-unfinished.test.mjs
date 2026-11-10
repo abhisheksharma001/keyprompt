@@ -185,6 +185,12 @@ const SPLIT_READS = {
   'Get-StoredCredential split by curly double quotes': 'Get-Stored“”Credential -Target keyprompt:X',
   'Get-StoredCredential split by low and reversed curly quotes': 'Get-Stored‚‛„’Credential -Target keyprompt:X',
   'CredRead split by $()': 'Add-Type x; [Cred]::Cred$()Read(1)',
+  'security split by $() inside a $( )': 'echo $(security find-generic-pass$()word -s keyprompt -w)',
+  'secret-tool split by a span holding bare parens, inside a $( )': 'echo $(secret-to$(echo (x))ol lookup service keyprompt)',
+  'dump-keychain split by $() inside backticks': 'echo `security dump-key$(true)chain -d`',
+  'dump-keychain split by $((1)) inside a $( ) that never closes': 'echo hi; $(security dump-$((1))keychain -d',
+  'Get-StoredCredential split by two spans inside a $( )': 'x $(Get-Stored$(a)$(b)Credential -Target keyprompt:X)',
+  'a tick span around a $( ) in the name': 'security find-generic-`$(x)`password -s keyprompt -w',
 }
 
 test('a read tool name split by a $( ) span, a backtick span or curly quotes is found when the budget runs out (item 17, review of PR #69)', () => {
@@ -346,6 +352,38 @@ test('a command of any length gets an answer in bounded time and, naming a read,
   const ms = Date.now() - start
   assert.ok(reason?.startsWith(UNREAD_REASON), reason)
   assert.ok(ms < 6000, `took ${ms} ms, too close to the hook's 10 second timeout`)
+})
+
+// --- The property: whatever the parser refuses, the fallback refuses (review of PR #69) ----------------------------------------
+
+test('6,000 seeded commands: whatever the guard finds a read in, the fallback names it too, so a long command cannot hide it (property)', () => {
+  // The fallback is what answers when the budget or the depth ends the reading, with a limit of 1 so that it always does.
+  // Main refuses these in full reading, so a command the fallback lets through would be a command that padding turns into a pass.
+  const NAMES = [
+    ['security find-generic-', 'password -s keyprompt -w'],
+    ['secret-', 'tool lookup service keyprompt'],
+    ['Get-Stored', 'Credential -Target keyprompt:X'],
+    ['security dump-', 'keychain -d'],
+    ['Add-Type x; [Cred]::Cred', 'Read(1)'],
+  ]
+  const SPLIT = ['', '$()', '$(true)', '$(echo (x))', '$(echo $(y))', '`true`', '``', "''", '""', '\\', '‘’', '“”', '$(a)$(b)', '$((1))', '`$(x)`']
+  const OPEN = ['', '$(', 'echo $(', '`', '"$(', '"', 'echo "', "'", 'eval ', 'bash -c "', "bash -c '", 'pwsh -c ', 'pwsh -c "', "pwsh -c '", '( ', '{ ', 'x; ', 'x | ', 'echo $(echo ', 'sudo ', 'env A=1 ']
+  const CLOSE = ['', ')', '`', '"', "'", ' )', '))', ')"', ')`', '}', ' )"']
+  const FILL = ['', 'x ', 'echo hi; ', '(a) ', '$(b) ', 'foo ', '# c\n', '\n', '; ']
+  const rand = seeded(20261111)
+  let found = 0
+  for (let n = 0; n < 6000; n++) {
+    const [first, second] = pick(rand, NAMES)
+    let command = pick(rand, FILL) + pick(rand, OPEN) + pick(rand, FILL) + first + pick(rand, SPLIT) + second + pick(rand, CLOSE) + pick(rand, FILL)
+    if (rand() < 0.3) command = pick(rand, OPEN) + command + pick(rand, CLOSE)
+    for (const shell of ['bash', 'powershell', undefined]) {
+      const reason = checkCommand(command, SAVED, shell)?.reason
+      if (!reason || reason.startsWith(UNREAD_REASON) || reason.startsWith(UNCLOSED_REASON)) continue
+      found++
+      assert.ok(checkCommand(command, SAVED, shell, 1), `read in full, but the fallback lets it through (${shell ?? 'both'}): ${JSON.stringify(command)}`)
+    }
+  }
+  assert.ok(found > 2000, `only ${found} of the generated commands hold a read the guard finds, so the property says little`)
 })
 
 // --- The property: no long nested shape that names a read comes back as "no read" -----------------------------

@@ -77,71 +77,69 @@ function base(word) {
 /** What `mentionsRead` takes out of a text: the quote characters and escapes the parser takes out of a word, and PowerShell's curly quotes. */
 const DROPPED = ['\\', '`', "'", '"', '\r', '\n', '\u2018', '\u2019', '\u201a', '\u201b', '\u201c', '\u201d', '\u201e']
 
+/** How many nesting levels `spanLevels` keeps apart: the guard reads four deep, so everything below the fifth level shares the last. */
+const LEVELS = 6
+/** How many open spans `spanLevels` tracks one by one; deeper ones are only counted. */
+const MOST_OPEN = 64
+
 /**
- * Where the `$(` that opens at `start - 2` ends: the index after its matching `)`, or the end of the text. Counts `(` and `)` with
- * `indexOf` jumps, so it reads each character once. It does not follow quotes or escapes, as `splitShell` does.
+ * The text split by how deep each character sits in `$( … )` spans and backtick spans, one string per level (level 0 is outside
+ * every span). The parser reads the inside of a span as a script of its own and takes the span out of the word around it, so
+ * `find-generic-pass$()word` is the tool's name at level 0, and `$(security find-generic-pass$()word -w)` is the name at level 1.
+ * Each character lands in one level, so the strings together are as long as the text. It follows bare `(` and `)` inside a `$(`
+ * (`$(echo (x))`), but not quotes or escapes, so it can only put more text at the same level than the parser does, never less.
+ * With `ticks` false a backtick opens no span, which is how PowerShell reads it and how a stray backtick in front of a
+ * `$( )` is read when it shifts the pairing. One pass over the text, a slice per span edge.
  *
  * @param {string} text
- * @param {number} start index just after `$(`
+ * @param {boolean} ticks whether a backtick opens and closes a span
  */
-function endOfSubshell(text, start) {
-  let depth = 1
-  let at = start
-  let open = -2 // -2: not looked up yet, -1: none left
-  let close = -2
-  while (depth > 0) {
-    if (open !== -1 && open < at) open = text.indexOf('(', at)
-    if (close !== -1 && close < at) close = text.indexOf(')', at)
-    if (close === -1) return text.length
-    if (open !== -1 && open < close) {
-      depth++
-      at = open + 1
-    } else {
-      depth--
-      at = close + 1
+function spanLevels(text, ticks) {
+  /** @type {string[][]} */
+  const pieces = Array.from({ length: LEVELS }, () => [])
+  /** The open spans, innermost last: -1 for a backtick span, otherwise the number of bare `(` open inside a `$(`. @type {number[]} */
+  const open = []
+  let uncounted = 0
+  let from = 0
+  const flush = (/** @type {number} */ to) => {
+    if (to > from) pieces[Math.min(open.length + uncounted, LEVELS - 1)].push(text.slice(from, to))
+  }
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i)
+    const top = open.length - 1
+    if (c === 36 && text.charCodeAt(i + 1) === 40) {
+      flush(i)
+      if (uncounted > 0 || open.length >= MOST_OPEN) uncounted++
+      else open.push(0)
+      i++
+      from = i + 1
+    } else if (c === 96 && ticks && uncounted === 0) {
+      flush(i)
+      if (top >= 0 && open[top] === -1) open.pop()
+      else if (open.length < MOST_OPEN) open.push(-1)
+      from = i + 1
+    } else if (c === 40 && top >= 0 && open[top] >= 0 && uncounted === 0) {
+      open[top]++
+    } else if (c === 41 && (uncounted > 0 || (top >= 0 && open[top] >= 0))) {
+      if (uncounted === 0 && open[top] > 0) {
+        open[top]--
+      } else {
+        flush(i)
+        if (uncounted > 0) uncounted--
+        else open.pop()
+        from = i + 1
+      }
     }
   }
-  return at
+  flush(text.length)
+  return pieces.map((level) => level.join(''))
 }
 
 /**
- * The text with its `$( … )` spans and backtick spans cut out, the way `splitShell` takes them out of a word: to the parser,
- * `find-generic-pass$()word` is the tool's name. An open span is cut to the end. It cuts at least what the parser cuts (it ignores
- * quotes and escapes), so a name the parser finds in a word is found here as well. One pass, with `indexOf` jumps.
- *
- * @param {string} text
- */
-function cutSpans(text) {
-  /** @type {string[]} */
-  const kept = []
-  let at = 0
-  let dollar = -2 // the next `$(`; -2: not looked up yet, -1: none left
-  let tick = -2 // the next backtick
-  while (at < text.length) {
-    if (dollar !== -1 && dollar < at) dollar = text.indexOf('$(', at)
-    if (tick !== -1 && tick < at) tick = text.indexOf('`', at)
-    const next = dollar === -1 ? tick : tick === -1 ? dollar : Math.min(dollar, tick)
-    if (next === -1) {
-      kept.push(text.slice(at))
-      break
-    }
-    kept.push(text.slice(at, next))
-    if (next === tick) {
-      const end = text.indexOf('`', next + 1)
-      if (end === -1) break
-      at = end + 1
-    } else {
-      at = endOfSubshell(text, next + 2)
-    }
-  }
-  return kept.join('')
-}
-
-/**
- * Whether a text names one of the store's read tools, in either of two views of it: with quotes, backslashes, backticks, line
- * breaks and curly quotes taken out (`find-generic-"password"`), and with `$( … )` and backtick spans cut out first
- * (`find-generic-pass$()word`), because the parser reads both as the name. It looks at the text as it stands, so it answers for
- * a text the guard could not read to the end. `includes` and `indexOf`, no regular expression.
+ * Whether a text names one of the store's read tools, in any of three views of it, because the parser reads each as the name:
+ * the text with quotes, backslashes, backticks, line breaks and curly quotes taken out (`find-generic-"password"`), and each level
+ * of `spanLevels` (`find-generic-pass$()word`, and the same inside a span), made with backticks as spans and without. It looks
+ * at the text as it stands, so it answers for a text the guard could not read to the end. `includes`, no regular expression.
  *
  * @param {string} text
  */
@@ -152,7 +150,7 @@ function mentionsRead(text) {
     return READ_TOOLS.some((tool) => view.includes(tool))
   }
   if (names(lower)) return true
-  return (lower.includes('$(') || lower.includes('`')) && names(cutSpans(lower))
+  return (lower.includes('$(') || lower.includes('`')) && [true, false].some((ticks) => spanLevels(lower, ticks).some(names))
 }
 
 /**
