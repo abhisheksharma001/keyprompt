@@ -21,9 +21,9 @@ const DUMPS = 'keyprompt guard: this command prints every secret in the keychain
 /** The reason when the guard cannot finish reading a command that names a read tool: nested too deep, or more work than the budget (S-67, D-25). */
 const UNREAD =
   "keyprompt guard: this command is too long or too deeply nested for the guard to read, and it names the OS password store's read tool, so it is refused."
-/** The reason when the text after a PowerShell `-c` opens a quote, a block comment or `$(` and never closes it (S-67, B-32 item 11). */
+/** The reason when the words after a PowerShell `-c` flag, read as PowerShell, open a quote, a block comment or `$(` and never close it (S-67, B-32 item 11). It says "read as PowerShell" because a quote can be opened only by the guard's second reading of those words (a bash-quoted apostrophe in a later word of a `find` command). */
 const UNCLOSED =
-  "keyprompt guard: this command has text after a PowerShell `-c` or `-Command` flag that opens a quote, a block comment or `$(` and never closes it, so the guard cannot finish reading it, and it names the OS password store's read tool, so it is refused."
+  "keyprompt guard: read as PowerShell, the words after a `-c` or `-Command` flag in this command open a quote, a block comment or `$(` that never closes, so the guard cannot finish reading them, and the command names the OS password store's read tool, so it is refused."
 /** What a text names when it names a store's read tool, in lower case. Keep in step with `READ_SUBCOMMANDS`, the `get-storedcredential` branch of `readInWords` and the `credread` rule of `readInShell`: a read added there and not here is refused when read, but not past the depth or work limit. */
 const READ_TOOLS = ['find-generic-password', 'dump-keychain', 'secret-tool', 'get-storedcredential', 'credread']
 /**
@@ -74,17 +74,85 @@ function base(word) {
   return word.slice(Math.max(word.lastIndexOf('/'), word.lastIndexOf('\\')) + 1).toLowerCase()
 }
 
+/** What `mentionsRead` takes out of a text: the quote characters and escapes the parser takes out of a word, and PowerShell's curly quotes. */
+const DROPPED = ['\\', '`', "'", '"', '\r', '\n', '\u2018', '\u2019', '\u201a', '\u201b', '\u201c', '\u201d', '\u201e']
+
 /**
- * Whether a text names one of the store's read tools, with quotes, backslashes, backticks and line breaks taken
- * out of it first (`find-generic-"password"`). It looks at the text as it stands, so it answers for a text the
- * guard could not read to the end. One pass per tool name with `includes`, no regular expression.
+ * Where the `$(` that opens at `start - 2` ends: the index after its matching `)`, or the end of the text. Counts `(` and `)` with
+ * `indexOf` jumps, so it reads each character once. It does not follow quotes or escapes, as `splitShell` does.
+ *
+ * @param {string} text
+ * @param {number} start index just after `$(`
+ */
+function endOfSubshell(text, start) {
+  let depth = 1
+  let at = start
+  let open = -2 // -2: not looked up yet, -1: none left
+  let close = -2
+  while (depth > 0) {
+    if (open !== -1 && open < at) open = text.indexOf('(', at)
+    if (close !== -1 && close < at) close = text.indexOf(')', at)
+    if (close === -1) return text.length
+    if (open !== -1 && open < close) {
+      depth++
+      at = open + 1
+    } else {
+      depth--
+      at = close + 1
+    }
+  }
+  return at
+}
+
+/**
+ * The text with its `$( … )` spans and backtick spans cut out, the way `splitShell` takes them out of a word: to the parser,
+ * `find-generic-pass$()word` is the tool's name. An open span is cut to the end. It cuts at least what the parser cuts (it ignores
+ * quotes and escapes), so a name the parser finds in a word is found here as well. One pass, with `indexOf` jumps.
+ *
+ * @param {string} text
+ */
+function cutSpans(text) {
+  /** @type {string[]} */
+  const kept = []
+  let at = 0
+  let dollar = -2 // the next `$(`; -2: not looked up yet, -1: none left
+  let tick = -2 // the next backtick
+  while (at < text.length) {
+    if (dollar !== -1 && dollar < at) dollar = text.indexOf('$(', at)
+    if (tick !== -1 && tick < at) tick = text.indexOf('`', at)
+    const next = dollar === -1 ? tick : tick === -1 ? dollar : Math.min(dollar, tick)
+    if (next === -1) {
+      kept.push(text.slice(at))
+      break
+    }
+    kept.push(text.slice(at, next))
+    if (next === tick) {
+      const end = text.indexOf('`', next + 1)
+      if (end === -1) break
+      at = end + 1
+    } else {
+      at = endOfSubshell(text, next + 2)
+    }
+  }
+  return kept.join('')
+}
+
+/**
+ * Whether a text names one of the store's read tools, in either of two views of it: with quotes, backslashes, backticks, line
+ * breaks and curly quotes taken out (`find-generic-"password"`), and with `$( … )` and backtick spans cut out first
+ * (`find-generic-pass$()word`), because the parser reads both as the name. It looks at the text as it stands, so it answers for
+ * a text the guard could not read to the end. `includes` and `indexOf`, no regular expression.
  *
  * @param {string} text
  */
 function mentionsRead(text) {
-  let flat = text.toLowerCase()
-  for (const dropped of ['\\', '`', "'", '"', '\r', '\n']) flat = flat.replaceAll(dropped, '')
-  return READ_TOOLS.some((tool) => flat.includes(tool))
+  const lower = text.toLowerCase()
+  const names = (/** @type {string} */ view) => {
+    for (const dropped of DROPPED) view = view.replaceAll(dropped, '')
+    return READ_TOOLS.some((tool) => view.includes(tool))
+  }
+  if (names(lower)) return true
+  return (lower.includes('$(') || lower.includes('`')) && names(cutSpans(lower))
 }
 
 /**
@@ -448,7 +516,7 @@ function readInWords(words, names, depth, comments, limit) {
  * @param {boolean} powershell read the text as PowerShell, not as a POSIX shell
  * @param {boolean} comments skip comments and look for a read anywhere in a command; false is main's reading
  * @param {{ left: number }} [limit] the work budget
- * @param {boolean} [refuseOpen] refuse a text that ends inside a quote or block comment and names a read tool, when nothing else was found
+ * @param {boolean} [refuseOpen] refuse a text that ends inside a quote, a block comment or `$(` and names a read tool, when nothing else was found
  * @returns {string | null}
  */
 function readInShell(text, names, depth, powershell, comments, limit, refuseOpen) {

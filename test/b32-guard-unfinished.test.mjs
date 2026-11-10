@@ -251,8 +251,8 @@ test('a find command whose later word has an apostrophe in double quotes is refu
   // No word after the first `-c` opens a quote as bash reads it: the apostrophe is inside double quotes. Read as PowerShell, the
   // later words do open one, which is what the sentence says. It names a read tool, so it is refused rather than let through.
   const commands = [
-    `find . -exec pwsh -c 'Write-Host $args' {} \; -o -name "Bob's secret-tool notes.md" -exec pwsh -File lint.ps1 {} \;`,
-    `find . -name '*.ps1' -exec pwsh -c 'Get-Content $args[0]' {} \; -exec grep -l "don't call secret-tool" {} \; -exec pwsh -c 'Write-Host done' \;`,
+    `find . -exec pwsh -c 'Write-Host $args' {} \\; -o -name "Bob's secret-tool notes.md" -exec pwsh -File lint.ps1 {} \\;`,
+    `find . -name '*.ps1' -exec pwsh -c 'Get-Content $args[0]' {} \\; -exec grep -l "don't call secret-tool" {} \\; -exec pwsh -c 'Write-Host done' \\;`,
   ]
   for (const command of commands) {
     for (const shell of ['bash', undefined]) {
