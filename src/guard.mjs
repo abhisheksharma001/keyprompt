@@ -24,11 +24,14 @@ const RUN_INSTEAD =
 /** Words that come before the real command without changing which command runs. */
 const WRAPPERS = new Set(['sudo', 'doas', 'env', 'command', 'builtin', 'exec', 'time', 'nohup', 'nice', 'rtk', '{', '}', '!', 'if', 'then', 'else', 'elif', 'do', 'while', 'until'])
 /**
- * Commands that only print, search or store text and cannot run another
- * command from their options, so a read they mention is text (S-57). Two
- * limits, both logged in docs/bugs.md (B-27, B-32): a command can define
- * its own `echo` or `grep` as a function or alias, and zsh's `printf -v` runs
- * the command substitution inside a name it is given. `git` and `gh` are not
+ * Commands that only print, search or store text, so a read they mention is
+ * text (S-57). None runs a command line from its options; `rg --pre COMMAND`
+ * runs one program with a file path as its only argument (ripgrep's
+ * `--pre` docs), so a read through it needs a script file, which the guard
+ * cannot see anyway. Two limits, both logged in docs/bugs.md (B-27, B-32):
+ * a command can define its own `echo` or `grep` as a function or alias, and
+ * zsh's `printf -v` runs the command substitution inside a name it is
+ * given. `git` and `gh` are not
  * here: `git bisect run` or `git rebase --exec` runs a command, and a
  * mention inside a quoted commit message or pull request body (`-m "…"`,
  * `--body "…"`) is one word, which the read check never matches. A
