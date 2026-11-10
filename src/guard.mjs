@@ -316,7 +316,6 @@ function readInWords(words, names, depth, comments) {
   if (start >= words.length) return null
   // An option skipped before the first word may have taken it as its value (`env -u echo …`), so only a start past no option counts as text.
   if (TEXT_ONLY.has(base(words[start])) && !words.slice(0, start).some((w) => w.startsWith('-'))) return null
-  let from = 0
   let end = words.length
   if (!comments) {
     // Followed in one pass, so `keyprompt -- keyprompt -- …` stays linear.
@@ -324,9 +323,9 @@ function readInWords(words, names, depth, comments) {
       start = commandStart(words, dash + 1)
       if (start >= words.length) return null
     }
-    from = start
     end = start + 1
   }
+  const from = comments ? 0 : start
   const checked = new Set()
   const plain = nextMatch(words, (w) => !w.startsWith('-'))
   /** @type {Record<string, number[]>} */
@@ -340,7 +339,7 @@ function readInWords(words, names, depth, comments) {
     if (command === 'eval' && i === start) {
       // eval, as the command, runs every word after it as one script, which settles the rest of the command.
       // A word that only ends in `eval` (`X=/bin/eval`, `find -name eval`, an option's value) runs nothing, and joining the words after it would drop their quoting.
-      return readInShell(words.slice(i + 1).join(' '), names, depth + 1, false, comments)
+      return readScript(words.slice(i + 1).join(' '), names, depth + 1, false, comments)
     } else if (command === 'security' || command === 'secret-tool') {
       const sub = plain[i + 1]
       const key = `${command} ${words[sub]}`
@@ -383,7 +382,7 @@ function readInWords(words, names, depth, comments) {
       for (const [key, script] of scripts) {
         if (found || checked.has(key)) continue
         checked.add(key)
-        found = readInShell(script(), names, depth + 1, powershell, comments)
+        found = readScript(script(), names, depth + 1, powershell, comments)
       }
     }
     if (found) return found
@@ -413,10 +412,46 @@ function readInShell(text, names, depth, powershell, comments) {
     if (lower.includes(`${SERVICE}:`) || [...names].some((name) => wordIn(text, name))) return READS
   }
   for (const script of nested) {
-    const found = readInShell(script, names, depth + 1, powershell, comments)
+    const found = readScript(script, names, depth + 1, powershell, comments)
     if (found) return found
   }
   return null
+}
+
+/**
+ * Read a text two ways, and refuse if either finds a read: skipping comments
+ * and looking for a read anywhere in a command, then with main's rules, no
+ * comments and only each command's own word. A `#` starts no comment inside
+ * `${…}`, `(( ))`, an unquoted here-document line or PowerShell's `${…}`, so
+ * the first reading can miss a read there that main, which read no comments,
+ * refused. The second reads a comment as main did: `ls # see <read>` passes,
+ * and `ls # see; <read>` is refused (S-57 senior review, round 2).
+ *
+ * @param {string} text
+ * @param {Set<string>} names
+ * @param {number} depth
+ * @param {boolean} powershell
+ * @returns {string | null}
+ */
+function readBoth(text, names, depth, powershell) {
+  return readInShell(text, names, depth, powershell, true) || readInShell(text, names, depth, powershell, false)
+}
+
+/**
+ * A script that a command runs, or one in `$( )` or backticks, read the same
+ * way as the text it came from; but a script main's rules reach is read both
+ * ways, because checking only its first word would hide a wrapper inside it
+ * (`# $(timeout 5 <read>)` on a here-document line).
+ *
+ * @param {string} text
+ * @param {Set<string>} names
+ * @param {number} depth
+ * @param {boolean} powershell
+ * @param {boolean} comments
+ * @returns {string | null}
+ */
+function readScript(text, names, depth, powershell, comments) {
+  return comments ? readInShell(text, names, depth, powershell, true) : readBoth(text, names, depth, powershell)
 }
 
 /**
@@ -436,13 +471,7 @@ function wordIn(text, word) {
  */
 export function checkCommand(command, savedNames = [], shell) {
   const names = new Set(savedNames)
-  // Each way is read twice: skipping comments and looking for a read anywhere in a command, then as main read it, with no
-  // comments and only each command's own word. A # starts no comment inside `${…}`, `(( ))`, an unquoted here-document line
-  // or PowerShell's `${…}`, so the first reading can miss a read there that main, which read no comments, refused; the
-  // second uses main's rules for both, and a comment that only mentions a read still passes, as on main (S-57 review, round 2).
-  /** @param {boolean} powershell */
-  const read = (powershell) => readInShell(command, names, 0, powershell, true) || readInShell(command, names, 0, powershell, false)
-  const found = (shell !== 'powershell' && read(false)) || (shell !== 'bash' && read(true))
+  const found = (shell !== 'powershell' && readBoth(command, names, 0, false)) || (shell !== 'bash' && readBoth(command, names, 0, true))
   return found ? { reason: `${found} ${RUN_INSTEAD}` } : null
 }
 
