@@ -16,7 +16,7 @@ const UNREAD_REASON =
   "keyprompt guard: this command is too long or too deeply nested for the guard to read, and it names the OS password store's read tool, so it is refused."
 // The tail rule's sentence: the approved one says "too long or too deeply nested", which is not true of a tail that opens a quote.
 const UNCLOSED_REASON =
-  "keyprompt guard: this command has text after a PowerShell `-c` or `-Command` flag that opens a quote or block comment and never closes it, so the guard cannot finish reading it, and it names the OS password store's read tool, so it is refused."
+  "keyprompt guard: this command has text after a PowerShell `-c` or `-Command` flag that opens a quote, a block comment or `$(` and never closes it, so the guard cannot finish reading it, and it names the OS password store's read tool, so it is refused."
 
 /** @param {string | undefined} shell */
 function refusal(command, shell) {
