@@ -198,6 +198,41 @@ test('a long command is checked well inside the hook timeout, so it cannot time 
   }
 })
 
+// Found by the senior review of PR #60, round 2: a # read as a comment where bash, zsh or PowerShell starts none
+// (an unquoted here-document line, `${…}`, `(( ))`, PowerShell's `${…}` variable name) hid the read after it.
+// Main read no comments, so it refused every one of these.
+const READ = 'security find-generic-password -s keyprompt -w'
+const FAKE_COMMENT_BASH = [
+  `cat > notes.md <<EOF\n# Notes $(${READ})\nEOF`,
+  `cat > notes.md <<EOF\n## Key: \`${READ}\`\nEOF`,
+  `git commit -F - <<EOF\n# $(${READ})\nEOF`,
+  `true \${x:-a #}; ${READ}`,
+  `true \${x:- #}; ${READ}`,
+  `true \${x/ #/}; ${READ}`,
+  `(( 1 #)); ${READ}`,
+  `EOF [ in( #; ${READ}`,
+  // Found while fixing it: main also looked past such a # for a read's options, a shell's -c script and a launcher's --.
+  `security find-generic-password \${x:+ #} -s keyprompt -w`,
+  `bash \${x:+ #} -c '${READ}'`,
+  `keyprompt run X \${y:+ #} -- ${READ}`,
+  `npx \${y:+ #} -- ${READ}`,
+]
+const FAKE_COMMENT_POWERSHELL = [
+  'Write-Output ${a #}; Get-StoredCredential -Target keyprompt:X',
+  '${a #} = 1; Get-StoredCredential -Target keyprompt:X',
+  'Write-Output ${<#}; Get-StoredCredential -Target keyprompt:X',
+]
+
+for (const [tool, list] of [['Bash', FAKE_COMMENT_BASH], ['PowerShell', FAKE_COMMENT_POWERSHELL]]) {
+  for (const command of list) {
+    test(`refuses a read after a # that starts no comment (${tool}): ${JSON.stringify(command)}`, () => {
+      for (const name of [tool, 'Monitor']) {
+        assert.equal(preToolUse({ tool_name: name, tool_input: { command } }, SAVED)?.hookSpecificOutput.permissionDecision, 'deny', name)
+      }
+    })
+  }
+}
+
 test('keyprompt guard pre-tool-use denies a B-25 form end to end', () => {
   const home = mkdtempSync(join(tmpdir(), 'keyprompt-b25-'))
   writeFileSync(join(home, 'catalog.json'), JSON.stringify({ MY_SAVED_NAME: { store: 'test', updatedAt: '2026-11-10T00:00:00.000Z' } }))
