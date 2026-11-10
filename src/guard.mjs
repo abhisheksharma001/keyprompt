@@ -34,8 +34,8 @@ const READ_TOOLS = ['find-generic-password', 'dump-keychain', 'secret-tool', 'ge
  * ways. The step's 64 per character let that shape take 2 to 4 s; 12 per character, which still covers the
  * nested shapes the timing tests use (12 per character read both ways), cuts it off in about 0.8 s, and the cap
  * keeps the reading of any command under about 1 s, far inside the hook's 10 seconds. The name check that answers
- * after the budget runs out (`mentionsRead`) is not charged to it: it is one pass of 3 to 20 ns per character, measured on
- * the worst shapes found (CPU time, not wall time), so even 60 MB, more than a model can emit, costs about a second.
+ * after the budget runs out (`mentionsRead`) is not charged to it: it is one pass of 3 to 50 ns per character, measured on
+ * the worst shapes found (CPU time, not wall time), so even 60 MB, more than a model can emit, costs under 3 seconds.
  */
 const WORK_PER_CHAR = 12
 const WORK_BASE = 1000000
@@ -85,53 +85,99 @@ const NAME_BITS = READ_TOOLS.map((tool) => {
 /** For each character code below 128, the tools (one bit each) whose name starts with it. */
 const STARTS = new Int32Array(128)
 READ_TOOLS.forEach((tool, t) => (STARTS[tool.charCodeAt(0)] |= 1 << t))
+/**
+ * What `splitShell` can do with a character it does not keep in a word, for each character code below 128. `mentionsRead` is
+ * built from this table alone, and test/b32-guard-unfinished.test.mjs checks the table against `splitShell` itself (every text
+ * of up to 4 special characters, every two letters with up to 4 of them between, and 20,000 longer texts, each read all four
+ * ways), so a parser that learns to take something new out of a word fails that test until this table knows it too.
+ *
+ * DROPPED: taken out one at a time: the backslash, `'`, `"`, and the CR and LF of a line continuation. The curly quotes U+2018
+ * to U+201E, which PowerShell reads as quotes, are DROPPED too (they are above 128, so `mentionsRead` names them itself).
+ * TICK: the backtick, which is taken out one at a time (PowerShell's escape character) and also opens or ends a span.
+ * DOLLAR and then OPENS: `$(` opens a span. ENDS: `)` ends one.
+ */
+const KEPT = 0
+const DROPPED = 1
+const TICK = 2
+const DOLLAR = 3
+const OPENS = 4
+const ENDS = 5
+const KIND = new Uint8Array(128)
+for (const c of '\\\'"\r\n') KIND[c.charCodeAt(0)] = DROPPED
+KIND[96] = TICK
+KIND[36] = DOLLAR
+KIND[40] = OPENS
+KIND[41] = ENDS
 
 /**
- * Whether a text holds one of the store's read tools' names, the way the parser would put it together out of a word. The parser
- * takes out of a word the quote characters (`'`, `"`, curly quotes), the escape character, line breaks, and any `$( … )` or
- * backtick span, whatever is inside it; what is left is the name (`find-generic-"pass"$(true)word`). So the name is looked for
- * with those characters allowed between its letters, and with a span allowed between any two letters: it opens at a `$(` or a
- * backtick and ends at ANY later `)` or backtick. Letting every `)` end it, instead of working out which one the parser pairs
- * it with, makes this a superset of the parser (escapes, backticks inside `$( )`, `$(` inside backticks, nesting), which two
- * senior reviews found a pairing count could not be. It looks at the text as it stands, so it answers for a text the guard could
- * not read to the end. One pass over the text, nothing allocated per character, no regular expression.
+ * Whether a text holds one of the store's read tools' names in a way that a reading of it, at any nesting level, could put
+ * together into the name. It answers for a text the guard could not read to the end, so it has to say yes for every text the
+ * full reading would refuse.
+ *
+ * The rule. The letters of a name stand in the text in order, and what stands between two letters that are next to each other
+ * in the name (a gap) is made only of these pieces, any number of them in a row:
+ *   - a DROPPED character or a backtick;
+ *   - a `$`, then anything, then a `(`, then anything, then a `)` or a backtick;
+ *   - a backtick, then anything, then a backtick or a `)`.
+ *
+ * Why that covers the parser. Every text a deeper reading sees is made from the text one level up in one of two ways: it is a
+ * piece cut out of it (a `$( )` or backtick span), or it is words of one command, as `splitShell` gives them, joined with a
+ * blank (`eval`, a shell's `-c`). `splitShell` never moves or copies a character and makes up none but a blank or a straight
+ * quote: it only leaves characters out. Out of the middle of a word it leaves a character in two ways only: one at a time (the
+ * DROPPED ones and the backtick), or inside a span that starts at `$(` or a backtick and ends at a `)` or a backtick, whatever
+ * is in it. So after one reading a gap is made of the pieces above, with the `$` and the `(` next to each other. A second
+ * reading can find a `$(` whose two characters had something between them that the first reading left out (`$''(`, `\$\(`,
+ * `$$(true)(`), which is why the rule allows anything between them; and a blank that a join put in can only be left out as
+ * part of a span, where anything is allowed already. A gap made of these pieces, with more such pieces between its characters,
+ * is again made of these pieces, so the rule holds for any number of readings: no way of quoting a read for an outer shell
+ * steps outside it. The test file checks the two halves of this: `splitShell` against the rule, and this function against the
+ * rule written out the slow way.
  *
  * It is not exact in the other direction: it also refuses a text that only looks like a split name, such as "`secret-` and
- * `tool`" in a pull request body. That is the cost of refusing when unsure, and it applies only to commands too long or too deeply
- * nested to read.
+ * `tool`" in a pull request body, or `secret-$x (y)tool`. That is the cost of refusing when unsure, and it applies only where
+ * this function is asked: a command too long or too deeply nested to read, or a PowerShell tail left open.
+ *
+ * One pass over the text, three numbers per tool, nothing allocated per character, no regular expression.
  *
  * @param {string} text
  */
 function mentionsRead(text) {
   const lower = text.toLowerCase()
   const tools = READ_TOOLS.length
-  // Per tool, bit j set: the first j letters of its name have been read (bit 0 is always set, since a name can start anywhere).
+  // Per tool, bit j set: the first j letters of its name have been read, and what came after them is whole pieces (bit 0 is always set, since a name can start anywhere).
   const plain = new Int32Array(tools).fill(1)
-  // The same, but with a span opened after those letters and not yet ended. Once set, it stays: a later `)` may still end the span.
-  const inSpan = new Int32Array(tools)
-  // The tools (one bit each) that have read a letter of their name or opened a span: only they, and the ones this character starts, need work.
-  let live = 0
+  // The same, with a `$` read after those letters and its `(` not yet. Once set it stays: anything may stand before the `(`.
+  const dollar = new Int32Array(tools)
+  // The same, with a span opened after those letters. Once set it stays: anything may stand before the character that ends it.
+  const span = new Int32Array(tools)
+  // The tools (one bit each) with a letter read in `plain`, in `dollar` and in `span`: only they, and the ones this character starts, need work.
+  let inPlain = 0
+  let inDollar = 0
+  let inSpan = 0
   for (let i = 0; i < lower.length; i++) {
     const c = lower.charCodeAt(i)
-    const dollar = c === 36 && lower.charCodeAt(i + 1) === 40
-    const todo = live | (c < 128 ? STARTS[c] : 0)
+    const ascii = c < 128
+    const kind = ascii ? KIND[c] : c >= 0x2018 && c <= 0x201e ? DROPPED : KEPT
+    const todo = inPlain | (ascii ? STARTS[c] : 0) | (kind === OPENS ? inDollar : kind === ENDS || kind === TICK ? inSpan : 0)
     if (todo === 0) continue
-    const tick = c === 96
-    // Not part of a name, and taken out by the parser: backslash, `'`, `"`, CR, LF, a backtick, and the curly quotes U+2018 to U+201E.
-    const dropped = tick || c === 92 || c === 39 || c === 34 || c === 13 || c === 10 || (c >= 0x2018 && c <= 0x201e)
-    const ends = c === 41 || tick
     for (let t = 0; t < tools; t++) {
-      if ((todo & (1 << t)) === 0) continue
+      const bit = 1 << t
+      if ((todo & bit) === 0) continue
       const was = plain[t]
-      let now = 1
-      if (dropped) now |= was
-      if (c < 128) now |= (was & NAME_BITS[t][c]) << 1
-      if (ends) now |= inSpan[t]
-      if (dollar || tick) inSpan[t] |= was
+      let now = ascii ? 1 | ((was & NAME_BITS[t][c]) << 1) : 1
+      if (kind === DROPPED) now |= was
+      else if (kind === TICK) {
+        now |= was | span[t]
+        if ((span[t] |= was) > 1) inSpan |= bit
+      } else if (kind === DOLLAR) {
+        if ((dollar[t] |= was) > 1) inDollar |= bit
+      } else if (kind === OPENS) {
+        if ((span[t] |= dollar[t]) > 1) inSpan |= bit
+      } else if (kind === ENDS) now |= span[t]
       plain[t] = now
       if (now & (1 << READ_TOOLS[t].length)) return true
-      if (now > 1 || inSpan[t] > 1) live |= 1 << t
-      else live &= ~(1 << t)
+      if (now > 1) inPlain |= bit
+      else inPlain &= ~bit
     }
   }
   return false
