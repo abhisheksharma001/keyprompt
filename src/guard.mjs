@@ -18,6 +18,30 @@ const SERVICE = 'keyprompt'
 const READS =
   'keyprompt guard: this command reads a secret saved by keyprompt straight from the OS password store.'
 const DUMPS = 'keyprompt guard: this command prints every secret in the keychain, including any saved by keyprompt.'
+/** The reason when the guard cannot finish reading a command that names a read tool: nested too deep, or more work than the budget (S-67, D-25). */
+const UNREAD =
+  "keyprompt guard: this command is too long or too deeply nested for the guard to read, and it names the OS password store's read tool, so it is refused."
+/** The reason when the words after a PowerShell `-c` flag, read as PowerShell, open a quote, a block comment or `$(` and never close it (S-67, B-32 item 11). It says "read as PowerShell" because the quote may be opened only by the guard's reading of those words as PowerShell, not by the text as written (an apostrophe inside bash double quotes in a later word of a `find` command). */
+const UNCLOSED =
+  "keyprompt guard: read as PowerShell, the words after a `-c` or `-Command` flag in this command open a quote, a block comment or `$(` that never closes, so the guard cannot finish reading them, and the command names the OS password store's read tool, so it is refused."
+/** What a text names when it names a store's read tool, in lower case. Keep in step with `READ_SUBCOMMANDS`, the `get-storedcredential` branch of `readInWords` and the `credread` rule of `readInShell`: a read added there and not here is refused when read, but not past the depth or work limit. */
+const READ_TOOLS = ['find-generic-password', 'dump-keychain', 'secret-tool', 'get-storedcredential', 'credread']
+/**
+ * The work budget (S-67, B-32 item 17): the most characters all the readings of one command may scan together,
+ * `WORK_PER_CHAR` for each character of the command plus `WORK_BASE`, and never more than `WORK_MOST`. Measured
+ * on the builder's machine: reading takes 20 to 60 ms per million characters scanned, and 1 MB of the worst
+ * shape known (a later word named `pwsh` after each nested call) scans 64 characters per character read both
+ * ways. The step's 64 per character let that shape take 2 to 4 s; 12 per character, which still covers the
+ * nested shapes the timing tests use (12 per character read both ways), cuts it off in about 0.8 s, and the cap
+ * keeps the reading of any command under about 1 s, far inside the hook's 10 seconds. The name check that answers
+ * after the budget runs out (`mentionsRead`) is not charged to it: it is one pass of 3 to 50 ns per character, measured on
+ * the worst shapes found (CPU time, not wall time), so even 60 MB, more than a model can emit, costs under 3 seconds.
+ */
+const WORK_PER_CHAR = 12
+const WORK_BASE = 1000000
+const WORK_MOST = 16000000
+/** Thrown when the budget runs out, to stop reading at once. */
+const OUT_OF_WORK = Symbol('out of work')
 const RUN_INSTEAD =
   "Run the command that needs the secret with `keyprompt run NAME -- COMMAND` instead: the value then goes only into that command's environment, and exact copies of it in the output are masked. If the command only quotes such a read as text (a commit message, a pull request body), write that text to a file with your file tool and pass the file instead (`git commit -F FILE`, `gh pr create --body-file FILE`)."
 
@@ -52,6 +76,113 @@ function base(word) {
   return word.slice(Math.max(word.lastIndexOf('/'), word.lastIndexOf('\\')) + 1).toLowerCase()
 }
 
+/** For each read tool and each character code below 128, the places in the tool's name where that character stands, one bit per place. */
+const NAME_BITS = READ_TOOLS.map((tool) => {
+  const bits = new Int32Array(128)
+  for (let i = 0; i < tool.length; i++) bits[tool.charCodeAt(i)] |= 1 << i
+  return bits
+})
+/** For each character code below 128, the tools (one bit each) whose name starts with it. */
+const STARTS = new Int32Array(128)
+READ_TOOLS.forEach((tool, t) => (STARTS[tool.charCodeAt(0)] |= 1 << t))
+/**
+ * What `splitShell` can do with a character it does not keep in a word, for each character code below 128. `mentionsRead` is
+ * built from this table alone, and test/b32-guard-unfinished.test.mjs checks the table against `splitShell` itself (every text
+ * of up to 4 special characters, every two letters with up to 4 of them between, and 20,000 longer texts, each read all four
+ * ways), so a parser that learns to take something new out of a word fails that test until this table knows it too.
+ *
+ * DROPPED: taken out one at a time: the backslash, `'`, `"`, and the CR and LF of a line continuation. The curly quotes U+2018
+ * to U+201E, which PowerShell reads as quotes, are DROPPED too (they are above 128, so `mentionsRead` names them itself).
+ * TICK: the backtick, which is taken out one at a time (PowerShell's escape character) and also opens or ends a span.
+ * DOLLAR and then OPENS: `$(` opens a span. ENDS: `)` ends one.
+ */
+const KEPT = 0
+const DROPPED = 1
+const TICK = 2
+const DOLLAR = 3
+const OPENS = 4
+const ENDS = 5
+const KIND = new Uint8Array(128)
+for (const c of '\\\'"\r\n') KIND[c.charCodeAt(0)] = DROPPED
+KIND[96] = TICK
+KIND[36] = DOLLAR
+KIND[40] = OPENS
+KIND[41] = ENDS
+
+/**
+ * Whether a text holds one of the store's read tools' names in a way that a reading of it, at any nesting level, could put
+ * together into the name. It answers for a text the guard could not read to the end, so it has to say yes for every text the
+ * full reading would refuse.
+ *
+ * The rule. The letters of a name stand in the text in order, and what stands between two letters that are next to each other
+ * in the name (a gap) is made only of these pieces, any number of them in a row:
+ *   - a DROPPED character or a backtick;
+ *   - a `$`, then anything, then a `(`, then anything, then a `)` or a backtick;
+ *   - a backtick, then anything, then a backtick or a `)`.
+ *
+ * Why that covers the parser. Every text a deeper reading sees is made from the text one level up in one of two ways: it is a
+ * piece cut out of it (a `$( )` or backtick span), or it is words of one command, as `splitShell` gives them, joined with a
+ * blank (`eval`, a shell's `-c`). `splitShell` never moves or copies a character and makes up none but a blank or a straight
+ * quote: it only leaves characters out. Out of the middle of a word it leaves a character in two ways only: one at a time (the
+ * DROPPED ones and the backtick), or inside a span that starts at `$(` or a backtick and ends at a `)` or a backtick, whatever
+ * is in it. So after one reading a gap is made of the pieces above, with the `$` and the `(` next to each other. A second
+ * reading can find a `$(` whose two characters had something between them that the first reading left out (`$''(`, `\$\(`,
+ * `$$(true)(`), which is why the rule allows anything between them; and a blank that a join put in can only be left out as
+ * part of a span, where anything is allowed already. A gap made of these pieces, with more such pieces between its characters,
+ * is again made of these pieces, so the rule holds for any number of readings: no way of quoting a read for an outer shell
+ * steps outside it. The test file checks the two halves of this: `splitShell` against the rule, and this function against the
+ * rule written out the slow way.
+ *
+ * It is not exact in the other direction: it also refuses a text that only looks like a split name, such as "`secret-` and
+ * `tool`" in a pull request body, or `secret-$x (y)tool`. That is the cost of refusing when unsure, and it applies only where
+ * this function is asked: a command too long or too deeply nested to read, or a PowerShell tail left open.
+ *
+ * One pass over the text, three numbers per tool, nothing allocated per character, no regular expression.
+ *
+ * @param {string} text
+ */
+function mentionsRead(text) {
+  const lower = text.toLowerCase()
+  const tools = READ_TOOLS.length
+  // Per tool, bit j set: the first j letters of its name have been read, and what came after them is whole pieces (bit 0 is always set, since a name can start anywhere).
+  const plain = new Int32Array(tools).fill(1)
+  // The same, with a `$` read after those letters and its `(` not yet. Once set it stays: anything may stand before the `(`.
+  const dollar = new Int32Array(tools)
+  // The same, with a span opened after those letters. Once set it stays: anything may stand before the character that ends it.
+  const span = new Int32Array(tools)
+  // The tools (one bit each) with a letter read in `plain`, in `dollar` and in `span`: only they, and the ones this character starts, need work.
+  let inPlain = 0
+  let inDollar = 0
+  let inSpan = 0
+  for (let i = 0; i < lower.length; i++) {
+    const c = lower.charCodeAt(i)
+    const ascii = c < 128
+    const kind = ascii ? KIND[c] : c >= 0x2018 && c <= 0x201e ? DROPPED : KEPT
+    const todo = inPlain | (ascii ? STARTS[c] : 0) | (kind === OPENS ? inDollar : kind === ENDS || kind === TICK ? inSpan : 0)
+    if (todo === 0) continue
+    for (let t = 0; t < tools; t++) {
+      const bit = 1 << t
+      if ((todo & bit) === 0) continue
+      const was = plain[t]
+      let now = ascii ? 1 | ((was & NAME_BITS[t][c]) << 1) : 1
+      if (kind === DROPPED) now |= was
+      else if (kind === TICK) {
+        now |= was | span[t]
+        if ((span[t] |= was) > 1) inSpan |= bit
+      } else if (kind === DOLLAR) {
+        if ((dollar[t] |= was) > 1) inDollar |= bit
+      } else if (kind === OPENS) {
+        if ((span[t] |= dollar[t]) > 1) inSpan |= bit
+      } else if (kind === ENDS) now |= span[t]
+      plain[t] = now
+      if (now & (1 << READ_TOOLS[t].length)) return true
+      if (now > 1) inPlain |= bit
+      else inPlain &= ~bit
+    }
+  }
+  return false
+}
+
 /**
  * Split shell text into simple commands (lists of words, quotes removed) at
  * `;`, `&`, `|`, newlines and parentheses. Text inside `$(...)` or backticks,
@@ -71,12 +202,17 @@ function base(word) {
  * backticks run nothing, and `<#` where a word starts opens a comment that
  * ends at the first `#>` (about_Comments; tokenizer.cs, ScanBlockComment).
  *
+ * `open` is true when the text ends inside something it opened and never
+ * closed: a quote, a `<#` comment, `$(` or a backtick (S-67).
+ *
  * @param {string} text
  * @param {boolean} [powershell]
  * @param {boolean} [comments] skip comments
- * @returns {{ commands: string[][], nested: string[] }}
+ * @param {{ left: number }} [limit] the work budget: the text's length is taken off `left`, and reading stops (throws `OUT_OF_WORK`) when it goes below 0
+ * @returns {{ commands: string[][], nested: string[], open: boolean }}
  */
-export function splitShell(text, powershell = false, comments = true) {
+export function splitShell(text, powershell = false, comments = true, limit) {
+  if (limit && (limit.left -= text.length) < 0) throw OUT_OF_WORK
   if (powershell) text = text.replace(/[‘’‚‛]/g, "'").replace(/[“”„]/g, '"')
   const escape = powershell ? '`' : '\\'
   /** @type {string[][]} */
@@ -87,6 +223,7 @@ export function splitShell(text, powershell = false, comments = true) {
   let words = []
   let word = ''
   let inWord = false
+  let open = false
   const endWord = () => {
     if (inWord) words.push(word)
     word = ''
@@ -107,6 +244,7 @@ export function splitShell(text, powershell = false, comments = true) {
       else if (text[j] === ')') depth--
       j++
     }
+    if (depth > 0) open = true
     nested.push(text.slice(start, depth === 0 ? j - 1 : j))
     return j
   }
@@ -114,6 +252,7 @@ export function splitShell(text, powershell = false, comments = true) {
   const backtick = (start) => {
     const end = text.indexOf('`', start)
     const stop = end === -1 ? text.length : end
+    if (end === -1) open = true
     nested.push(text.slice(start, stop))
     return stop + 1
   }
@@ -143,6 +282,7 @@ export function splitShell(text, powershell = false, comments = true) {
       i = end === -1 ? text.length : end
     } else if (comments && powershell && c === '<' && text[i + 1] === '#' && !inWord) {
       const end = text.indexOf('#>', i + 2)
+      if (end === -1) open = true
       i = end === -1 ? text.length : end + 2
     } else if (c === "'") {
       inWord = true
@@ -151,6 +291,7 @@ export function splitShell(text, powershell = false, comments = true) {
         word += text[i]
         i += text[i] === "'" ? 2 : 1
       }
+      if (i >= text.length) open = true
       i++
     } else if (c === '"') {
       inWord = true
@@ -173,6 +314,7 @@ export function splitShell(text, powershell = false, comments = true) {
           i++
         }
       }
+      if (i >= text.length) open = true
       i++
     } else if (c === '$' && text[i + 1] === '(') {
       i = subshell(i + 2)
@@ -191,7 +333,7 @@ export function splitShell(text, powershell = false, comments = true) {
     }
   }
   endCommand()
-  return { commands, nested }
+  return { commands, nested, open }
 }
 
 /**
@@ -309,9 +451,10 @@ function nextMatch(words, test) {
  * @param {Set<string>} names
  * @param {number} depth
  * @param {boolean} comments the words come from a reading that skips comments
+ * @param {{ left: number }} [limit] the work budget
  * @returns {string | null} the reason, when the command is a direct read
  */
-function readInWords(words, names, depth, comments) {
+function readInWords(words, names, depth, comments, limit) {
   let start = commandStart(words)
   if (start >= words.length) return null
   // An option skipped before the first word may have taken it as its value (`env -u echo …`), so only a start past no option counts as text.
@@ -339,7 +482,7 @@ function readInWords(words, names, depth, comments) {
     if (command === 'eval' && i === start) {
       // eval, as the command, runs every word after it as one script, which settles the rest of the command.
       // A word that only ends in `eval` (`X=/bin/eval`, `find -name eval`, an option's value) runs nothing, and joining the words after it would drop their quoting.
-      return readScript(words.slice(i + 1).join(' '), names, depth + 1, false, comments)
+      return readScript(words.slice(i + 1).join(' '), names, depth + 1, false, comments, limit)
     } else if (command === 'security' || command === 'secret-tool') {
       const sub = plain[i + 1]
       const key = `${command} ${words[sub]}`
@@ -357,7 +500,7 @@ function readInWords(words, names, depth, comments) {
       const kind = powershell ? 'powershell' : 'shell'
       flags[kind] ??= nextMatch(words, (w) => (powershell ? /^-c(ommand)?$/i.test(w) : /^-[a-z]{0,3}c[a-z]{0,3}$/.test(w)))
       const flag = flags[kind][i + 1]
-      /** @type {[string, () => string][]} each script to read, under the key that marks it read; built only when read, so a skipped one costs nothing */
+      /** @type {[string, () => string, boolean?][]} each script to read, under the key that marks it read, and whether to refuse one that ends open; built only when read, so a skipped one costs nothing */
       const scripts = []
       if (flag + 1 >= words.length) {
         // No script follows.
@@ -373,16 +516,20 @@ function readInWords(words, names, depth, comments) {
         // those stretches never overlap, which keeps this linear. The whole tail is read once too, for a script that runs past a later
         // word named pwsh (one whole-tail read per `pwsh -c`, over 200 of them, took minutes). With no PowerShell word after the
         // flag, the stretch is the tail, so it is read once for both: reading it twice doubled the work at each nesting level.
+        // Reading the tail once assumes a later flag would see the same words the same way. A tail that ends inside a quote or a block
+        // comment breaks that: a later `pwsh -c` starts outside it, so what runs after it was never read. Such a tail is refused when
+        // the text names a read tool (S-67, B-32 item 11). The stretch needs no such check: a read it leaves out sits behind a later word
+        // named pwsh, which the tail covers.
         pwshWords ??= nextMatch(words, (w) => SHELLS.has(base(w)) && /^(pwsh|powershell)/.test(base(w)))
         const stop = pwshWords[flag + 1]
         scripts.push([`powershell ${flag}`, () => words.slice(flag + 1, stop).join(' ')])
         if (stop === words.length) checked.add('powershell tail')
-        else scripts.push(['powershell tail', () => words.slice(flag + 1).join(' ')])
+        else scripts.push(['powershell tail', () => words.slice(flag + 1).join(' '), true])
       }
-      for (const [key, script] of scripts) {
+      for (const [key, script, refuseOpen] of scripts) {
         if (found || checked.has(key)) continue
         checked.add(key)
-        found = readScript(script(), names, depth + 1, powershell, comments)
+        found = readScript(script(), names, depth + 1, powershell, comments, limit, refuseOpen)
       }
     }
     if (found) return found
@@ -396,13 +543,16 @@ function readInWords(words, names, depth, comments) {
  * @param {number} depth
  * @param {boolean} powershell read the text as PowerShell, not as a POSIX shell
  * @param {boolean} comments skip comments and look for a read anywhere in a command; false is main's reading
+ * @param {{ left: number }} [limit] the work budget
+ * @param {boolean} [refuseOpen] refuse a text that ends inside a quote, a block comment or `$(` and names a read tool, when nothing else was found
  * @returns {string | null}
  */
-function readInShell(text, names, depth, powershell, comments) {
-  if (depth > 4) return null
-  const { commands, nested } = splitShell(text, powershell, comments)
+function readInShell(text, names, depth, powershell, comments, limit, refuseOpen) {
+  // Past the depth limit the text is not read. A text that names a read tool is refused (S-67, B-32 item 5), so too much nesting never reads as "no read".
+  if (depth > 4) return mentionsRead(text) ? UNREAD : null
+  const { commands, nested, open } = splitShell(text, powershell, comments, limit)
   for (const words of commands) {
-    const found = readInWords(words, names, depth, comments)
+    const found = readInWords(words, names, depth, comments, limit)
     if (found) return found
   }
   // Windows: CredRead through Add-Type (how keyprompt itself reads, `src/store/windows.mjs`), naming a keyprompt target or a saved name.
@@ -412,9 +562,10 @@ function readInShell(text, names, depth, powershell, comments) {
     if (lower.includes(`${SERVICE}:`) || [...names].some((name) => wordIn(text, name))) return READS
   }
   for (const script of nested) {
-    const found = readScript(script, names, depth + 1, powershell, comments)
+    const found = readScript(script, names, depth + 1, powershell, comments, limit)
     if (found) return found
   }
+  if (refuseOpen && open && mentionsRead(text)) return UNCLOSED
   return null
 }
 
@@ -431,10 +582,12 @@ function readInShell(text, names, depth, powershell, comments) {
  * @param {Set<string>} names
  * @param {number} depth
  * @param {boolean} powershell
+ * @param {{ left: number }} [limit] the work budget
+ * @param {boolean} [refuseOpen]
  * @returns {string | null}
  */
-function readBoth(text, names, depth, powershell) {
-  return readInShell(text, names, depth, powershell, true) || readInShell(text, names, depth, powershell, false)
+function readBoth(text, names, depth, powershell, limit, refuseOpen) {
+  return readInShell(text, names, depth, powershell, true, limit, refuseOpen) || readInShell(text, names, depth, powershell, false, limit, refuseOpen)
 }
 
 /**
@@ -448,10 +601,12 @@ function readBoth(text, names, depth, powershell) {
  * @param {number} depth
  * @param {boolean} powershell
  * @param {boolean} comments
+ * @param {{ left: number }} [limit] the work budget
+ * @param {boolean} [refuseOpen]
  * @returns {string | null}
  */
-function readScript(text, names, depth, powershell, comments) {
-  return comments ? readInShell(text, names, depth, powershell, true) : readBoth(text, names, depth, powershell)
+function readScript(text, names, depth, powershell, comments, limit, refuseOpen) {
+  return comments ? readInShell(text, names, depth, powershell, true, limit, refuseOpen) : readBoth(text, names, depth, powershell, limit, refuseOpen)
 }
 
 /**
@@ -467,11 +622,21 @@ function wordIn(text, word) {
  * @param {string} command shell text from a Bash or PowerShell tool call
  * @param {Iterable<string>} [savedNames] names from the catalog (never values)
  * @param {'bash' | 'powershell'} [shell] which shell runs the text; when not known, it is read both ways
+ * @param {number} [workLimit] the characters all the readings may scan together (tests lower it); by default the work budget for the command's length
  * @returns {{ reason: string } | null}
  */
-export function checkCommand(command, savedNames = [], shell) {
+export function checkCommand(command, savedNames = [], shell, workLimit = Math.min(WORK_PER_CHAR * command.length + WORK_BASE, WORK_MOST)) {
   const names = new Set(savedNames)
-  const found = (shell !== 'powershell' && readBoth(command, names, 0, false)) || (shell !== 'bash' && readBoth(command, names, 0, true))
+  const limit = { left: workLimit }
+  /** @type {string | null | false} */
+  let found
+  try {
+    found = (shell !== 'powershell' && readBoth(command, names, 0, false, limit)) || (shell !== 'bash' && readBoth(command, names, 0, true, limit))
+  } catch (error) {
+    if (error !== OUT_OF_WORK) throw error
+    // The budget ran out before a read was found: slowness must never turn into a pass, so a command that names a read tool is refused.
+    found = mentionsRead(command) ? UNREAD : null
+  }
   return found ? { reason: `${found} ${RUN_INSTEAD}` } : null
 }
 
