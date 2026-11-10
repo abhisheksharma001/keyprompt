@@ -88,6 +88,8 @@ const TEXT = [
   `cat <<EOF\n$X ${READ}\nEOF`,
   `ls | head\ncat <<'EOF'\n${READ}\nEOF`,
   `echo mycommands[x]=1\ncat <<'EOF'\n${READ}\nEOF`,
+  // A quoted delimiter can hold a blank: the line E is body, not the end.
+  `cat <<'E O'\nE\n${READ}\nE O`,
 ]
 
 for (const command of TEXT) {
