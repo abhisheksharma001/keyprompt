@@ -40,6 +40,8 @@ const WRAPPERS = new Set(['sudo', 'doas', 'env', 'command', 'builtin', 'exec', '
 const TEXT_ONLY = new Set(['echo', 'printf', 'cat', 'tee', 'grep', 'egrep', 'fgrep', 'rg', 'write-output', 'write-host'])
 /** Shells whose `-c` argument is a script that runs. */
 const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'fish', 'pwsh', 'powershell', 'powershell.exe', 'pwsh.exe'])
+/** Commands whose words after `--` are another command (`keyprompt run X -- COMMAND`), where main's reading looks. */
+const LAUNCHERS = new Set(['keyprompt', 'keyprompt.mjs', 'npx', 'node'])
 /** Tools whose `tool_input.command` is shell text (R-12: PowerShell has the same fields as Bash). */
 const SHELL_TOOLS = new Set(['Bash', 'PowerShell', 'Monitor'])
 /** `security find-generic-password` options that take a value (`man security`, macOS 27.0). */
@@ -59,7 +61,8 @@ function base(word) {
  * comments out the rest of the line; after anything else, such as `)` or `}`,
  * it can be part of a word (`cat <(true)#`, `a=(x)#`, zsh's `(#i)`,
  * PowerShell's `${a}#`), so it is read as text. A line continuation joins two
- * lines.
+ * lines. With `comments` false, `#` and `<#` are plain characters, as main
+ * read them.
  *
  * With `powershell`, the text is read the way PowerShell reads it
  * (about_Quoting_Rules, about_Parsing): the backtick is the escape character
@@ -70,9 +73,10 @@ function base(word) {
  *
  * @param {string} text
  * @param {boolean} [powershell]
+ * @param {boolean} [comments] skip comments
  * @returns {{ commands: string[][], nested: string[] }}
  */
-export function splitShell(text, powershell = false) {
+export function splitShell(text, powershell = false, comments = true) {
   if (powershell) text = text.replace(/[‘’‚‛]/g, "'").replace(/[“”„]/g, '"')
   const escape = powershell ? '`' : '\\'
   /** @type {string[][]} */
@@ -134,10 +138,10 @@ export function splitShell(text, powershell = false) {
         inWord = true
       }
       i += skip || 2
-    } else if (c === '#' && !inWord && (i === 0 || ' \t\n;&|'.includes(text[i - 1]))) {
+    } else if (comments && c === '#' && !inWord && (i === 0 || ' \t\n;&|'.includes(text[i - 1]))) {
       const end = text.indexOf('\n', i)
       i = end === -1 ? text.length : end
-    } else if (powershell && c === '<' && text[i + 1] === '#' && !inWord) {
+    } else if (comments && powershell && c === '<' && text[i + 1] === '#' && !inWord) {
       const end = text.indexOf('#>', i + 2)
       i = end === -1 ? text.length : end + 2
     } else if (c === "'") {
@@ -252,9 +256,10 @@ function secretToolRead(args, names) {
  * their options, `NAME=value` assignments, and PowerShell's `$x =`.
  *
  * @param {string[]} words
+ * @param {number} [from] where the command's words begin
  */
-function commandStart(words) {
-  let i = words.length > 2 && words[1] === '=' ? 2 : 0
+function commandStart(words, from = 0) {
+  let i = words.length > from + 2 && words[from + 1] === '=' ? from + 2 : from
   let wrapper = ''
   while (i < words.length) {
     const w = words[i]
@@ -296,31 +301,46 @@ function nextMatch(words, test) {
  * hook times out after 10 seconds and Claude Code then runs the command
  * (`src/install-guard.mjs`).
  *
+ * With `comments` false this is main's reading: only the command's own word is
+ * looked at (with its options, a shell's `-c` script and `eval`'s words), or
+ * for a launcher the command after its `--`.
+ *
  * @param {string[]} words one simple command
  * @param {Set<string>} names
  * @param {number} depth
+ * @param {boolean} comments the words come from a reading that skips comments
  * @returns {string | null} the reason, when the command is a direct read
  */
-function readInWords(words, names, depth) {
-  const start = commandStart(words)
+function readInWords(words, names, depth, comments) {
+  let start = commandStart(words)
   if (start >= words.length) return null
   // An option skipped before the first word may have taken it as its value (`env -u echo …`), so only a start past no option counts as text.
   if (TEXT_ONLY.has(base(words[start])) && !words.slice(0, start).some((w) => w.startsWith('-'))) return null
+  let from = 0
+  let end = words.length
+  if (!comments) {
+    // Followed in one pass, so `keyprompt -- keyprompt -- …` stays linear.
+    for (let dash; LAUNCHERS.has(base(words[start])) && (dash = words.indexOf('--', start + 1)) !== -1; ) {
+      start = commandStart(words, dash + 1)
+      if (start >= words.length) return null
+    }
+    from = start
+    end = start + 1
+  }
   const checked = new Set()
   const plain = nextMatch(words, (w) => !w.startsWith('-'))
   /** @type {Record<string, number[]>} */
   const flags = {}
   /** @type {number[] | undefined} */
   let pwshWords
-  let end = words.length
-  for (let i = 0; i < end; i++) {
+  for (let i = from; i < end; i++) {
     const command = base(words[i])
     /** @type {string | null} */
     let found = null
     if (command === 'eval' && i === start) {
       // eval, as the command, runs every word after it as one script, which settles the rest of the command.
       // A word that only ends in `eval` (`X=/bin/eval`, `find -name eval`, an option's value) runs nothing, and joining the words after it would drop their quoting.
-      return readInShell(words.slice(i + 1).join(' '), names, depth + 1, false)
+      return readInShell(words.slice(i + 1).join(' '), names, depth + 1, false, comments)
     } else if (command === 'security' || command === 'secret-tool') {
       const sub = plain[i + 1]
       const key = `${command} ${words[sub]}`
@@ -361,7 +381,7 @@ function readInWords(words, names, depth) {
       for (const [key, script] of scripts) {
         if (found || checked.has(key)) continue
         checked.add(key)
-        found = readInShell(script(), names, depth + 1, powershell)
+        found = readInShell(script(), names, depth + 1, powershell, comments)
       }
     }
     if (found) return found
@@ -374,13 +394,14 @@ function readInWords(words, names, depth) {
  * @param {Set<string>} names
  * @param {number} depth
  * @param {boolean} powershell read the text as PowerShell, not as a POSIX shell
+ * @param {boolean} comments skip comments and look for a read anywhere in a command; false is main's reading
  * @returns {string | null}
  */
-function readInShell(text, names, depth, powershell) {
+function readInShell(text, names, depth, powershell, comments) {
   if (depth > 4) return null
-  const { commands, nested } = splitShell(text, powershell)
+  const { commands, nested } = splitShell(text, powershell, comments)
   for (const words of commands) {
-    const found = readInWords(words, names, depth)
+    const found = readInWords(words, names, depth, comments)
     if (found) return found
   }
   // Windows: CredRead through Add-Type (how keyprompt itself reads, `src/store/windows.mjs`), naming a keyprompt target or a saved name.
@@ -390,7 +411,7 @@ function readInShell(text, names, depth, powershell) {
     if (lower.includes(`${SERVICE}:`) || [...names].some((name) => wordIn(text, name))) return READS
   }
   for (const script of nested) {
-    const found = readInShell(script, names, depth + 1, powershell)
+    const found = readInShell(script, names, depth + 1, powershell, comments)
     if (found) return found
   }
   return null
@@ -413,8 +434,13 @@ function wordIn(text, word) {
  */
 export function checkCommand(command, savedNames = [], shell) {
   const names = new Set(savedNames)
-  const found =
-    (shell !== 'powershell' && readInShell(command, names, 0, false)) || (shell !== 'bash' && readInShell(command, names, 0, true))
+  // Each way is read twice: skipping comments and looking for a read anywhere in a command, then as main read it, with no
+  // comments and only each command's own word. A # starts no comment inside `${…}`, `(( ))`, an unquoted here-document line
+  // or PowerShell's `${…}`, so the first reading can miss a read there; the second refuses everything main refused, and
+  // still lets through a comment that only mentions a read (S-57 senior review, round 2).
+  /** @param {boolean} powershell */
+  const read = (powershell) => readInShell(command, names, 0, powershell, true) || readInShell(command, names, 0, powershell, false)
+  const found = (shell !== 'powershell' && read(false)) || (shell !== 'bash' && read(true))
   return found ? { reason: `${found} ${RUN_INSTEAD}` } : null
 }
 
