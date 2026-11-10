@@ -53,6 +53,130 @@ function base(word) {
 }
 
 /**
+ * A text-only name that the command text defines as a function or an alias,
+ * or points at another program (B-32 item 1). Then no here-document body is
+ * read as text, because `cat() { bash; }` makes `cat <<'EOF'` run its body.
+ */
+const REDEFINES =
+  /(?:^|[\s;&|(){}])(?:echo|printf|cat|tee|grep|egrep|fgrep|rg)[ \t]*\(|\bfunction[ \t]+(?:echo|printf|cat|tee|grep|egrep|fgrep|rg)\b|\balias[ \t]+(?:-\S*[ \t]+)*['"]?(?:echo|printf|cat|tee|grep|egrep|fgrep|rg)=|\bhash[ \t]+-p\b|\b(?:functions|aliases)\[/
+/** Words that open and close a compound command; a here-document inside one may have its output piped on after it closes. */
+const OPENERS = new Set(['{', 'if', 'while', 'until', 'for', 'select', 'case'])
+const CLOSERS = new Set(['}', 'fi', 'done', 'esac'])
+
+/**
+ * A here-document operator (`<<WORD` or `<<-WORD`) at `at`: its delimiter
+ * after quote removal, whether any part of WORD is quoted (then bash expands
+ * nothing in the body), and whether `<<-` strips leading tabs. Null for a
+ * WORD the guard does not read with confidence (one that crosses a line or
+ * holds `$`, a backtick or a backslash inside quotes): the `<<` then stays
+ * plain text, as it was before S-58.
+ *
+ * @param {string} text
+ * @param {number} at index of the first `<`
+ * @returns {{ delim: string, quoted: boolean, strip: boolean, next: number } | null}
+ */
+function heredocAt(text, at) {
+  let k = at + 2
+  const strip = text[k] === '-'
+  if (strip) k++
+  while (text[k] === ' ' || text[k] === '\t') k++
+  let delim = ''
+  let quoted = false
+  // Bash's metacharacters end WORD; a carriage return does not, so `EOF\r` needs a line `EOF\r`, as in bash.
+  while (k < text.length && !' \t\n;&|()<>'.includes(text[k])) {
+    const c = text[k]
+    if (c === "'" || c === '"') {
+      const close = text.indexOf(c, k + 1)
+      const part = close === -1 ? '' : text.slice(k + 1, close)
+      if (close === -1 || /[\n\\$`]/.test(part)) return null
+      delim += part
+      quoted = true
+      k = close + 1
+    } else if (c === '\\') {
+      if (k + 1 >= text.length || text[k + 1] === '\n') return null
+      delim += text[k + 1]
+      quoted = true
+      k += 2
+    } else if (c === '$' || c === '`') {
+      return null
+    } else {
+      delim += c
+      k++
+    }
+  }
+  return delim ? { delim, quoted, strip, next: k } : null
+}
+
+/**
+ * Where a here-document's body ends: at the first line equal to its
+ * delimiter (after leading tabs, for `<<-`). In an unquoted body a
+ * backslash-newline first joins two lines, as bash and zsh do (`EO\` then `F`
+ * ends the body), so the guard never reads as text a line the shell runs.
+ *
+ * @param {string} text
+ * @param {number} from index where the body starts
+ * @param {{ delim: string, quoted: boolean, strip: boolean }} doc
+ * @returns {{ end: number, next: number }} where the body's text ends, and the index after the delimiter line (both `text.length` when there is none)
+ */
+function bodyEnd(text, from, doc) {
+  let start = from
+  let line = ''
+  let pos = from
+  while (pos < text.length) {
+    const nl = text.indexOf('\n', pos)
+    const stop = nl === -1 ? text.length : nl
+    let piece = text.slice(pos, stop)
+    if (doc.strip) piece = piece.replace(/^\t+/, '')
+    pos = stop + 1
+    if (!doc.quoted && nl !== -1 && (piece.length - piece.replace(/\\+$/, '').length) % 2 === 1) {
+      line += piece.slice(0, -1)
+      continue
+    }
+    if (line + piece === doc.delim) return { end: start, next: Math.min(pos, text.length) }
+    line = ''
+    start = pos
+  }
+  return { end: text.length, next: text.length }
+}
+
+/**
+ * Whether a `$( )` script is only `cat` fed one here-document that runs
+ * nothing: a quoted delimiter, or an unquoted one whose body holds no `$`,
+ * backtick or backslash. Its output is then that text and nothing else.
+ *
+ * @param {string} script
+ */
+function catText(script) {
+  const head = /^[ \t\n]*cat[ \t]+<</.exec(script)
+  const doc = head && heredocAt(script, head[0].length - 2)
+  const line = doc && /^[ \t]*\n/.exec(script.slice(doc.next))
+  if (!doc || !line) return false
+  const from = doc.next + line[0].length
+  const { end, next } = bodyEnd(script, from, doc)
+  if (end === script.length || !/^[ \t\n]*$/.test(script.slice(next))) return false
+  return doc.quoted || !/[$`\\]/.test(script.slice(from, end))
+}
+
+/** `git` and `gh` subcommands that take a message or a body as text and run none of their arguments. */
+const MESSAGE_TAKERS = { git: ['commit', 'tag', 'notes'], gh: ['pr', 'issue', 'release'] }
+
+/**
+ * Whether a command takes the output of a `$( )` in its words as text only:
+ * a text-only command, or `git commit`, `git tag`, `git notes`, `gh pr`,
+ * `gh issue` or `gh release`, with the subcommand right after the program.
+ * Commands that run a string they are given (`eval`, `bash -c`, `env -S`,
+ * `watch`, `ssh`, `xargs`) are not, nor is a command not yet named.
+ *
+ * @param {string[]} words the command's words so far
+ */
+function takesText(words) {
+  if (textOnly(words)) return true
+  const start = commandStart(words)
+  const subcommands = start < words.length ? MESSAGE_TAKERS[base(words[start])] : undefined
+  return Boolean(subcommands?.includes(words[start + 1]) && !words.slice(0, start).some((w) => w.startsWith('-')))
+}
+
+/**
  * Split shell text into simple commands (lists of words, quotes removed) at
  * `;`, `&`, `|`, newlines and parentheses. Text inside `$(...)` or backticks,
  * even within double quotes, comes back as a nested script, because the shell
@@ -71,12 +195,29 @@ function base(word) {
  * backticks run nothing, and `<#` where a word starts opens a comment that
  * ends at the first `#>` (about_Comments; tokenizer.cs, ScanBlockComment).
  *
+ * Bash here-documents (S-58, B-26). A `<<WORD` or `<<-WORD` that starts a
+ * word, with no `${` before it in the text (bash starts none inside `${…}`),
+ * has a body: the lines after the end of its line, up to the delimiter line.
+ * The body is text, skipped, only when every here-document on the line feeds
+ * a command that only prints or stores text (`cat`, `tee`: TEXT_ONLY), no
+ * command on the line pipes its output on or opens `(` (`| bash`, `>(bash)`,
+ * `<(…)`), none sits inside a group or loop whose output can be piped on
+ * after it closes, the text defines no text-only name (REDEFINES), and the
+ * text is not `strict`. An unquoted text body still runs `$( )` and
+ * backticks, which are checked. Otherwise the body is read as commands, as
+ * before S-58, and so is every here-document after it in the text. `$( )`
+ * and backtick scripts are read `strict`, because their output can be run;
+ * one exception: `$(cat <<'EOF' … EOF)` that runs nothing (catText), in a
+ * command that takes it as text only (takesText: a commit message, a pull
+ * request body), on the same terms as a body, is not read at all.
+ *
  * @param {string} text
  * @param {boolean} [powershell]
  * @param {boolean} [comments] skip comments
- * @returns {{ commands: string[][], nested: string[] }}
+ * @param {boolean} [strict] the text's output may be run, so no here-document body is text
+ * @returns {{ commands: string[][], nested: string[], runs: boolean[] }}
  */
-export function splitShell(text, powershell = false, comments = true) {
+export function splitShell(text, powershell = false, comments = true, strict = false) {
   if (powershell) text = text.replace(/[‘’‚‛]/g, "'").replace(/[“”„]/g, '"')
   const escape = powershell ? '`' : '\\'
   /** @type {string[][]} */
@@ -87,28 +228,113 @@ export function splitShell(text, powershell = false, comments = true) {
   let words = []
   let word = ''
   let inWord = false
+  /** @type {{ delim: string, quoted: boolean, strip: boolean, words: string[], top: boolean }[]} here-documents whose body starts after this line */
+  let pending = []
+  /** @type {string[]} `$( )` scripts on this line not read, as text (see takesText) */
+  let texts = []
+  let piped = false
+  let parens = 0
+  let blocks = 0
+  let rest = strict
+  /** @type {boolean[]} for each command, whether its output may be run: its own scripts are then read strict */
+  const runs = []
+  let lineStart = 0
+  const braced = powershell ? 0 : text.indexOf('${')
   const endWord = () => {
-    if (inWord) words.push(word)
+    if (inWord) {
+      if (words.length === 0 && !powershell) {
+        if (OPENERS.has(word)) blocks++
+        else if (CLOSERS.has(word)) blocks = Math.max(0, blocks - 1)
+        // `exec > >(bash)` sends every later line's output to a shell, and a coprocess can take it; so is every body after them.
+        else if (word === 'exec' || word === 'coproc') rest = true
+      }
+      words.push(word)
+    }
     word = ''
     inWord = false
   }
   const endCommand = () => {
     endWord()
-    if (words.length > 0) commands.push(words)
+    if (words.length > 0) {
+      commands.push(words)
+      runs.push(rest || parens > 0 || blocks > 0)
+    }
     words = []
   }
   /** @param {number} start index just after `$(` @returns {number} index after the matching `)` */
   const subshell = (start) => {
     let depth = 1
     let j = start
+    /** @type {{ delim: string, quoted: boolean, strip: boolean }[]} */
+    let docs = []
     while (j < text.length && depth > 0) {
       if (text[j] === escape) j++
       else if (text[j] === '(') depth++
       else if (text[j] === ')') depth--
+      else if (!powershell && text[j] === '<' && text[j + 1] === '<') {
+        // A here-document's body can hold any `)` (`item 1)` in a commit message), so it is passed over to its delimiter line.
+        const doc = text[j + 2] === '<' ? null : heredocAt(text, j)
+        if (doc) docs.push(doc)
+        j = doc ? doc.next - 1 : j + (text[j + 2] === '<' ? 2 : 1)
+      } else if (text[j] === '\n' && docs.length > 0) {
+        let next = j + 1
+        for (const doc of docs) next = bodyEnd(text, next, doc).next
+        docs = []
+        j = next - 1
+      }
       j++
     }
     nested.push(text.slice(start, depth === 0 ? j - 1 : j))
     return j
+  }
+  /**
+   * `$( )`: its script is nested, unless it is only text for a command that takes it as text (catText, takesText), on
+   * the same terms as a here-document body: not in a strict text, a group or a loop. @param {number} start index just
+   * after `$(` @returns {number}
+   */
+  const substitute = (start) => {
+    const at = nested.length
+    const end = subshell(start)
+    if (!powershell && !rest && parens === 0 && blocks === 0 && takesText(words) && catText(nested[at])) texts.push(...nested.splice(at))
+    return end
+  }
+  /** An unquoted text body: its `$( )` and backticks run, so they are nested. @param {number} from @param {number} to */
+  const expansions = (from, to) => {
+    for (let j = from; j < to; ) {
+      if (text[j] === '\\') j += 2
+      else if (text[j] === '$' && text[j + 1] === '(') j = subshell(j + 2)
+      else if (text[j] === '`') j = backtick(j + 1)
+      else j++
+    }
+  }
+  /**
+   * The end of a line: decide its here-documents (see above) and, when the line pipes its output on, read the `$( )`
+   * scripts it took as text after all. @param {number} at index after the newline @returns {number} where reading goes on
+   */
+  const endLine = (at) => {
+    if (piped) {
+      nested.push(...texts)
+      runs.fill(true, lineStart)
+    }
+    texts = []
+    let next = at
+    if (pending.length > 0) {
+      if (!rest && !piped && pending.every((doc) => doc.top && textOnly(doc.words))) {
+        for (const doc of pending) {
+          const body = bodyEnd(text, next, doc)
+          if (!doc.quoted) expansions(next, body.end)
+          next = body.next
+        }
+      } else {
+        rest = true
+      }
+      pending = []
+    }
+    // Once a line pipes its output on or opens `(`, every later body is read as commands too (`exec > >(bash)` is such a line).
+    if (piped) rest = true
+    piped = false
+    lineStart = commands.length
+    return next
   }
   /** @param {number} start index just after the opening backtick @returns {number} */
   const backtick = (start) => {
@@ -165,7 +391,7 @@ export function splitShell(text, powershell = false, comments = true) {
           if (skip === 0) word += powershell || '$`"\\'.includes(text[i + 1]) ? text[i + 1] : text[i] + text[i + 1]
           i += skip || 2
         } else if (text[i] === '$' && text[i + 1] === '(') {
-          i = subshell(i + 2)
+          i = substitute(i + 2)
         } else if (text[i] === '`') {
           i = backtick(i + 1)
         } else {
@@ -175,12 +401,26 @@ export function splitShell(text, powershell = false, comments = true) {
       }
       i++
     } else if (c === '$' && text[i + 1] === '(') {
-      i = subshell(i + 2)
+      i = substitute(i + 2)
     } else if (c === '`') {
       i = backtick(i + 1)
+    } else if (!powershell && c === '<' && text.startsWith('<<', i) && text[i + 2] !== '<' && !inWord && (braced === -1 || braced > i)) {
+      const doc = heredocAt(text, i)
+      if (doc) {
+        pending.push({ ...doc, words, top: parens === 0 && blocks === 0 })
+        i = doc.next
+      } else {
+        word += '<<'
+        inWord = true
+        i += 2
+      }
     } else if (separators.includes(c)) {
+      if (c === '(' || (c === '|' && text[i + 1] !== '|' && text[i - 1] !== '|')) piped = true
+      if (c === '(') parens++
+      else if (c === ')') parens = Math.max(0, parens - 1)
       endCommand()
       i++
+      if (c === '\n') i = endLine(i)
     } else if (c === ' ' || c === '\t' || c === '\r') {
       endWord()
       i++
@@ -191,7 +431,8 @@ export function splitShell(text, powershell = false, comments = true) {
     }
   }
   endCommand()
-  return { commands, nested }
+  endLine(text.length)
+  return { commands, nested, runs }
 }
 
 /**
@@ -273,6 +514,18 @@ function commandStart(words, from = 0) {
   return i
 }
 
+/**
+ * Whether a command only prints, searches or stores text (S-57): its first
+ * word past wrappers is in TEXT_ONLY, and no option skipped before that word
+ * could have taken it as its value (`env -u echo …`).
+ *
+ * @param {string[]} words
+ */
+function textOnly(words) {
+  const start = commandStart(words)
+  return start < words.length && TEXT_ONLY.has(base(words[start])) && !words.slice(0, start).some((w) => w.startsWith('-'))
+}
+
 /** @type {Record<string, string[]>} the subcommands of each store's read tool that read */
 const READ_SUBCOMMANDS = { security: ['find-generic-password', 'dump-keychain'], 'secret-tool': ['lookup', 'search'] }
 
@@ -309,13 +562,12 @@ function nextMatch(words, test) {
  * @param {Set<string>} names
  * @param {number} depth
  * @param {boolean} comments the words come from a reading that skips comments
+ * @param {boolean} strict the command's output may be run (see splitShell)
  * @returns {string | null} the reason, when the command is a direct read
  */
-function readInWords(words, names, depth, comments) {
+function readInWords(words, names, depth, comments, strict) {
   let start = commandStart(words)
-  if (start >= words.length) return null
-  // An option skipped before the first word may have taken it as its value (`env -u echo …`), so only a start past no option counts as text.
-  if (TEXT_ONLY.has(base(words[start])) && !words.slice(0, start).some((w) => w.startsWith('-'))) return null
+  if (start >= words.length || textOnly(words)) return null
   let end = words.length
   if (!comments) {
     // Followed in one pass, so `keyprompt -- keyprompt -- …` stays linear.
@@ -339,7 +591,7 @@ function readInWords(words, names, depth, comments) {
     if (command === 'eval' && i === start) {
       // eval, as the command, runs every word after it as one script, which settles the rest of the command.
       // A word that only ends in `eval` (`X=/bin/eval`, `find -name eval`, an option's value) runs nothing, and joining the words after it would drop their quoting.
-      return readScript(words.slice(i + 1).join(' '), names, depth + 1, false, comments)
+      return readScript(words.slice(i + 1).join(' '), names, depth + 1, false, comments, strict)
     } else if (command === 'security' || command === 'secret-tool') {
       const sub = plain[i + 1]
       const key = `${command} ${words[sub]}`
@@ -382,7 +634,7 @@ function readInWords(words, names, depth, comments) {
       for (const [key, script] of scripts) {
         if (found || checked.has(key)) continue
         checked.add(key)
-        found = readScript(script(), names, depth + 1, powershell, comments)
+        found = readScript(script(), names, depth + 1, powershell, comments, strict)
       }
     }
     if (found) return found
@@ -396,13 +648,14 @@ function readInWords(words, names, depth, comments) {
  * @param {number} depth
  * @param {boolean} powershell read the text as PowerShell, not as a POSIX shell
  * @param {boolean} comments skip comments and look for a read anywhere in a command; false is main's reading
+ * @param {boolean} strict the text's output may be run; `$( )` and backtick scripts always are read so (S-58)
  * @returns {string | null}
  */
-function readInShell(text, names, depth, powershell, comments) {
+function readInShell(text, names, depth, powershell, comments, strict) {
   if (depth > 4) return null
-  const { commands, nested } = splitShell(text, powershell, comments)
-  for (const words of commands) {
-    const found = readInWords(words, names, depth, comments)
+  const { commands, nested, runs } = splitShell(text, powershell, comments, strict)
+  for (const [k, words] of commands.entries()) {
+    const found = readInWords(words, names, depth, comments, runs[k])
     if (found) return found
   }
   // Windows: CredRead through Add-Type (how keyprompt itself reads, `src/store/windows.mjs`), naming a keyprompt target or a saved name.
@@ -412,7 +665,7 @@ function readInShell(text, names, depth, powershell, comments) {
     if (lower.includes(`${SERVICE}:`) || [...names].some((name) => wordIn(text, name))) return READS
   }
   for (const script of nested) {
-    const found = readScript(script, names, depth + 1, powershell, comments)
+    const found = readScript(script, names, depth + 1, powershell, comments, true)
     if (found) return found
   }
   return null
@@ -431,10 +684,11 @@ function readInShell(text, names, depth, powershell, comments) {
  * @param {Set<string>} names
  * @param {number} depth
  * @param {boolean} powershell
+ * @param {boolean} strict
  * @returns {string | null}
  */
-function readBoth(text, names, depth, powershell) {
-  return readInShell(text, names, depth, powershell, true) || readInShell(text, names, depth, powershell, false)
+function readBoth(text, names, depth, powershell, strict) {
+  return readInShell(text, names, depth, powershell, true, strict) || readInShell(text, names, depth, powershell, false, strict)
 }
 
 /**
@@ -448,10 +702,11 @@ function readBoth(text, names, depth, powershell) {
  * @param {number} depth
  * @param {boolean} powershell
  * @param {boolean} comments
+ * @param {boolean} strict
  * @returns {string | null}
  */
-function readScript(text, names, depth, powershell, comments) {
-  return comments ? readInShell(text, names, depth, powershell, true) : readBoth(text, names, depth, powershell)
+function readScript(text, names, depth, powershell, comments, strict) {
+  return comments ? readInShell(text, names, depth, powershell, true, strict) : readBoth(text, names, depth, powershell, strict)
 }
 
 /**
@@ -471,7 +726,8 @@ function wordIn(text, word) {
  */
 export function checkCommand(command, savedNames = [], shell) {
   const names = new Set(savedNames)
-  const found = (shell !== 'powershell' && readBoth(command, names, 0, false)) || (shell !== 'bash' && readBoth(command, names, 0, true))
+  const strict = REDEFINES.test(command)
+  const found = (shell !== 'powershell' && readBoth(command, names, 0, false, strict)) || (shell !== 'bash' && readBoth(command, names, 0, true, strict))
   return found ? { reason: `${found} ${RUN_INSTEAD}` } : null
 }
 
