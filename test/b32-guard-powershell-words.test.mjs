@@ -160,9 +160,9 @@ test('assignments chained in one word are each split, so the cmdlet at the end i
 // --- Tighten only: a split never turns a refusal into a pass -------------------------------------------------
 
 test('a command that main refuses before a text-only word is still refused after the split (found by the differential run)', () => {
-  // Main could not see the command word behind a glued assignment or a `-Command:`, so it read the whole text and refused. With the split the
-  // command word is seen, and a text-only word (echo, cat, Write-Output ...) would be let through unread. A split marks the command, so such a
-  // word is read like `eval` (S-68), and what main refused stays refused.
+  // Main could not see the command word behind a glued assignment or a `-Command:`, so it read the whole text and refused. In the split copy the
+  // command word is seen, and a text-only word (echo, cat, Write-Output ...) is let through unread there. The command is also read as main read it
+  // (the first of the two commands splitShell returns), so what main refused stays refused.
   for (const text of [
     '$c= echo security find-generic-password -s keyprompt -w',
     '$x%= Write-Output Get-StoredCredential -Target keyprompt:X',

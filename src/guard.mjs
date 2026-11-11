@@ -228,6 +228,8 @@ function mentionsRead(text) {
  * curly quotes are quotes (CharTraits.cs), braces also end a command,
  * backticks run nothing, and `<#` where a word starts opens a comment that
  * ends at the first `#>` (about_Comments; tokenizer.cs, ScanBlockComment).
+ * A command with a word PowerShell splits (`-Name:value`, `$x=Cmdlet`; S-69) comes back twice in `commands`: the words as Bash reads
+ * them, then the words with the splits made. The first is what main read, so nothing main refused can be lost.
  *
  * `open` is true when the text ends inside something it opened and never
  * closed: a quote, a `<#` comment, `$(` or a backtick (S-67).
@@ -273,7 +275,8 @@ export function splitShell(text, powershell = false, comments = true, limit) {
         firstSplit = split.length
       }
       words.push(word)
-      if (split) split.push(...(pieces ?? [word]))
+      // Pushed one at a time: spreading a word of 100,000 or more pieces into `push` throws, and a guard that throws lets the command run.
+      if (split) for (const piece of pieces ?? [word]) split.push(piece)
       lastWord = word
     }
     word = ''
