@@ -455,13 +455,13 @@ Found by S-67 (PR #69, 2026-11-11) and its four senior reviews, 21 to 27. String
 
 ### B-36 — The S-66 timing test cannot see a doubled read once the guard has a work budget
 
-**Seen:** 2026-11-11, by S-67's builder (memo item O-6), reading `checkCommand` after PR #69 gave it a work budget as its fourth argument. The nested-pwsh timing test in `test/b25-guard-plain-forms.test.mjs` (changed by S-66, PR #67) feeds a command that names no read tool. When a reading is doubled by mistake, the work budget runs out sooner, the guard answers `null` and stops, and the test finishes quickly and passes. By reading the code; not shown by a run. The test change S-76 starts by making the tail read twice on main and running the test.
+**Seen:** 2026-11-11, by S-67's builder (memo item O-6), reading `checkCommand` after PR #69 gave it a work budget as its fourth argument. The nested-pwsh timing test in `test/b25-guard-plain-forms.test.mjs` (changed by S-66, PR #67) feeds a command that names no read tool. When a reading is doubled by mistake, the work budget runs out sooner, the guard answers `null` and stops, and the test finishes quickly and passes. Found by reading the code, then shown by a run on 2026-11-11 (S-76): see the fix step below.
 **Requirement:** none of its own: S-66 exists so that later readings cannot be added without a timing check.
 **Needs first:** S-67 merged (done).
 **Blocks:** S-68 (the next reading added to the guard).
 **Files:** `test/b25-guard-plain-forms.test.mjs` (the one timing test); a test-change step of its own (rule 19).
-**Research:** none · **Model:** sonnet · **Confidence:** 0.7 that the blind spot is real (read, not run).
+**Research:** none · **Model:** sonnet · **Confidence:** 0.7 when written; shown by a run in S-76 (3 of 3 runs, then the reviewer by a character count).
 **Introduced by:** PR #69 (S-67), which added the budget; S-66 (PR #67) wrote the test before it existed.
 **Escaped past:** S-67's tests and four senior reviews did not catch it; the builder found it afterwards.
 **New check:** S-76's break test: make the tail read twice, and the changed test fails. Before the change, the same break should pass the test; if it already fails, the bug is not real and S-76 is closed.
-**Fix step:** S-76 (`docs/steps.md`): pass `Infinity` as the fourth argument inside the test's child process, so the test measures the reading and not the cut-off.
+**Fix step:** S-76 (`docs/steps.md`): pass `Infinity` as the fourth argument inside the test's child process, so the test measures the reading and not the cut-off. **Fixed 2026-11-11 (PR #71).** The blind spot was shown by a run: with the tail read doubled on main, the unchanged test passed 3 of 3 runs; the changed test fails it, and the S-76 reviewer counted 4.6 to 4.9 times the budget scanned by the doubled read.
