@@ -220,7 +220,7 @@ test('eval behind a modifier is read word by word as well, because joining the w
 
 test('splitShell says a text defines a function or alias only for a word that does (item 1)', () => {
   const defines = (/** @type {string} */ text, powershell = false) => splitShell(text, powershell).defines
-  for (const text of ['f() { :; }', 'f () { :; }', 'f ( ) { :; }', 'f\t()', 'f( )', 'x; f() :', 'echo() ( x )', 'e\'\'cho()', 'function x', 'FUNCTION x', 'Function x', 'alias a=b', 'Set-Alias a b', 'new-alias a b', 'sal a b', 'NAL a b', 'fun""ction x', 'fun\\ction x']) {
+  for (const text of ['f() { :; }', 'f () { :; }', 'f ( ) { :; }', 'f\t()', 'f( )', 'f(\t)', 'f(  \t )', 'f ( \t) ', 'x; f() :', 'echo() ( x )', 'e\'\'cho()', 'function x', 'FUNCTION x', 'Function x', 'alias a=b', 'Set-Alias a b', 'new-alias a b', 'sal a b', 'NAL a b', 'fun""ction x', 'fun\\ction x']) {
     assert.equal(defines(text), true, text)
   }
   for (const text of ['', 'echo hi', 'a=()', 'a=( )', 'cat <()', 'cat >()', 'true; ()', 'true;()', 'true\n()', 'true | ()', '(())', '(( x ))', ' ()', '\t ()', '()', '{ () }', 'echo $()', 'echo $( )', 'functions x', 'aliases', 'xalias', '"my function"', "'alias a'", 'echo "f()"', 'echo \'f()\'', 'x (y)', 'x ( y )', 'a & ()', 'a && ()']) {
@@ -351,4 +351,35 @@ test('an `eval` word that is not the command is not joined with the words after 
   ]) {
     denied(text, 'powershell')
   }
+})
+
+test('the pieces of the -c and `security` readings that only the exact shapes pin (items 4, 10)', () => {
+  // `--` ends the options: the word after it is the script even when it looks like an option.
+  allowed(`bash -c -- -e '${READ}'`, 'bash')
+  denied(`bash -c -- '${READ}' -e`, 'bash')
+  // An option that starts with two dashes takes no value, so `ls` is the script and the next word an argument.
+  allowed(`bash -c --norc 'ls' '${READ}'`, 'bash')
+  // A word that only ends like the flag is not the flag.
+  allowed(`bash a-c '${READ}'`, 'bash')
+  allowed(`bash -x-c '${READ}'`, 'bash')
+  // Two `-c` flags in one command are each read.
+  denied(`bash -c ls bash -c '${READ}'`, 'bash')
+  denied(`sh -c true; bash -c -e '${READ}'`, 'bash')
+  // `-px` carries its value, so the word after it is the subcommand (and is not a read).
+  allowed('security -px x find-generic-password -s keyprompt -w', 'bash')
+  // Both readings of where the subcommand is count, each once, and one that finds a read is not overwritten by one that finds none.
+  denied('security -p dump-keychain find-generic-password -s keyprompt -w', 'bash')
+  denied('security -p find-generic-password dump-keychain -s keyprompt -w', 'bash')
+  denied('security -p find-generic-password dump-keychain -d x', 'bash')
+})
+
+test('an `eval` word that is not the command runs nothing, so what follows it is not read as its script (item 12)', () => {
+  for (const text of [`ls eval "${READ}"`, `find . -name eval "${READ}"`, `x=1 ls eval '${READ}'`]) allowed(text, 'bash')
+})
+
+test('the -c words are listed once per flag however many shell words come before it (items 4, 10)', () => {
+  const start = Date.now()
+  const found = checkCommand('bash '.repeat(20000) + '-c ' + '-e '.repeat(100000) + `'${READ}'`, SAVED, 'bash')
+  assert.ok(found, 'a read at the end of 100,000 options is refused')
+  assert.ok(Date.now() - start < 6000, `took ${Date.now() - start} ms`)
 })

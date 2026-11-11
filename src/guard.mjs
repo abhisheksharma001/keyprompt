@@ -487,7 +487,8 @@ function securitySubs(words) {
  * The words after a POSIX shell's `-c` flag that can be its script (S-68, B-32 item 4; open flag F4: bash and zsh, checked with
  * `echo` on bash 3.2 and zsh 5.9, and the GNU Bash manual, "Invoking Bash"). The script is the first word that is not an option;
  * `--` ends the options; an option with `o` or `O` in it (`-o`, `+o`, `-O`, `-co`) takes the next word as its value, which is read
- * as a script too (zsh takes the value of `-O` as the script). The word right after the flag is always read, as main read it.
+ * as a script too (zsh takes the value of `-O` as the script). The word right after the flag is always read, as main read it. An index
+ * can be listed twice; the caller reads each once.
  *
  * @param {string[]} words
  * @param {number} flag index of the `-c` word
@@ -501,14 +502,14 @@ function shellScripts(words, flag) {
     const w = words[k]
     if (value) {
       value = false
-      if (k !== flag + 1) out.push(k)
+      out.push(k)
     } else if (w === '--') {
       if (k + 1 < words.length) out.push(k + 1)
       break
     } else if (w.startsWith('-') || w.startsWith('+')) {
       value = takesValue(w)
     } else {
-      if (k !== flag + 1) out.push(k)
+      out.push(k)
       break
     }
   }
@@ -601,7 +602,7 @@ function readInWords(words, names, depth, comments, limit) {
       // `security` also gets the subcommand found past the value of each `-p` (S-68, B-32 item 10); the first word that is not an option stays a
       // candidate too, so nothing main refuses is let through. Whether `security -p x find-generic-password …` runs the subcommand was not checked (F14).
       if (command === 'security') securitySub ??= securitySubs(words)
-      for (const sub of command === 'security' && securitySub[i + 1] !== plain[i + 1] ? [plain[i + 1], securitySub[i + 1]] : [plain[i + 1]]) {
+      for (const sub of command === 'security' ? [plain[i + 1], securitySub[i + 1]] : [plain[i + 1]]) {
         const key = `${command} ${words[sub]}`
         if (READ_SUBCOMMANDS[command].includes(words[sub]) && !checked.has(key)) {
           checked.add(key)
