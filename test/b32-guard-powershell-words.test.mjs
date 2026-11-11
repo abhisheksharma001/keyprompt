@@ -50,12 +50,30 @@ test('the colon stays where PowerShell puts it: only a word that starts with a h
   // Quoted or not, the word PowerShell sees is the same (splitting a quoted word can only add a refusal).
   assert.deepEqual(ps("cmd '-a:b'"), [['cmd', '-a', 'b']])
   assert.deepEqual(ps('cmd "-a:b"'), [['cmd', '-a', 'b']])
-  assert.deepEqual(ps('cmd -a:"b c"'), [['cmd', '-a', 'b c']])
+  // A word with a blank in it (it can only come from quotes) stays whole: it may be the script that `bash -c` or `sh -c` takes as one word.
+  assert.deepEqual(ps('cmd -a:"b c"'), [['cmd', '-a:b c']])
+  assert.deepEqual(ps('cmd "-a:b c"'), [['cmd', '-a:b c']])
+  assert.deepEqual(ps("cmd '-a:b\tc'"), [['cmd', '-a:b\tc']])
   // Nothing after the colon: the parameter name only.
   assert.deepEqual(ps('cmd -a:'), [['cmd', '-a']])
   // Not split: no hyphen first, no colon, or a hyphen alone.
   assert.deepEqual(ps('cmd a:b -ab - -- keyprompt:X'), [['cmd', 'a:b', '-ab', '-', '--', 'keyprompt:X']])
   assert.deepEqual(ps('Get-Date -Format yyyy:MM'), [['Get-Date', '-Format', 'yyyy:MM']])
+})
+
+test('the service name is refused whatever its case, so splitting at a colon loses no refusal (found by the differential run)', () => {
+  // Read as one word, `-sKeyPrompt:X` named keyprompt by its lower-cased prefix `keyprompt:`. Split at the colon, the value is `KeyPrompt`.
+  for (const text of [
+    'security find-generic-password -w -sKeyPrompt:X',
+    'security find-generic-password -wsKEYPROMPT:x',
+    'security find-generic-password -w -s KeyPrompt',
+    'security find-generic-password -g -s:KeyPrompt:X',
+    'secret-tool lookup service KeyPrompt',
+  ]) {
+    denied(text, 'powershell')
+    denied(text)
+    denied(text, 'bash')
+  }
 })
 
 // --- Item 16: an assignment glued to the cmdlet ----------------------------------------------------------
@@ -85,8 +103,10 @@ test('an assignment is split into the name, a plain =, and the rest (item 16)', 
   assert.deepEqual(ps('$c%=Get-X'), [['$c', '=', 'Get-X']])
   assert.deepEqual(ps('$c??=Get-X'), [['$c', '=', 'Get-X']])
   assert.deepEqual(ps('$env:C=Get-X'), [['$env:C', '=', 'Get-X']])
-  // Quoted or not.
+  // Quoted or not, unless the word has a blank in it.
   assert.deepEqual(ps('"$c=Get-X"'), [['$c', '=', 'Get-X']])
+  assert.deepEqual(ps('"$c=Get-X y"'), [['$c=Get-X y']])
+  assert.deepEqual(ps("'$c=Get-X\ny'"), [["$c=Get-X\ny"]])
   // Nothing after the operator: the name and the =.
   assert.deepEqual(ps('$c='), [['$c', '=']])
   assert.deepEqual(ps('$c+='), [['$c', '=']])
@@ -94,6 +114,24 @@ test('an assignment is split into the name, a plain =, and the rest (item 16)', 
   assert.deepEqual(ps('$c=a=b'), [['$c', '=', 'a=b']])
   // Not split: no $ first, or no operator.
   assert.deepEqual(ps('c=Get-X $c Get-X=1 --x=1'), [['c=Get-X', '$c', 'Get-X=1', '--x=1']])
+})
+
+// --- A script word is never split ----------------------------------------------------------------------------
+
+test('a word that is a whole script, as bash -c takes it, is not split into pieces (found by the differential run)', () => {
+  const READ = 'security find-generic-password -s keyprompt -w'
+  for (const text of [
+    `bash -c "$c=Get-StoredCredential -Target keyprompt:X +o ${READ}"`,
+    `bash -c '$c=echo; ${READ}'`,
+    `bash -c "-a:b ${READ}"`,
+    `sh -c "$x%= ${READ}"`,
+    `zsh -c '-Target:keyprompt:X; ${READ}'`,
+    `bash -c "$c=1 ${READ}"`,
+    `bash -c '$c+=1 secret-tool lookup service keyprompt'`,
+  ]) {
+    denied(text, 'powershell')
+    denied(text)
+  }
 })
 
 // --- Bash is unchanged -------------------------------------------------------------------------------------
