@@ -530,3 +530,16 @@ test('N2: text nested past the depth limit is not read, so a text-only command a
   // Deep text with no definition and no read in it changes nothing.
   assert.equal(checkCommand('echo $('.repeat(6) + 'true' + ')'.repeat(6) + '; echo hi', SAVED, 'bash'), null)
 })
+
+test('B1 (third review): the subcommand found past -p does not use up the check that main\'s own candidate needs', () => {
+  // `security -p security -p dump-keychain -d dump-keychain`: from the first `security` the new reading ends at the last `dump-keychain`
+  // (nothing after it, no read); from the second `security`, main's reading starts at the first `dump-keychain` and finds `-d`. Both candidates
+  // used one key, so the second was skipped and a string main refuses was let through.
+  for (const text of [
+    'security -p security -p dump-keychain -d dump-keychain',
+    'security -p security -p find-generic-password -w find-generic-password -s keyprompt',
+    'x; security -p security -p dump-keychain -d dump-keychain',
+  ]) {
+    for (const shell of ['bash', 'powershell', undefined]) denied(text, shell)
+  }
+})

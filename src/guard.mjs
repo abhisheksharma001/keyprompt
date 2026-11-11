@@ -648,7 +648,9 @@ function readInWords(words, names, depth, comments, limit) {
       // candidate too, so nothing main refuses is let through. Whether `security -p x find-generic-password …` runs the subcommand was not checked (F14).
       if (command === 'security') securitySub ??= securitySubs(words)
       for (const sub of command === 'security' ? [plain[i + 1], securitySub[i + 1]] : [plain[i + 1]]) {
-        const key = `${command} ${words[sub]}`
+        // The candidate found past a `-p` has its own key: it reads from a different word than main's candidate, which must not be skipped
+        // because this one was read first. It is not read again where it is main's candidate (the same word).
+        const key = sub === plain[i + 1] ? `${command} ${words[sub]}` : `${command} -p ${words[sub]}`
         if (READ_SUBCOMMANDS[command].includes(words[sub]) && !checked.has(key)) {
           checked.add(key)
           found = (command === 'security' ? securityRead : secretToolRead)(words.slice(sub), names)
