@@ -457,19 +457,27 @@ test('a redefined text-only word has its words read one by one as well as joined
 // --- Findings of the senior review of the second head (bef00ee) ---------------------------------------------------
 
 test('BL1: a long run of option values after -c costs a bounded number of readings', () => {
-  // Whatever the answer is (a value of -O is the script in zsh; a -o value is not), it comes fast, and the 8 MB shape of the review does too.
-  for (const unit of ['-o x ', '-O x ', '+O x ', 'x -o ', 'x -O ']) {
-    const start = Date.now()
-    const command = 'bash -co ' + unit.repeat(400000) + `'${READ}'`
-    checkCommand(command, SAVED, undefined)
-    assert.ok(Date.now() - start < 3000, `${unit}: ${command.length} characters took ${Date.now() - start} ms`)
+  // Measured against the same command with every option value turned into a plain `-e` flag (same length, no value to read), median of 3 runs,
+  // so a slow or busy machine slows both. Before the fix this ratio was about 10 at 2 MB.
+  const median = (command) => {
+    const times = [0, 1, 2].map(() => {
+      const start = process.hrtime.bigint()
+      checkCommand(command, SAVED, undefined)
+      return Number(process.hrtime.bigint() - start) / 1e6
+    })
+    return times.sort((a, b) => a - b)[1]
+  }
+  // `bash -c` then option values, then a script `y` that takes the read as an argument; and `bash -co` with the shape of the 8 MB review case.
+  for (const [prefix, unit, suffix] of [['bash -c ', '-o x ', `y '${READ}'`], ['bash -c ', '-O x ', `y '${READ}'`], ['bash -c ', '+O x ', 'y'], ['bash -co ', 'x -o ', `'${READ}'`]]) {
+    const shape = (word) => prefix + unit.replace(/[-+][oO]/, word).repeat(400000) + suffix
+    const took = median(shape(unit.match(/[-+][oO]/)[0]))
+    const flat = median(shape('-e'))
+    assert.ok(took < 3 * flat + 300, `${prefix}${JSON.stringify(unit)}: ${took.toFixed(0)} ms against ${flat.toFixed(0)} ms for the same length of plain flags`)
   }
   // The value of the last -O is the script: refused.
   assert.ok(checkCommand('zsh -c ' + '-O x '.repeat(1000) + `-O '${READ}'`, SAVED, 'bash'))
-  // Without a read in it, a command that long is let through, and just as fast.
-  const start = Date.now()
+  // Without a read in it, a command that long is let through.
   assert.equal(checkCommand('bash -c ' + '-O x '.repeat(400000) + 'y', SAVED, undefined), null)
-  assert.ok(Date.now() - start < 3000, `took ${Date.now() - start} ms`)
 })
 
 test('each script S-68 reads besides the word after -c costs a fixed amount of the work budget (BL1)', () => {
