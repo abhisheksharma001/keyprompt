@@ -218,19 +218,17 @@ test('eval behind a modifier is read word by word as well, because joining the w
 
 // --- The pieces behind the rules, pinned one by one --------------------------------------------------------------
 
-test('splitShell says a text defines a function or alias only for a word that does (item 1)', () => {
+test('splitShell says a text defines a function only for a word followed by `()` (item 1)', () => {
   const defines = (/** @type {string} */ text, powershell = false) => splitShell(text, powershell).defines
-  for (const text of ['f() { :; }', 'f () { :; }', 'f ( ) { :; }', 'f\t()', 'f( )', 'f(\t)', 'f(  \t )', 'f ( \t) ', 'x; f() :', 'echo() ( x )', 'e\'\'cho()', 'function x', 'FUNCTION x', 'Function x', 'alias a=b', 'Set-Alias a b', 'new-alias a b', 'sal a b', 'NAL a b', 'fun""ction x', 'fun\\ction x']) {
-    assert.equal(defines(text), true, text)
+  for (const text of ['f() { :; }', 'f () { :; }', 'f ( ) { :; }', 'f\t()', 'f( )', 'f(\t)', 'f(  \t )', 'f ( \t) ', 'x; f() :', 'echo() ( x )', 'e\'\'cho()', 'ec\\ho()', 'echo\\\n() { :; }', '"echo"()']) {
+    assert.equal(defines(text), true, JSON.stringify(text))
   }
-  for (const text of ['', 'echo hi', 'a=()', 'a=( )', 'cat <()', 'cat >()', 'true; ()', 'true;()', 'true\n()', 'true | ()', '(())', '(( x ))', ' ()', '\t ()', '()', '{ () }', 'echo $()', 'echo $( )', 'functions x', 'aliases', 'xalias', '"my function"', "'alias a'", 'echo "f()"', 'echo \'f()\'', 'x (y)', 'x ( y )', 'a & ()', 'a && ()']) {
+  for (const text of ['', 'echo hi', 'a=()', 'a=( )', 'cat <()', 'cat >()', 'true; ()', 'true;()', 'true\n()', 'true | ()', '(())', '(( x ))', ' ()', '\t ()', '()', 'echo $()', 'echo $( )', 'functions x', 'function x', 'alias a=b', 'echo "f()"', 'echo \'f()\'', 'x (y)', 'x ( y )', 'a & ()', 'a && ()']) {
     assert.equal(defines(text), false, JSON.stringify(text))
   }
-  // Read as PowerShell, `()` is an empty argument list or group, not a definition; the words still count.
+  // Read as PowerShell, `()` is an empty argument list or group, not a definition.
   assert.equal(defines('f()', true), false)
   assert.equal(defines('Get-Date ( )', true), false)
-  assert.equal(defines('function f { }', true), true)
-  assert.equal(defines('Set-Alias a b', true), true)
 })
 
 test('a blank run before or after `(` is read once, however long (item 1)', () => {
@@ -382,4 +380,72 @@ test('the -c words are listed once per flag however many shell words come before
   const found = checkCommand('bash '.repeat(20000) + '-c ' + '-e '.repeat(100000) + `'${READ}'`, SAVED, 'bash')
   assert.ok(found, 'a read at the end of 100,000 options is refused')
   assert.ok(Date.now() - start < 6000, `took ${Date.now() - start} ms`)
+})
+
+// --- Findings of the senior review of the first head (129c934) ------------------------------------------------
+
+test('B1: `-` after `sudo` or `doas` is that wrapper\'s option, so a command that starts like this does not crash the guard and stays refused', () => {
+  for (const text of [`sudo - -u x; ${READ}`, `doas - -g x; ${READ}`, `sudo - -u x eval '${READ}'`, `sudo - -u x eval ${READ}`, `sudo -u x - eval '${READ}'`]) {
+    for (const shell of ['bash', 'powershell', undefined]) denied(text, shell)
+  }
+})
+
+test('B2: a flag with capital letters before the real -c does not hide the script main read', () => {
+  for (const text of [`bash -Ec 'eval "$1"' -c '${READ}'`, `sh -Cc 'eval "$1"' -c '${READ}'`, `zsh -Oc extglob -c '${READ}'`, `bash -cO extglob -c '${READ}'`]) {
+    for (const shell of ['bash', 'powershell', undefined]) denied(text, shell)
+  }
+})
+
+test('B3: a modifier before `pwsh -c` does not change where the PowerShell tail is read', () => {
+  for (const text of [`noglob pwsh -c "'" ${READ}`, `repeat 2 pwsh -c "'" ${READ}`, `- pwsh -c "'" ${READ}`, `nocorrect pwsh -c "'" ${READ}`, `coproc pwsh -c "'" ${READ}`]) {
+    for (const shell of ['bash', 'powershell', undefined]) denied(text, shell)
+  }
+})
+
+test('B4: many -c flags over one long run of option words are read in time proportional to the run', () => {
+  for (const unit of ['+/sh -c ', '-/bash -c ', '-e ', '-o x ']) {
+    const start = Date.now()
+    const found = checkCommand('sh -c ' + unit.repeat(20000) + '; ' + READ, SAVED, 'bash')
+    assert.ok(found, `refused: ${unit}`)
+    assert.ok(Date.now() - start < 3000, `${unit}: took ${Date.now() - start} ms`)
+  }
+})
+
+test('a definer counts only as a command word, so commands that merely search for the word are not refused (review N2)', () => {
+  for (const text of [
+    `grep -rn function src/ | grep "${READ}"`,
+    `rg -n "alias" docs/; rg -n "${READ}" docs/`,
+    `cat README.md | grep -A2 "function"; echo ${READ}`,
+    `grep function notes.txt; echo ${READ}`,
+    `echo hello alias; echo ${READ}`,
+    `printf '%s' hash; cat ${READ}`,
+  ]) {
+    allowed(text, 'bash')
+  }
+})
+
+test('more ways to change what a name runs count as a definer (review N1)', () => {
+  for (const text of [
+    `Filter Write-Output { & @args }; Write-Output ${PS_READ}`,
+    `functions[echo]='eval "$@"'; echo "${READ}"`,
+    `aliases[cat]=eval; cat "${READ}"`,
+    `hash -p /bin/echo cat; cat ${READ}`,
+    `hash cat=/bin/sh; cat "${READ}"`,
+    `sudo alias echo=eval; echo "${READ}"`,
+    `FOO=1 alias echo=eval; echo "${READ}"`,
+    `time function echo { eval "$@" }; echo "${READ}"`,
+    `if true; then alias echo=eval; fi; echo "${READ}"`,
+    `echo\
+() { eval "$@"; }; echo "${READ}"`,
+  ]) {
+    denied(text, 'bash')
+    denied(text, undefined)
+  }
+})
+
+test('a redefined text-only word has its words read one by one as well as joined (review N1)', () => {
+  // Joined and read as bash text, the apostrophe opens a quote that swallows the read; the words, one by one, name it.
+  denied(`echo() { shift; "$@"; }; echo "it's" ${READ}`, 'bash')
+  denied(`alias echo=true; echo "it's" ${READ}`, 'bash')
+  denied(`function cat { "$@" }; cat "it's" ${READ}`, 'bash')
 })

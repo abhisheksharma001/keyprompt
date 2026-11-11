@@ -76,8 +76,13 @@ const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'fish', 'pwsh', 'pow
  * help find `eval` (`noglob eval "…"` runs it): a text-only command behind one is refused as before, so `commandStart` is told when to count them.
  */
 const ZSH_MODIFIERS = new Set(['noglob', 'nocorrect', 'coproc', '-'])
-/** Words that define a function or an alias, so any later command word may mean something else (S-68, B-32 item 1). */
-const DEFINERS = new Set(['function', 'alias', 'set-alias', 'new-alias', 'sal', 'nal'])
+/**
+ * Command words that define a function or an alias, or change what a name runs, so a later command word may mean something else (S-68, B-32
+ * item 1): `function`, `alias`, PowerShell's `Set-Alias`, `New-Alias`, `sal`, `nal` and `filter`, and `hash` (bash `hash -p PATH NAME`, zsh
+ * `hash NAME=PATH`). Only a word where a command word is expected counts, so `grep function src/` does not. zsh's `functions[NAME]=…`
+ * and `aliases[NAME]=…` count too (`readInWords`).
+ */
+const DEFINERS = new Set(['function', 'filter', 'alias', 'set-alias', 'new-alias', 'sal', 'nal', 'hash'])
 /** Commands whose words after `--` are another command (`keyprompt run X -- COMMAND`), where main's reading looks. */
 const LAUNCHERS = new Set(['keyprompt', 'keyprompt.mjs', 'npx', 'node'])
 /** Tools whose `tool_input.command` is shell text (R-12: PowerShell has the same fields as Bash). */
@@ -219,9 +224,9 @@ function mentionsRead(text) {
  * `open` is true when the text ends inside something it opened and never
  * closed: a quote, a `<#` comment, `$(` or a backtick (S-67).
  *
- * `defines` is true when the text, outside quotes, has a word that defines a function or an alias (`function`, `alias`,
- * `Set-Alias` …) or, read as a POSIX shell, a word followed by `()` (S-68, B-32 item 1). Quotes and escapes are already taken
- * out of the words, so `fun''ction` and `e\cho()` count. It is a coarse sign: it can be true when nothing is defined.
+ * `defines` is true when, read as a POSIX shell, a word is followed by `()` (S-68, B-32 item 1: a function definition). Quotes and escapes
+ * are already taken out of the words, so `e\cho()` counts. It is a coarse sign: it can be true when nothing is defined. The other
+ * sign, a command word like `function` or `alias`, is looked for in `readInWords`.
  *
  * @param {string} text
  * @param {boolean} [powershell]
@@ -243,10 +248,12 @@ export function splitShell(text, powershell = false, comments = true, limit) {
   let inWord = false
   let open = false
   let defines = false
+  /** the last word of the command so far, for the `(` that may follow it */
+  let lastWord = ''
   const endWord = () => {
     if (inWord) {
       words.push(word)
-      if (word.length <= 9 && DEFINERS.has(word.toLowerCase())) defines = true
+      lastWord = word
     }
     word = ''
     inWord = false
@@ -255,6 +262,7 @@ export function splitShell(text, powershell = false, comments = true, limit) {
     endWord()
     if (words.length > 0) commands.push(words)
     words = []
+    lastWord = ''
   }
   /** @param {number} start index just after `$(` @returns {number} index after the matching `)` */
   const subshell = (start) => {
@@ -343,7 +351,7 @@ export function splitShell(text, powershell = false, comments = true, limit) {
     } else if (c === '`') {
       i = backtick(i + 1)
     } else if (separators.includes(c)) {
-      if (c === '(' && !powershell && !defines && emptyParensAfterWord(text, i)) defines = true
+      if (c === '(' && !powershell && !defines && followsWord(inWord ? word : lastWord) && closesAtOnce(text, i)) defines = true
       endCommand()
       i++
     } else if (c === ' ' || c === '\t' || c === '\r') {
@@ -360,17 +368,22 @@ export function splitShell(text, powershell = false, comments = true, limit) {
 }
 
 /**
- * Whether the `(` at `at` closes right away (`)` after only blanks) and a word comes right before it (only blanks between), as in
- * `echo() {` or `f ( ) {`: the shape of a function definition (S-68). `a=()`, `<()` and `$()` are not, and a `(` after `;`, `|`, a
- * newline or another bracket is not. Each blank run is read at most once by the `(` next to it, so this is linear.
+ * Whether the word right before a `(` can be a function's name, as in `echo() {` or `f ( ) {` (S-68). The parser has already taken
+ * quotes, escapes and line continuations out of the word, so `e''cho` and `echo\` + newline count. `a=()` and `<()` are not definitions.
+ *
+ * @param {string} word the last word before the `(`, or '' when a separator comes first
+ */
+function followsWord(word) {
+  return word !== '' && !'=<>'.includes(word[word.length - 1])
+}
+
+/**
+ * Whether the `(` at `at` is followed by only blanks and then `)`. Each blank run is read at most once, by the `(` before it, so this is linear.
  *
  * @param {string} text
  * @param {number} at index of the `(`
  */
-function emptyParensAfterWord(text, at) {
-  let before = at - 1
-  while (before >= 0 && (text[before] === ' ' || text[before] === '\t')) before--
-  if (before < 0 || ';&|\n\r(){}=<>$'.includes(text[before])) return false
+function closesAtOnce(text, at) {
   let after = at + 1
   while (after < text.length && (text[after] === ' ' || text[after] === '\t')) after++
   return text[after] === ')'
@@ -456,7 +469,8 @@ function commandStart(words, from = 0, zsh = false) {
       wrapper = ''
       continue
     }
-    if (WRAPPERS.has(base(w)) || (zsh && ZSH_MODIFIERS.has(base(w)))) wrapper = base(w)
+    // `-` is a modifier only where a command word is expected; after a wrapper it is that wrapper's option, as main read it (`sudo - -u x …`).
+    if (WRAPPERS.has(base(w)) || (zsh && ZSH_MODIFIERS.has(base(w)) && (w !== '-' || wrapper === ''))) wrapper = base(w)
     else if (wrapper && w.startsWith('-')) {
       // sudo and doas options that take a value: `sudo -u root security ...`
       if ((wrapper === 'sudo' || wrapper === 'doas') && /^-[ugUCDhprt]$/.test(w)) i++
@@ -490,15 +504,23 @@ function securitySubs(words) {
  * as a script too (zsh takes the value of `-O` as the script). The word right after the flag is always read, as main read it. An index
  * can be listed twice; the caller reads each once.
  *
+ * What a walk finds from a word on depends only on that word and on whether the last option took a value. `seen` (two marks per word, shared
+ * by every walk over the same words) stops a walk where an earlier one went, so many flags over one long run of option words cost no more
+ * than the run (a chain of `sh -c +/sh -c …` took the walk quadratic time before).
+ *
  * @param {string[]} words
  * @param {number} flag index of the `-c` word
+ * @param {Uint8Array} seen
  * @returns {number[]} indexes of the words to read as scripts
  */
-function shellScripts(words, flag) {
+function shellScripts(words, flag, seen) {
   const out = [flag + 1]
   const takesValue = (/** @type {string} */ w) => /^[-+][A-Za-z]*[oO]/.test(w)
   let value = takesValue(words[flag])
   for (let k = flag + 1; k < words.length; k++) {
+    const mark = 2 * k + (value ? 1 : 0)
+    if (seen[mark]) break
+    seen[mark] = 1
     const w = words[k]
     if (value) {
       value = false
@@ -556,12 +578,15 @@ function nextMatch(words, test) {
  * @returns {string | null} the reason, when the command is a direct read
  */
 function readInWords(words, names, depth, comments, limit) {
-  const textStart = commandStart(words)
-  let start = commandStart(words, 0, true)
+  let start = commandStart(words)
   if (start >= words.length) return null
+  // zsh's modifiers and `repeat COUNT` move this start only; it is used to find `eval` and nothing else (S-68, B-32 item 12). Main's start stays the
+  // start for everything else, so a text-only command behind a modifier is refused as before, and a reading never depends on it.
+  let evalStart = commandStart(words, 0, true)
+  const head = words[start].toLowerCase()
+  if (DEFINERS.has(base(head)) || head.startsWith('functions[') || head.startsWith('aliases[')) limit.defines = true
   // An option skipped before the first word may have taken it as its value (`env -u echo …`), so only a start past no option counts as text.
-  // zsh's modifiers do not count here, so a text-only command behind one is refused as before.
-  const text = TEXT_ONLY.has(base(words[textStart])) && !words.slice(0, textStart).some((w) => w.startsWith('-'))
+  const text = TEXT_ONLY.has(base(words[start])) && !words.slice(0, start).some((w) => w.startsWith('-'))
   // A command that defines a function or alias may have redefined the text-only name (S-68, B-32 item 1). The first reading uses the exemption and
   // notes that it did; `checkCommand` reads again without it when the command also defines something, and then such a word is read like `eval`.
   if (text && !limit.strict) {
@@ -572,10 +597,11 @@ function readInWords(words, names, depth, comments, limit) {
   if (!comments) {
     // Followed in one pass, so `keyprompt -- keyprompt -- …` stays linear.
     for (let dash; LAUNCHERS.has(base(words[start])) && (dash = words.indexOf('--', start + 1)) !== -1; ) {
-      start = commandStart(words, dash + 1, true)
+      start = commandStart(words, dash + 1)
+      evalStart = commandStart(words, dash + 1, true)
       if (start >= words.length) return null
     }
-    end = start + 1
+    end = Math.min(words.length, Math.max(start, evalStart) + 1)
   }
   const from = comments ? 0 : start
   const checked = new Set()
@@ -586,18 +612,20 @@ function readInWords(words, names, depth, comments, limit) {
   let pwshWords
   /** @type {number[] | undefined} */
   let securitySub
+  /** @type {Uint8Array | undefined} the places the walks over option words have been, for `shellScripts` */
+  let seen
   for (let i = from; i < end; i++) {
     const command = base(words[i])
     /** @type {string | null} */
     let found = null
-    if ((command === 'eval' || (limit.strict && TEXT_ONLY.has(command))) && i === start) {
+    if ((command === 'eval' && (i === start || i === evalStart)) || (limit.strict && TEXT_ONLY.has(command) && i === start)) {
       // eval, as the command, runs every word after it as one script, which settles the rest of the command.
       // A word that only ends in `eval` (`X=/bin/eval`, `find -name eval`, an option's value) runs nothing, and joining the words after it would drop their quoting.
       found = readScript(words.slice(i + 1).join(' '), names, depth + 1, false, comments, limit)
-      // Behind one of zsh's modifiers (S-68), main read the words one by one, and joining them can change how they read (a quote that was
-      // inside a word is open again), so the script is read as well and the words are still looked at. A text-only word read like `eval` has
-      // main's exemption in front of it, which the first reading already used.
-      if (found || i === textStart || command !== 'eval') return found
+      // Only main's own case ends the reading here. Behind one of zsh's modifiers (S-68), and for a text-only word read like `eval`, main read the
+      // words one by one, and joining them can change how they read (a quote that was inside a word is open again), so the script is read as well
+      // and the words are still looked at.
+      if (found || (command === 'eval' && i === start)) return found
     } else if (command === 'security' || command === 'secret-tool') {
       // `security` also gets the subcommand found past the value of each `-p` (S-68, B-32 item 10); the first word that is not an option stays a
       // candidate too, so nothing main refuses is let through. Whether `security -p x find-generic-password …` runs the subcommand was not checked (F14).
@@ -618,18 +646,22 @@ function readInWords(words, names, depth, comments, limit) {
       // PowerShell: everything after -Command (or -c) is the script. Other shells: the one word after -c (or -lc, -ec ...).
       const powershell = command.startsWith('pwsh') || command.startsWith('powershell')
       const kind = powershell ? 'powershell' : 'shell'
-      flags[kind] ??= nextMatch(words, (w) => (powershell ? /^-c(ommand)?$/i.test(w) : /^-[A-Za-z]{0,3}c[A-Za-z]{0,3}$/.test(w)))
+      flags[kind] ??= nextMatch(words, (w) => (powershell ? /^-c(ommand)?$/i.test(w) : /^-[a-z]{0,3}c[a-z]{0,3}$/.test(w)))
       const flag = flags[kind][i + 1]
       /** @type {[string, () => string, boolean?][]} each script to read, under the key that marks it read, and whether to refuse one that ends open; built only when read, so a skipped one costs nothing */
       const scripts = []
-      if (flag + 1 >= words.length) {
-        // No script follows.
-      } else if (!powershell) {
-        // Past `--`, option words and option values (S-68, B-32 item 4). The words depend on the flag alone, so they are listed once per flag.
-        if (!checked.has(`shell words ${flag}`)) {
-          checked.add(`shell words ${flag}`)
-          for (const k of shellScripts(words, flag)) scripts.push([`shell ${k}`, () => words[k]])
+      if (!powershell) {
+        // Main's flag (lowercase letters only) and the first flag with capital letters too (`-Ec`, `-cO`; S-68, B-32 item 4), which may come
+        // before it: `bash -Ec 'eval "$1"' -c '<read>'` runs the first script, and main read the second. Each flag's script words are the
+        // first word that is not an option and what item 4 adds, listed once per flag.
+        flags.shellCapitals ??= nextMatch(words, (w) => /^-[A-Za-z]{0,3}c[A-Za-z]{0,3}$/.test(w))
+        for (const at of [flag, flags.shellCapitals[i + 1]]) {
+          if (at + 1 >= words.length || checked.has(`shell words ${at}`)) continue
+          checked.add(`shell words ${at}`)
+          for (const k of shellScripts(words, at, (seen ??= new Uint8Array(2 * words.length + 2)))) scripts.push([`shell ${k}`, () => words[k]])
         }
+      } else if (flag + 1 >= words.length) {
+        // No script follows.
       } else if (i === start) {
         // As the command, pwsh takes every word after the flag as its script, so that check settles the rest.
         scripts.push([`powershell ${flag}`, () => words.slice(flag + 1).join(' ')])
