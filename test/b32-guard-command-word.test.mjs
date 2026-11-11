@@ -202,3 +202,16 @@ test('the modifiers only help find `eval`: text-only commands behind them are re
     denied(text, 'bash')
   }
 })
+
+test('eval behind a modifier is read word by word as well, because joining the words can change how they read (item 12, tighten only)', () => {
+  // Read as PowerShell, the stray quote closes the first string and the rest is plain words, so main reads a store read there. Joined with
+  // blanks and read as bash text, the same words start with `echo`, which is text-only. Reading the joined script alone would let it through.
+  for (const text of [
+    'noglob eval "echo \\" eval security find-generic-password -g -s OPENAI_API_KEY"',
+    'repeat 1 eval "echo \\" eval security find-generic-password -g -s OPENAI_API_KEY"',
+    'nocorrect eval "echo \\" eval secret-tool lookup service keyprompt"',
+  ]) {
+    denied(text, 'powershell')
+    denied(text, undefined)
+  }
+})
