@@ -503,7 +503,8 @@ function securitySubs(words) {
  * `echo` on bash 3.2 and zsh 5.9, and the GNU Bash manual, "Invoking Bash"). The script is the first word that is not an option;
  * `--` ends the options. An option with `o` or `O` in it (`-o`, `+o`, `-O`, `-co`) takes the next word as its value. The value of `-o`
  * is an option name, never a script (both shells say "no such option" for one that is not), but zsh runs the value of `-O` as the script
- * (`zsh -c -O extglob 'echo'` runs `extglob`), so that value is read too. The word right after the flag is always read, as main read it.
+ * (`zsh -c -O extglob 'echo'` runs `extglob`), so that value is read too. When the name is glued to the option (`-oerrexit`), zsh and ksh
+ * run the next word as the script and bash takes it as the name, so that word is read as well. The word right after the flag is always read, as main read it.
  * An index can be listed twice; the caller reads each once.
  *
  * What a walk finds from a word on depends only on that word and on what the last option took (nothing, an option name, a script).
@@ -532,6 +533,9 @@ function shellScripts(words, flag, seen) {
       break
     } else if (w.startsWith('-') || w.startsWith('+')) {
       value = kind(w)
+      // `-oerrexit`: zsh and ksh take the option name from the word itself and run the next word as the script; bash takes the next word as
+      // the name. The walk goes on as bash reads it, and the next word is a candidate too.
+      if (value === 1 && /[oO][A-Za-z]/.test(w) && k + 1 < words.length) out.push(k + 1)
     } else {
       out.push(k)
       break

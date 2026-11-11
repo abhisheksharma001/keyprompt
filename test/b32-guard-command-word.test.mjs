@@ -543,3 +543,25 @@ test('B1 (third review): the subcommand found past -p does not use up the check 
     for (const shell of ['bash', 'powershell', undefined]) denied(text, shell)
   }
 })
+
+test('N1 (fourth review): a glued -o value (-oerrexit) leaves the next word as the script in zsh and ksh, so it is read', () => {
+  for (const text of [
+    `zsh -c -oerrexit '${READ}'`,
+    `ksh -c -oerrexit '${READ}'`,
+    `ksh -c -ox '${READ}'`,
+    `zsh -c -o errexit -oerrexit '${READ}'`,
+    `zsh -c -e +oerrexit -u '${READ}'`,
+  ]) {
+    for (const shell of ['bash', undefined]) denied(text, shell)
+  }
+  // An unglued -o still takes the next word as an option name, so a script given there is not run (zsh 5.9 "no such option").
+  allowed(`zsh -c -e -o '${READ}'`, 'bash')
+  // Nothing after the glued value: nothing to read.
+  assert.equal(checkCommand('zsh -c -oerrexit', SAVED, 'bash'), null)
+})
+
+test('N2 (fourth review): the walk keeps a separate mark for each state, so a word first met as a value is still a flag when met as one', () => {
+  // `-o` takes `sh` as its value, then `-o` takes `-co` as its value, then `x` is the script (and the read is its argument); the walk from
+  // the second `sh -c` arrives at `-o` (index 3) in another state. One mark per word, not per word and state, loses it.
+  for (const shell of ['bash', undefined]) denied(`sh -c -o sh -o -co x '${READ}'`, shell)
+})
