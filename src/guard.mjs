@@ -253,7 +253,21 @@ export function splitShell(text, powershell = false, comments = true, limit) {
   let lastWord = ''
   const endWord = () => {
     if (inWord) {
-      words.push(word)
+      // PowerShell splits two kinds of word that Bash keeps whole (S-69, B-32 items 6 and 16), quoted or not. `-Name:value` is the parameter
+      // `-Name` and its value (about_Parameters). `$x=Cmdlet` is a variable, an assignment operator and the cmdlet (about_Assignment_Operators:
+      // `=` `+=` `-=` `*=` `/=` `%=` `??=`); the operator is pushed as a plain `=`, which is where `commandStart` looks for it.
+      // A word with a blank in it came from quotes and is left whole: it may be the script that `bash -c` takes as one word (found by the differential run).
+      const splits = powershell && (word[0] === '-' || word[0] === '$') && !/[ \t\n\r]/.test(word)
+      const colon = splits && word[0] === '-' ? word.indexOf(':') : -1
+      const equals = splits && word[0] === '$' ? word.indexOf('=') : -1
+      if (colon > 0) {
+        words.push(word.slice(0, colon))
+        if (colon + 1 < word.length) words.push(word.slice(colon + 1))
+      } else if (equals > 0) {
+        const before = word.slice(0, equals)
+        words.push(before.endsWith('??') ? before.slice(0, -2) : '-+*/%'.includes(before[before.length - 1]) ? before.slice(0, -1) : before, '=')
+        if (equals + 1 < word.length) words.push(word.slice(equals + 1))
+      } else words.push(word)
       lastWord = word
     }
     word = ''
@@ -395,7 +409,9 @@ function closesAtOnce(text, at) {
  * @param {Set<string>} names
  */
 function namesKeyprompt(word, names) {
-  return word === SERVICE || word.toLowerCase().startsWith(`${SERVICE}:`) || names.has(word)
+  // The service name is matched without regard to case, as `keyprompt:NAME` already was: read as PowerShell, `-sKeyPrompt:X` is `-sKeyPrompt` and
+  // `X` (S-69), and the first of those must still be refused where main refused the whole word.
+  return word.toLowerCase() === SERVICE || word.toLowerCase().startsWith(`${SERVICE}:`) || names.has(word)
 }
 
 /**

@@ -67,13 +67,15 @@ test('the service name is refused whatever its case, so splitting at a colon los
     'security find-generic-password -w -sKeyPrompt:X',
     'security find-generic-password -wsKEYPROMPT:x',
     'security find-generic-password -w -s KeyPrompt',
-    'security find-generic-password -g -s:KeyPrompt:X',
     'secret-tool lookup service KeyPrompt',
   ]) {
     denied(text, 'powershell')
     denied(text)
     denied(text, 'bash')
   }
+  // A colon-bound option is a PowerShell reading only; Bash keeps the whole word, as before.
+  denied('security find-generic-password -g -s:KeyPrompt:X', 'powershell')
+  denied('security find-generic-password -g -s:KeyPrompt:X')
 })
 
 // --- Item 16: an assignment glued to the cmdlet ----------------------------------------------------------
