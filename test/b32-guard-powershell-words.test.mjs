@@ -233,3 +233,18 @@ test('splitting words costs time in step with a text of the same length with not
     assert.ok(took < 3 * base + 300, `split text took ${took.toFixed(0)} ms against ${base.toFixed(0)} ms for the same length`)
   }
 })
+
+test('a nested pwsh -c text full of split words needs no more of the work budget than the same length without any', () => {
+  // Each level of the nesting quotes the one inside it, as the nested-pwsh test in b25-guard-plain-forms.test.mjs does.
+  const nest = (inner) => {
+    const l2 = "x pwsh -c '" + 'x pwsh -c ' + inner + "'"
+    const l1 = "x pwsh -c '" + l2.replace(/'/g, "''") + "'"
+    return 'x pwsh -c "' + l1.replace(/"/g, '\\"') + '"'
+  }
+  // The text names a read tool without running one, so it is let through only if the budget lasts; one that runs out is refused.
+  for (const unit of ['z ', '-a:b ', '$a=b ']) {
+    const text = nest(unit.repeat(20_000) + 'find-generic-password')
+    // Reading the text once at each level takes about 12 units for each character, and nothing more is allowed.
+    assert.equal(checkCommand(text, SAVED, undefined, 12 * text.length + 1000), null, `the budget ran out reading ${unit.trim()} words`)
+  }
+})
