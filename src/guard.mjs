@@ -592,7 +592,11 @@ function readInWords(words, names, depth, comments, limit) {
     if ((command === 'eval' || (limit?.strict && TEXT_ONLY.has(command))) && i === start) {
       // eval, as the command, runs every word after it as one script, which settles the rest of the command.
       // A word that only ends in `eval` (`X=/bin/eval`, `find -name eval`, an option's value) runs nothing, and joining the words after it would drop their quoting.
-      return readScript(words.slice(i + 1).join(' '), names, depth + 1, false, comments, limit)
+      found = readScript(words.slice(i + 1).join(' '), names, depth + 1, false, comments, limit)
+      // Behind one of zsh's modifiers (S-68), main read the words one by one, and joining them can change how they read (a quote that was
+      // inside a word is open again), so the script is read as well and the words are still looked at. A text-only word read like `eval` has
+      // main's exemption in front of it, which the first reading already used.
+      if (found || i === textStart || command !== 'eval') return found
     } else if (command === 'security' || command === 'secret-tool') {
       // `security` also gets the subcommand found past the value of each `-p` (S-68, B-32 item 10); the first word that is not an option stays a
       // candidate too, so nothing main refuses is let through. Whether `security -p x find-generic-password …` runs the subcommand was not checked (F14).
