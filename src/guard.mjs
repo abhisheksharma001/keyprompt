@@ -551,7 +551,7 @@ function nextMatch(words, test) {
  * @param {Set<string>} names
  * @param {number} depth
  * @param {boolean} comments the words come from a reading that skips comments
- * @param {Limit} [limit] the work budget
+ * @param {Limit} limit the work budget, and the marks of S-68 (`checkCommand` always passes it)
  * @returns {string | null} the reason, when the command is a direct read
  */
 function readInWords(words, names, depth, comments, limit) {
@@ -560,11 +560,11 @@ function readInWords(words, names, depth, comments, limit) {
   if (start >= words.length) return null
   // An option skipped before the first word may have taken it as its value (`env -u echo …`), so only a start past no option counts as text.
   // zsh's modifiers do not count here, so a text-only command behind one is refused as before.
-  const text = textStart < words.length && TEXT_ONLY.has(base(words[textStart])) && !words.slice(0, textStart).some((w) => w.startsWith('-'))
+  const text = TEXT_ONLY.has(base(words[textStart])) && !words.slice(0, textStart).some((w) => w.startsWith('-'))
   // A command that defines a function or alias may have redefined the text-only name (S-68, B-32 item 1). The first reading uses the exemption and
   // notes that it did; `checkCommand` reads again without it when the command also defines something, and then such a word is read like `eval`.
-  if (text && !limit?.strict) {
-    if (limit) limit.exempted = true
+  if (text && !limit.strict) {
+    limit.exempted = true
     return null
   }
   let end = words.length
@@ -589,7 +589,7 @@ function readInWords(words, names, depth, comments, limit) {
     const command = base(words[i])
     /** @type {string | null} */
     let found = null
-    if ((command === 'eval' || (limit?.strict && TEXT_ONLY.has(command))) && i === start) {
+    if ((command === 'eval' || (limit.strict && TEXT_ONLY.has(command))) && i === start) {
       // eval, as the command, runs every word after it as one script, which settles the rest of the command.
       // A word that only ends in `eval` (`X=/bin/eval`, `find -name eval`, an option's value) runs nothing, and joining the words after it would drop their quoting.
       found = readScript(words.slice(i + 1).join(' '), names, depth + 1, false, comments, limit)
@@ -666,7 +666,7 @@ function readInWords(words, names, depth, comments, limit) {
  * @param {number} depth
  * @param {boolean} powershell read the text as PowerShell, not as a POSIX shell
  * @param {boolean} comments skip comments and look for a read anywhere in a command; false is main's reading
- * @param {Limit} [limit] the work budget
+ * @param {Limit} limit the work budget, and the marks of S-68 (`checkCommand` always passes it)
  * @param {boolean} [refuseOpen] refuse a text that ends inside a quote, a block comment or `$(` and names a read tool, when nothing else was found
  * @returns {string | null}
  */
@@ -674,7 +674,7 @@ function readInShell(text, names, depth, powershell, comments, limit, refuseOpen
   // Past the depth limit the text is not read. A text that names a read tool is refused (S-67, B-32 item 5), so too much nesting never reads as "no read".
   if (depth > 4) return mentionsRead(text) ? UNREAD : null
   const { commands, nested, open, defines } = splitShell(text, powershell, comments, limit)
-  if (defines && limit) limit.defines = true
+  if (defines) limit.defines = true
   for (const words of commands) {
     const found = readInWords(words, names, depth, comments, limit)
     if (found) return found

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { checkCommand } from '../src/guard.mjs'
+import { checkCommand, splitShell } from '../src/guard.mjs'
 
 // B-32 items 1, 4, 10 and 12 (docs/bugs.md), step S-68: the guard finds the real command word. Every command below is only
 // ever passed to checkCommand as a string; none is run, and none of them runs a store read.
@@ -213,5 +213,142 @@ test('eval behind a modifier is read word by word as well, because joining the w
   ]) {
     denied(text, 'powershell')
     denied(text, undefined)
+  }
+})
+
+// --- The pieces behind the rules, pinned one by one --------------------------------------------------------------
+
+test('splitShell says a text defines a function or alias only for a word that does (item 1)', () => {
+  const defines = (/** @type {string} */ text, powershell = false) => splitShell(text, powershell).defines
+  for (const text of ['f() { :; }', 'f () { :; }', 'f ( ) { :; }', 'f\t()', 'f( )', 'x; f() :', 'echo() ( x )', 'e\'\'cho()', 'function x', 'FUNCTION x', 'Function x', 'alias a=b', 'Set-Alias a b', 'new-alias a b', 'sal a b', 'NAL a b', 'fun""ction x', 'fun\\ction x']) {
+    assert.equal(defines(text), true, text)
+  }
+  for (const text of ['', 'echo hi', 'a=()', 'a=( )', 'cat <()', 'cat >()', 'true; ()', 'true;()', 'true\n()', 'true | ()', '(())', '(( x ))', ' ()', '\t ()', '()', '{ () }', 'echo $()', 'echo $( )', 'functions x', 'aliases', 'xalias', '"my function"', "'alias a'", 'echo "f()"', 'echo \'f()\'', 'x (y)', 'x ( y )', 'a & ()', 'a && ()']) {
+    assert.equal(defines(text), false, JSON.stringify(text))
+  }
+  // Read as PowerShell, `()` is an empty argument list or group, not a definition; the words still count.
+  assert.equal(defines('f()', true), false)
+  assert.equal(defines('Get-Date ( )', true), false)
+  assert.equal(defines('function f { }', true), true)
+  assert.equal(defines('Set-Alias a b', true), true)
+})
+
+test('a blank run before or after `(` is read once, however long (item 1)', () => {
+  const start = Date.now()
+  const text = 'f' + ' '.repeat(300000) + '(' + ' '.repeat(300000) + 'x ' + '('.repeat(1000)
+  assert.equal(splitShell(text).defines, false)
+  assert.ok(Date.now() - start < 3000, `took ${Date.now() - start} ms`)
+})
+
+test('definitions that stay text-only, and separators around a text-only command, do not refuse it (item 1)', () => {
+  for (const text of [
+    `echo ${READ}; ls`,
+    `echo ${READ} | cat`,
+    `echo ${READ} && true`,
+    `(echo ${READ})`,
+    `a=(1); echo ${READ}`,
+    `cat <(true); echo ${READ}`,
+    `true; ( ); echo ${READ}`,
+    `echo $(true) ${READ}`,
+    `( ) echo ${READ}`,
+    `{ echo ${READ}; }`,
+    `echo ${READ}\nls`,
+  ]) {
+    allowed(text, 'bash')
+  }
+})
+
+test('a text-only word is read like eval only in a command that defines something (item 1)', () => {
+  // `alias echo=eval; echo "…"` makes the quoted read one word that nothing but eval-style reading looks into.
+  denied(`alias echo=eval; echo "${READ}"`, 'bash')
+  denied(`echo() { eval "$@"; }; echo "${READ}"`, 'bash')
+  denied(`function cat { eval "$@" }; cat "${READ}"`, 'bash')
+  denied(`Set-Alias Write-Output iex; Write-Output "${PS_READ}"`, 'powershell')
+  allowed(`echo "${READ}"`, 'bash')
+  allowed(`Write-Output "${PS_READ}"`, 'powershell')
+  // The definition and the text-only command are in different commands: the whole command is read again.
+  denied(`alias a=b
+echo "${READ}"`, 'bash')
+  denied(`echo "${READ}"; alias a=b`, 'bash')
+})
+
+test('words after the script of -c are arguments, not scripts (item 4)', () => {
+  for (const text of [
+    `bash -c 'ls' '${READ}'`,
+    `bash -c -e 'ls' '${READ}'`,
+    `bash -c -o errexit 'ls' '${READ}'`,
+    `bash -c -- 'ls' '${READ}'`,
+    `bash -c -e -- 'ls' -o '${READ}'`,
+    `bash -c -O extglob 'ls' -O '${READ}'`,
+    `zsh -c -e 'ls' -o -O '${READ}'`,
+    `bash -c +e 'ls' -e '${READ}'`,
+  ]) {
+    allowed(text, 'bash')
+  }
+  // Options, and the value an option takes, can come after the flag with no script at all.
+  for (const text of ['bash -c', 'bash -c -e', 'bash -c -e -e', 'bash -c --', 'bash -c -e --', 'bash -c -o', 'bash -co', 'bash -c -o errexit']) {
+    allowed(text, 'bash')
+  }
+})
+
+test('the value of -o, -O, +o and +O can be the script, as zsh runs it (item 4)', () => {
+  for (const text of [`zsh -c -O '${READ}'`, `zsh -c +o '${READ}'`, `zsh -c -o '${READ}'`, `zsh -co '${READ}'`, `zsh -c +O -e '${READ}'`, `zsh -c -e +o '${READ}'`]) {
+    denied(text, 'bash')
+  }
+})
+
+test('the flag can carry capital letters (item 4)', () => {
+  for (const text of [`bash -cO extglob '${READ}'`, `bash -Oc extglob '${READ}'`]) denied(text, 'bash')
+})
+
+test('`security` options that are not -p are skipped as before, and -p needs its value (item 10)', () => {
+  for (const text of [
+    `security -p x find-generic-password -s keyprompt -w`,
+    `security -q -v -i -p x -l find-generic-password -s keyprompt -w`,
+    `security -vp x find-generic-password -g -s keyprompt`,
+    `security -lqp x -h dump-keychain -d`,
+  ]) {
+    denied(text, 'bash')
+  }
+  // `-pp` and `-px` carry their value; the next word is the subcommand.
+  allowed('security -pp list-keychains', 'bash')
+  allowed('security -p', 'bash')
+  allowed('security -q -p', 'bash')
+  allowed('security', 'bash')
+  denied(`security -pp find-generic-password -s keyprompt -w`, 'bash')
+  denied(`sudo -u root security -p x find-generic-password -s keyprompt -w`, 'bash')
+  denied(`security -p x find-generic-password -s keyprompt -w; ls`, 'bash')
+  denied(`ls; security -p x find-generic-password -s keyprompt -w`, 'bash')
+  denied(`security -p x security find-generic-password -s keyprompt -w`, 'bash')
+  denied(`security -p x -p y -p z find-generic-password -s keyprompt -w`, 'bash')
+  denied(`security -p dump-keychain -p x dump-keychain -d`, 'bash')
+})
+
+test('a read behind a modifier and a launcher is found (item 12)', () => {
+  for (const text of [
+    `keyprompt run X -- noglob eval "${READ}"`,
+    `keyprompt run X -- repeat 1 eval "${READ}"`,
+    `npx keyprompt run X -- nocorrect eval "${READ}"`,
+    `node x.mjs -- coproc eval "${READ}"`,
+  ]) {
+    denied(text, 'bash')
+  }
+})
+
+test('`repeat` with no count, a count that is another `repeat`, or at the end of the command (item 12)', () => {
+  for (const text of ['repeat', 'echo hi; repeat', 'noglob repeat', 'repeat 1', 'sudo repeat']) allowed(text, 'bash')
+  for (const text of [`repeat $(true) repeat 1 eval "${READ}"`, `repeat repeat 1 eval "${READ}"`, `repeat $(a) repeat $(b) eval "${READ}"`, `noglob repeat $(true) noglob eval "${READ}"`]) {
+    denied(text, 'bash')
+  }
+})
+
+test('an `eval` word that is not the command is not joined with the words after it (item 12)', () => {
+  // Read as PowerShell the stray quote closes the string, so the read is plain words there; joined and read as bash text it starts with `echo`.
+  for (const text of [
+    'ls eval "echo \\" eval security find-generic-password -g -s OPENAI_API_KEY"',
+    'x=1 ls eval "echo \\" eval security find-generic-password -g -s OPENAI_API_KEY"',
+    'find . -name eval "echo \\" eval secret-tool lookup service keyprompt"',
+  ]) {
+    denied(text, 'powershell')
   }
 })
