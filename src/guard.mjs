@@ -227,7 +227,7 @@ function mentionsRead(text) {
  *
  * `defines` is true when, read as a POSIX shell, a word is followed by `()` (S-68, B-32 item 1: a function definition). Quotes and escapes
  * are already taken out of the words, so `e\cho()` counts. It is a coarse sign: it can be true when nothing is defined. The other
- * sign, a command word like `function` or `alias`, is looked for in `readInWords`.
+ * sign, a command word like `function` or `alias`, is looked for in `readInWords`. Read as PowerShell, it is also true when a word was split at a colon or an assignment (S-69), for a different reason: the split shows a command word that main never saw.
  *
  * @param {string} text
  * @param {boolean} [powershell]
@@ -260,6 +260,10 @@ export function splitShell(text, powershell = false, comments = true, limit) {
       const splits = powershell && (word[0] === '-' || word[0] === '$') && !/[ \t\n\r]/.test(word)
       const colon = splits && word[0] === '-' ? word.indexOf(':') : -1
       const equals = splits && word[0] === '$' ? word.indexOf('=') : -1
+      // A split lets `commandStart` see a command word that main never saw, so a text-only word there (echo, Write-Output) would be let through
+      // where main read the whole text and refused it. Marking the text `defines` has such a word read again like `eval` (S-68), which keeps that
+      // refusal (shared rule 7, tighten only).
+      if (colon > 0 || equals > 0) defines = true
       if (colon > 0) {
         words.push(word.slice(0, colon))
         if (colon + 1 < word.length) words.push(word.slice(colon + 1))
