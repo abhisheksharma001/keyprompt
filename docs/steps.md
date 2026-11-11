@@ -17,7 +17,7 @@ Plan: `docs/prd/card-v2.md` (0.2.x) and `docs/prd/v0-3.md` (0.3). Rules: `.claud
 | 5 Release | S-29, S-34 | 0.2.1 on npm: the six steps since 0.2.0; 0.2.2: the four since (S-30 to S-33) |
 | Research | S-36 | R-9 answered: what keymask, the closest rival, is and is not |
 | 6 v0.3 | S-37 → S-38 → S-39 → S-40, then S-41 → S-47, S-42 → S-48, S-43 → S-49, then S-44 → S-45 → S-50, then the review fixes S-51 → S-52 → S-53, S-54 → S-55, then S-46 | The plan; the Claude Code guard (its check, its installer, its docs); `--json` results, and a reason when one fails (B-19); `keyprompt setup`, then the docs for both; a names-only activity log; research on MCP (R-6), then `keyprompt mcp`; release 0.3.0 |
-| 7 v0.3 audit | S-56, then S-57 → S-58 (dropped) → S-65 → S-66 → S-67 → S-68 → S-69 → S-70 → S-71 → S-72 → S-73 → S-74 → S-59, S-60, S-61, S-62, S-63, S-64, and S-75 (B-32 fix chain: S-66 to S-75) | The feature-end audit (`docs/audits/v0-3-feature-end.md`): G2, G3, F and M met; G1, G1b, G4, J and L unmet. Then the fixes B-25 to B-31 and tests for the clauses no test pins |
+| 7 v0.3 audit | S-56, then S-57 → S-58 (dropped) → S-65 → S-66 → S-67 → S-76 → S-68 → S-69 → S-70 → S-71 → S-72 → S-73 → S-74 → S-59, S-60, S-61, S-62, S-63, S-64, and S-75 (B-32 fix chain: S-66 to S-75) | The feature-end audit (`docs/audits/v0-3-feature-end.md`): G2, G3, F and M met; G1, G1b, G4, J and L unmet. Then the fixes B-25 to B-31 and tests for the clauses no test pins |
 
 Order: S-3, S-7, S-15 and S-18 touch different files from the S-2 → S-4 chain, so they can be built in parallel by separate sessions. Everything else follows the arrows.
 
@@ -86,6 +86,7 @@ Order: S-3, S-7, S-15 and S-18 touch different files from the S-2 → S-4 chain,
 | S-58 | dropped 2026-11-10 (PR #62 closed unmerged) | Tried to teach the guard bash here-documents (B-26). Two designs failed review: a group-counting one (six bypasses from `/code-review`) and a one-way-flag one (eight blockers and 406 fuzzer hits from the senior review). Abhishek chose not to loosen the guard (D-24); B-26 becomes words (S-65). **Learned:** bash here-documents differ between bash 3.2, bash 5 and zsh in ways a text reader cannot follow safely (a `)` in a body ends `$( )` in bash 3.2; `${x:-<<EOF}` and `a[x<<EOF]=1` start none in bash; `<<-` strips tabs per continued piece); a differential fuzzer against main finds loosenings that hand-made cases miss; StrykerJS on demand (D-23) took the changed lines from 59% to 94.7% and still did not find what the fuzzer found. |
 | S-65 | done 2026-11-10 (PR #64) | Fixes B-26 as words only (D-24). The guard's reason now ends with one more sentence: if the command only quotes such a read as text (a commit message, a pull request body), write that text to a file with your file tool and pass the file (`git commit -F FILE`, `gh pr create --body-file FILE`); the skill's guard section says the same. The set of refused commands is the same: `test/b26-guard-refusal-words.test.mjs` pins four refused forms and four allowed ones. **Learned:** a fresh `git worktree` has no `node_modules`, so `npm test` there fails 21 unrelated tests until `npm ci` (lockfile only, no new dependency). |
 | S-66 | done 2026-11-10 (PR #67) | Test change only (B-32 item 18). The nested-pwsh timing test in `test/b25-guard-plain-forms.test.mjs` no longer compares against a fixed 2,000 ms. It times a flat string of the same size in the same run and fails past 8 times the flat time plus 200 ms, or past 6,000 ms; the 8,000 ms child timeout and the answer check stay. No file in `src/` changed. **Learned:** correct code measured 2.5 to 6.6 times the flat time (including 24 busy loops on 18 cores); the doubled tail read measured 18 to 36 times, so the 8 times line sits between them and leaves about 1.4 times of room above correct code. The fresh-Opus senior review approved: a warm-up read is not needed, and a `pwsh` word in the flat string would make the test catch less. Under heavy load the 8,000 ms child timeout, not the ratio, is the likelier false failure. The reviewer suggests that each later B-32 step (S-67 to S-75) reports its new ratio in its PR and that the 8 times line is not raised without a senior review. Two macOS CI jobs were cancelled while queued (zero steps ran) and passed on re-run. |
+| S-67 | done 2026-11-11 (PR #69) | B-32 items 5 and 17, and the open-tail half of item 11. The guard now refuses a command it cannot fully read, but only when the text names one of the five store-read tools (`find-generic-password`, `dump-keychain`, `secret-tool`, `get-storedcredential`, `credread`). Three cases: nesting deeper than 4 (`UNREAD`); a PowerShell tail left open after `-c` or `-Command` (`UNCLOSED`); and a work budget of `min(12 × length + 1,000,000, 16,000,000)` characters, with no clock in the guard (`UNREAD`). A command that names no read tool is still let through at any length, so the locked timing tests pass. **Name check:** `mentionsRead` is the one fallback rule: the tool's letters in order, with between neighbouring letters only dropped characters (`\`, `'`, `"`, line breaks, curly quotes U+2018 to U+201E, a backtick) or a `$( … )` or backtick span; a bit-parallel pass, 3 to 50 ns per character, not charged to the budget. **Review:** four fresh-Opus rounds. Rounds 1 to 3 said CHANGES NEEDED, each on the same fallback name check; under rule 15 the builder stopped patching, Abhishek chose a reset, and Fable 5.2 redesigned the check around the one rule above. Round 4 approved head 720f6b7: no read that main refuses got through, in 540,000 + 200,000 generated checks at the default budget, at a budget of 1 and nested 5 or more deep; confidence 0.88 that no further hole exists in the fallback. **Tests:** 318 in all (309 pass, 9 store tests skipped); on the base commit the new file fails the 5 tests written first. **Stryker** (10.1.1, run on demand, D-23): 83.00% on 100 mutants, 13 equivalent (loop bounds one past the end, speed-only widening of live masks), 4 real gaps in the curly-quote range check, pinned by f46ebc8. **Found, not fixed:** B-32 items 21 to 27, B-36 (S-66's test goes blind), S-76 (its fix). **Learned:** three patches in a row on one check did not converge; stating the check as one rule and re-deriving it did. Past the limits the guard now looks for the tool's name only (S-70 warning below). |
 
 ---
 
@@ -1285,7 +1286,7 @@ Order and cadence are Abhishek's (D-10, D-13): one PR, then stop. S-38 and S-39 
 
 All ten steps edit `src/guard.mjs`, so they run one after another, never side by side.
 
-**Build order:** S-66 → S-67 → S-68 → S-69 → S-70 → S-71 → S-72 → S-73 → S-74 (only once R-16 is answered) → S-75.
+**Build order:** S-66 → S-67 → S-76 → S-68 → S-69 → S-70 → S-71 → S-72 → S-73 → S-74 (only once R-16 is answered) → S-75.
 
 Why that order: S-66 first, so that the extra readings later steps add cannot make the thin timing test fail by chance (item 18). S-67 second, so that from then on, too much work ends in a refusal and never in a pass (item 17), before any step adds parsing. Then the small word rules (S-68, S-69), then the parser steps from least to most risky (S-70, S-71, S-72, S-73), then the step that waits on research (S-74), then the PowerShell cross-check (S-75), which tests everything before it.
 
@@ -1301,6 +1302,7 @@ Why that order: S-66 first, so that the extra readings later steps add cannot ma
 8. **Mutation testing** (where a tool changes the code on purpose to see whether the tests notice) on a step with real logic: `npx -y -p @stryker-mutator/core@10.1.1 stryker run`, using the command test runner, on the changed lines of `src/guard.mjs`. Only on the builder's machine, under Node 22 (D-23). The exact flags are open flag F10. Each surviving mutant gets a test, or the PR names it as equivalent (it changes nothing) and says why.
 9. **No bash here-documents (D-24).** No step teaches `splitShell` `<<`, `<<-` or `<<<`. A here-document that is refused today stays refused.
 10. **No new dependency**, no network call, no value printed, returned or written (invariants 1, 6, 7). Refusal words stay literally true (invariant 9). Style: ESM, 2 spaces, no semicolons, single quotes.
+11. **Report the timing ratio** (from S-66's senior review, repeated by S-67's). The PR body gives the nested-pwsh test's nested-to-flat ratio from three local runs, and the senior reviewer repeats it. The 8 times line in that test is not raised without a senior review.
 
 ### S-66 — test-change: the nested-pwsh timing test compares against a flat string timed in the same run (bug B-32 item 18)
 
@@ -1353,7 +1355,7 @@ Why that order: S-66 first, so that the extra readings later steps add cannot ma
 ### S-68 — The guard finds the real command word: past a redefined text-only name, `-c`'s options, `security -p`'s value and zsh's modifiers (bug B-32 items 1, 4, 10, 12)
 
 **PR:** one.
-**Depends on:** S-67 merged. **Blocks:** S-69 (same file), S-59.
+**Depends on:** S-67 merged; S-76 merged (so the timing test can see a doubled read again). **Blocks:** S-69 (same file), S-59.
 **Research:** lookup — `security`'s global options that take a value (`man security`, macOS); bash's options between `-c` and its script (GNU Bash manual, "Invoking Bash"); zsh's precommand modifiers (zsh manual, "Precommand Modifiers"). Read live, cited with URL and date in the PR (open flags F2, F3, F4).
 **Model:** sonnet.
 **Senior review:** required — loosening or tightening the guard changes access; a fresh Opus session that did not build it reads the PR before merge.
@@ -1407,6 +1409,7 @@ Why that order: S-66 first, so that the extra readings later steps add cannot ma
 **Model:** sonnet.
 **Senior review:** required — loosening or tightening the guard changes access; a fresh Opus session that did not build it reads the PR before merge.
 **Confidence:** 0.8 — items 2 and 20 were run in bash (20 in bash 3.2 by PR #62's review, not re-run). Item 3's shell side is by reading, and a rewritten `subshell()` is the riskiest change in this step.
+**Warning from S-67's round-4 review (N5):** S-67's name check (`mentionsRead`, the fallback for commands too long or too deeply nested to read) is sound only because the parser leaves characters out and never makes any up. Decoding `$'\x73'` or `${x}` would make up characters, so the fallback would no longer find a name the parser rebuilt. This step must redesign the fallback to match, not only widen its table, and its senior review must test that (strings only).
 **Files:** `src/guard.mjs`, `test/b32-guard-dollar-forms.test.mjs` (new).
 **Locked tests:** every file in `test/` at the base commit.
 **Today:** `true $'\'' ; <read> #'` passes: `$` is a plain character and `'` opens an ordinary quote (lines 147 and 188). `subshell()` (lines 101-112) counts `(` and `)` inside quotes and comments, so `echo $(echo ')'; <read>)` ends early. In double quotes, `"$\`, a line break, then `(<read>)"` keeps `$` and `(` as text (lines 162-172).
@@ -1543,6 +1546,28 @@ Why that order: S-66 first, so that the extra readings later steps add cannot ma
 **Verify:** `npm ci`, `npm test` locally, then CI's 6 jobs green, with the PR naming which jobs ran the comparison. Break test: commit, make `checkCommand` return `null` for PowerShell, run the new file where PowerShell is installed: it fails; `git checkout -- src/guard.mjs`.
 **Must not:** call `Invoke-Expression`, `&`, `.`, `-Command` or `-EncodedCommand` with a test string; merge with a known disagreement (log it as a new bug and stop); change `src/` or `.github/`; plus the shared rules.
 
+### S-76 — test-change: the nested-pwsh timing test calls `checkCommand` with an unlimited work budget (bug B-36)
+
+**PR:** one. Placed after S-67 and before S-68 (S-68 depends on it).
+**Depends on:** S-67 merged (done, PR #69). **Blocks:** S-68.
+**Research:** none.
+**Model:** sonnet.
+**Senior review:** required — it changes a yardstick that later guard steps are judged by; a fresh Opus session that did not build it reads the PR before merge.
+**Confidence:** 0.8 — the cause is read in the code (the budget in `checkCommand`, S-67); the size of the blind spot below is measured by the builder in the PR, not assumed here.
+**Files:** `test/b25-guard-plain-forms.test.mjs` (only the calls inside the test at the nested-pwsh timing case).
+**Locked tests:** every file in `test/` except `test/b25-guard-plain-forms.test.mjs`; in that file, every test except the nested-pwsh timing case.
+**Today:** since S-67, `checkCommand`'s fourth argument is a work budget (`min(12 × length + 1,000,000, 16,000,000)` by default). When a command runs past it, the guard stops reading and answers `UNREAD` only if the text names a read tool. The S-66 test feeds a command that names none, so a reading that is doubled by mistake would run out of budget sooner, answer `null`, and finish quickly: the test would pass while the reading is doubled. This is the S-67 builder's finding (memo item O-6), read from the code and not yet shown by a run. S-76's builder first makes the tail read twice on main and runs the test; if it still fails, the blind spot is not real and this step is closed without a change.
+**Change:**
+1. In the S-66 test's child process, pass `Infinity` as the fourth argument of every `checkCommand` call, so the test measures the reading, not the cut-off.
+2. Keep the ratio line (8 times the flat time + 200 ms), the 6,000 ms line, the 8,000 ms child timeout and the answer check as they are.
+3. Report the nested-to-flat ratio of three local runs in the PR body.
+**Acceptance:**
+- WHEN the once-only tail read in `src/guard.mjs` is made to read twice THEN the changed test SHALL fail (before the change it may pass; see Today).
+- WHEN the guard reads the nested shape in time proportional to its length THEN the test SHALL pass.
+- WHEN any other test in the repo runs THEN its result SHALL be unchanged.
+**Verify:** `npm ci`, `npm test`. Break test: commit, make the tail push twice (the doubling), run `node --test test/b25-guard-plain-forms.test.mjs`: only the changed test fails; `git checkout -- src/guard.mjs`. `git diff main -- test/` touches only lines inside that one test.
+**Must not:** change `src/`; loosen the ratio line; touch another test; plus the shared rules. The `Infinity` stays inside the test's child process: the guard itself still has the default budget.
+
 ### Open flags for S-66 to S-75
 
 Facts not checked when these steps were written (no shell, no network). Each says where to check.
@@ -1556,7 +1581,7 @@ Facts not checked when these steps were written (no shell, no network). Each say
 - **F7 — colon-bound parameter syntax** (`-Name:value`; spaces allowed after the colon?). Check: about_Parameters or about_Parsing, read live. S-69.
 - **F8 — ANSI-C quoting in zsh** behaves like bash for `\'` and `\\`. Check: zsh manual, "Quoting". S-70.
 - **F9 — bash 3.2 ends `$( )` at a `)` in a `case` pattern** (PR #62's review hit this with here-documents). S-70's `subshell()` counts that `)` the bash 5 way. Whether bash 3.2 then runs a read the guard misses is not checked. The senior review of S-70 should test it with `printf`, never with a read.
-- **F10 — StrykerJS flags** for "command test runner, changed lines only" (D-23 names `npx -y -p @stryker-mutator/core@10.1.1 stryker run`, not the flags). Check: stryker-mutator.io docs, read live.
+- **F10 — StrykerJS flags** — answered 2026-11-11 by the S-67 run (Stryker 10.1.1, `npx -y -p @stryker-mutator/core@10.1.1 stryker run <config>`): `testRunner` set to `command`, `commandRunner.command` set to the test command, `mutate` given as `src/guard.mjs:START-END` line ranges for the changed lines, `coverageAnalysis` off, and the `clear-text` reporter. Break tests were done by hand next to it: commit first, mutate, run, restore with `git checkout -- FILE`.
 - **F11 — which GitHub runners have `pwsh` and Windows PowerShell 5.1.** Check: actions/runner-images, the README of each image, read live. S-75.
 - **F12 — the hook's limits.** What Claude Code does when the hook times out (B-32 item 17 says this was not checked; D-17/R-13 say it fails open), and the largest tool input that can reach the hook (0.4 confidence in B-32). Check: code.claude.com/docs/en/hooks, read live. S-67.
 - **F13 — the exact 1 MB shape** from S-57's round-3 senior review. Check: https://github.com/abhisheksharma001/keyprompt/pull/60#issuecomment-6761183805. S-67, S-72.
