@@ -136,6 +136,27 @@ test('a word that is a whole script, as bash -c takes it, is not split into piec
   }
 })
 
+test('assignments chained in one word are each split, so the cmdlet at the end is a word of its own (found by comparing two versions)', () => {
+  for (const text of [
+    '$a=$b=Get-StoredCredential -Target keyprompt:X',
+    '$a+=$b-=$c??=Get-StoredCredential -Target keyprompt:X',
+    '$a=$b=$c=Get-StoredCredential -Target:keyprompt:X',
+    '$a=$b=Get-StoredCredential -Target OPENAI_API_KEY',
+    'echo ok; $a=$b=Get-StoredCredential -Target keyprompt:X',
+    'pwsh -c "$a=$b=Get-StoredCredential -Target keyprompt:X"',
+    'pwsh -c $a=$b=Get-StoredCredential -Target keyprompt:X',
+  ]) {
+    denied(text, 'powershell')
+    denied(text)
+  }
+  assert.deepEqual(ps('$a=$b=Get-X y'), [['$a', '=', '$b', '=', 'Get-X', 'y']])
+  assert.deepEqual(ps('$a+=$b??=c'), [['$a', '=', '$b', '=', 'c']])
+  // Only a $ after the = starts another assignment; anything else is the rest.
+  assert.deepEqual(ps('$a=b=$c'), [['$a', '=', 'b=$c']])
+  assert.deepEqual(ps('$a=$b'), [['$a', '=', '$b']])
+  assert.deepEqual(ps('$a=$b='), [['$a', '=', '$b', '=']])
+})
+
 // --- Tighten only: a split never turns a refusal into a pass -------------------------------------------------
 
 test('a command that main refuses before a text-only word is still refused after the split (found by the differential run)', () => {
