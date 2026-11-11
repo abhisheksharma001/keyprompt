@@ -265,11 +265,14 @@ test('nested pwsh -c calls away from the command start are each read once, insid
     const results = [250000, 500000].map((n) => {
       // S-66: a flat string of about the same length, read the same way, timed first in this same process, so a slow
       // or loaded machine slows both and the ratio stays honest. A fixed 2 s limit failed on CI and under load (B-32 item 18).
+      // S-76 (B-36): the fourth argument is the guard's work budget, unlimited here. With the default budget, a reading that is
+      // wrongly doubled runs out of budget early and answers fast (5 to 7 times the flat time, under the line below), so the test
+      // would not notice it. The guard itself keeps its default budget.
       const flatStart = Date.now()
-      const flatFound = checkCommand('x ' + 'z '.repeat(n), ['OPENAI_API_KEY'])
+      const flatFound = checkCommand('x ' + 'z '.repeat(n), ['OPENAI_API_KEY'], undefined, Infinity)
       const flatMs = Date.now() - flatStart
       const start = Date.now()
-      const found = checkCommand(nest('z '.repeat(n)), ['OPENAI_API_KEY'])
+      const found = checkCommand(nest('z '.repeat(n)), ['OPENAI_API_KEY'], undefined, Infinity)
       return { ms: Date.now() - start, flatMs, ok: found === null && flatFound === null }
     })
     process.stdout.write(JSON.stringify(results))
@@ -278,7 +281,7 @@ test('nested pwsh -c calls away from the command start are each read once, insid
   assert.equal(child.status, 0, `the check did not finish within 8 seconds (signal ${child.signal}) ${child.stderr}`)
   for (const [index, { ms, flatMs, ok }] of JSON.parse(child.stdout).entries()) {
     assert.ok(ok, `case ${index}: wrong answer`)
-    // Doubling at each nesting level measured 21 to 29 times the flat time; the correct reading measured 3.6 to 5.4 times.
+    // With the unlimited budget, doubling at each nesting level measured 20.6 to 29.6 times the flat time; the correct reading measured 2.8 to 6.0 times.
     assert.ok(ms <= 8 * flatMs + 200, `case ${index}: nested took ${ms} ms, flat took ${flatMs} ms (limit 8 x flat + 200 ms)`)
     assert.ok(ms <= 6000, `case ${index}: nested took ${ms} ms, over 6000 ms, too close to the hook's 10 second timeout`)
   }
