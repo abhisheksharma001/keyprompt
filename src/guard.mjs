@@ -40,6 +40,8 @@ const READ_TOOLS = ['find-generic-password', 'dump-keychain', 'secret-tool', 'ge
 const WORK_PER_CHAR = 12
 const WORK_BASE = 1000000
 const WORK_MOST = 16000000
+/** What each script that S-68 reads besides the word right after `-c` costs besides its characters, so the number of those readings is bounded too (1.6 million one-character option values after `-c` were 1.6 million readings and took 8 s). Main's readings cost their characters only, as the S-67 tests pin. */
+const WORK_PER_EXTRA_SCRIPT = 64
 /**
  * What the readings of one command share: `left`, the work budget, and three marks for S-68 (B-32 item 1). `exempted` is set when a text-only
  * command was let through unread, `defines` when any text read has a word that defines a function or alias, and `strict` makes the next
@@ -79,8 +81,7 @@ const ZSH_MODIFIERS = new Set(['noglob', 'nocorrect', 'coproc', '-'])
 /**
  * Command words that define a function or an alias, or change what a name runs, so a later command word may mean something else (S-68, B-32
  * item 1): `function`, `alias`, PowerShell's `Set-Alias`, `New-Alias`, `sal`, `nal` and `filter`, and `hash` (bash `hash -p PATH NAME`, zsh
- * `hash NAME=PATH`). Only a word where a command word is expected counts, so `grep function src/` does not. zsh's `functions[NAME]=…`
- * and `aliases[NAME]=…` count too (`readInWords`).
+ * `hash NAME=PATH`). Only a word where a command word is expected counts, so `grep function src/` does not (`definesSomething`).
  */
 const DEFINERS = new Set(['function', 'filter', 'alias', 'set-alias', 'new-alias', 'sal', 'nal', 'hash'])
 /** Commands whose words after `--` are another command (`keyprompt run X -- COMMAND`), where main's reading looks. */
@@ -385,7 +386,7 @@ function followsWord(word) {
  */
 function closesAtOnce(text, at) {
   let after = at + 1
-  while (after < text.length && (text[after] === ' ' || text[after] === '\t')) after++
+  while (after < text.length && (text[after] === ' ' || text[after] === '\t' || (text[after] === '\\' && text[after + 1] === '\n'))) after += text[after] === '\\' ? 2 : 1
   return text[after] === ')'
 }
 
@@ -500,13 +501,14 @@ function securitySubs(words) {
 /**
  * The words after a POSIX shell's `-c` flag that can be its script (S-68, B-32 item 4; open flag F4: bash and zsh, checked with
  * `echo` on bash 3.2 and zsh 5.9, and the GNU Bash manual, "Invoking Bash"). The script is the first word that is not an option;
- * `--` ends the options; an option with `o` or `O` in it (`-o`, `+o`, `-O`, `-co`) takes the next word as its value, which is read
- * as a script too (zsh takes the value of `-O` as the script). The word right after the flag is always read, as main read it. An index
- * can be listed twice; the caller reads each once.
+ * `--` ends the options. An option with `o` or `O` in it (`-o`, `+o`, `-O`, `-co`) takes the next word as its value. The value of `-o`
+ * is an option name, never a script (both shells say "no such option" for one that is not), but zsh runs the value of `-O` as the script
+ * (`zsh -c -O extglob 'echo'` runs `extglob`), so that value is read too. The word right after the flag is always read, as main read it.
+ * An index can be listed twice; the caller reads each once.
  *
- * What a walk finds from a word on depends only on that word and on whether the last option took a value. `seen` (two marks per word, shared
- * by every walk over the same words) stops a walk where an earlier one went, so many flags over one long run of option words cost no more
- * than the run (a chain of `sh -c +/sh -c …` took the walk quadratic time before).
+ * What a walk finds from a word on depends only on that word and on what the last option took (nothing, an option name, a script).
+ * `seen` (three marks per word, shared by every walk over the same words) stops a walk where an earlier one went, so many flags over one
+ * long run of option words cost no more than the run (a chain of `sh -c +/sh -c …` took the walk quadratic time before).
  *
  * @param {string[]} words
  * @param {number} flag index of the `-c` word
@@ -515,27 +517,43 @@ function securitySubs(words) {
  */
 function shellScripts(words, flag, seen) {
   const out = [flag + 1]
-  const takesValue = (/** @type {string} */ w) => /^[-+][A-Za-z]*[oO]/.test(w)
-  let value = takesValue(words[flag])
+  const kind = (/** @type {string} */ w) => (/^[-+][A-Za-z]*O/.test(w) ? 2 : /^[-+][A-Za-z]*o/.test(w) ? 1 : 0)
+  let value = kind(words[flag])
   for (let k = flag + 1; k < words.length; k++) {
-    const mark = 2 * k + (value ? 1 : 0)
+    const mark = 3 * k + value
     if (seen[mark]) break
     seen[mark] = 1
     const w = words[k]
     if (value) {
-      value = false
-      out.push(k)
+      if (value === 2) out.push(k)
+      value = 0
     } else if (w === '--') {
       if (k + 1 < words.length) out.push(k + 1)
       break
     } else if (w.startsWith('-') || w.startsWith('+')) {
-      value = takesValue(w)
+      value = kind(w)
     } else {
       out.push(k)
       break
     }
   }
   return out
+}
+
+/**
+ * Whether a command, whose real command word is at `at`, defines a function or alias or changes what a name runs (S-68, B-32 item 1): its
+ * word is one of `DEFINERS` with a word that is not an option after it (a bare `alias` or `hash -r` only lists or clears), or it assigns to
+ * zsh's `functions` or `aliases` or bash's `BASH_ALIASES` or `BASH_CMDS` (`functions[echo]=…`, `functions+=(…)`), which may stand before
+ * the command word as an assignment.
+ *
+ * @param {string[]} words
+ * @param {number} at
+ */
+function definesSomething(words, at) {
+  for (let k = 0; k <= at && k < words.length; k++) if (/^(functions|aliases|bash_aliases|bash_cmds)(\[|\+?=)/i.test(words[k])) return true
+  if (at >= words.length || !DEFINERS.has(base(words[at]))) return false
+  for (let k = at + 1; k < words.length; k++) if (!words[k].startsWith('-')) return true
+  return false
 }
 
 /** @type {Record<string, string[]>} the subcommands of each store's read tool that read */
@@ -579,12 +597,11 @@ function nextMatch(words, test) {
  */
 function readInWords(words, names, depth, comments, limit) {
   let start = commandStart(words)
-  if (start >= words.length) return null
   // zsh's modifiers and `repeat COUNT` move this start only; it is used to find `eval` and nothing else (S-68, B-32 item 12). Main's start stays the
   // start for everything else, so a text-only command behind a modifier is refused as before, and a reading never depends on it.
   let evalStart = commandStart(words, 0, true)
-  const head = words[start].toLowerCase()
-  if (DEFINERS.has(base(head)) || head.startsWith('functions[') || head.startsWith('aliases[')) limit.defines = true
+  if (definesSomething(words, start) || definesSomething(words, evalStart)) limit.defines = true
+  if (start >= words.length) return null
   // An option skipped before the first word may have taken it as its value (`env -u echo …`), so only a start past no option counts as text.
   const text = TEXT_ONLY.has(base(words[start])) && !words.slice(0, start).some((w) => w.startsWith('-'))
   // A command that defines a function or alias may have redefined the text-only name (S-68, B-32 item 1). The first reading uses the exemption and
@@ -648,7 +665,7 @@ function readInWords(words, names, depth, comments, limit) {
       const kind = powershell ? 'powershell' : 'shell'
       flags[kind] ??= nextMatch(words, (w) => (powershell ? /^-c(ommand)?$/i.test(w) : /^-[a-z]{0,3}c[a-z]{0,3}$/.test(w)))
       const flag = flags[kind][i + 1]
-      /** @type {[string, () => string, boolean?][]} each script to read, under the key that marks it read, and whether to refuse one that ends open; built only when read, so a skipped one costs nothing */
+      /** @type {[string, () => string, boolean?, boolean?][]} each script to read, under the key that marks it read, whether to refuse one that ends open, and whether it is one of the scripts S-68 adds (charged `WORK_PER_EXTRA_SCRIPT`); built only when read, so a skipped one costs nothing */
       const scripts = []
       if (!powershell) {
         // Main's flag (lowercase letters only) and the first flag with capital letters too (`-Ec`, `-cO`; S-68, B-32 item 4), which may come
@@ -658,7 +675,7 @@ function readInWords(words, names, depth, comments, limit) {
         for (const at of [flag, flags.shellCapitals[i + 1]]) {
           if (at + 1 >= words.length || checked.has(`shell words ${at}`)) continue
           checked.add(`shell words ${at}`)
-          for (const k of shellScripts(words, at, (seen ??= new Uint8Array(2 * words.length + 2)))) scripts.push([`shell ${k}`, () => words[k]])
+          for (const k of shellScripts(words, at, (seen ??= new Uint8Array(3 * words.length + 3)))) scripts.push([`shell ${k}`, () => words[k], false, k !== at + 1])
         }
       } else if (flag + 1 >= words.length) {
         // No script follows.
@@ -682,9 +699,10 @@ function readInWords(words, names, depth, comments, limit) {
         if (stop === words.length) checked.add('powershell tail')
         else scripts.push(['powershell tail', () => words.slice(flag + 1).join(' '), true])
       }
-      for (const [key, script, refuseOpen] of scripts) {
+      for (const [key, script, refuseOpen, extra] of scripts) {
         if (found || checked.has(key)) continue
         checked.add(key)
+        if (extra && (limit.left -= WORK_PER_EXTRA_SCRIPT) < 0) throw OUT_OF_WORK
         found = readScript(script(), names, depth + 1, powershell, comments, limit, refuseOpen)
       }
     }
@@ -705,7 +723,11 @@ function readInWords(words, names, depth, comments, limit) {
  */
 function readInShell(text, names, depth, powershell, comments, limit, refuseOpen) {
   // Past the depth limit the text is not read. A text that names a read tool is refused (S-67, B-32 item 5), so too much nesting never reads as "no read".
-  if (depth > 4) return mentionsRead(text) ? UNREAD : null
+  if (depth > 4) {
+    // Not read, so it may define something too (S-68): a text-only command that was let through is read again without the exemption.
+    limit.defines = true
+    return mentionsRead(text) ? UNREAD : null
+  }
   const { commands, nested, open, defines } = splitShell(text, powershell, comments, limit)
   if (defines) limit.defines = true
   for (const words of commands) {

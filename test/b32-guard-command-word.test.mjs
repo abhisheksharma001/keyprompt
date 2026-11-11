@@ -289,10 +289,14 @@ test('words after the script of -c are arguments, not scripts (item 4)', () => {
   }
 })
 
-test('the value of -o, -O, +o and +O can be the script, as zsh runs it (item 4)', () => {
-  for (const text of [`zsh -c -O '${READ}'`, `zsh -c +o '${READ}'`, `zsh -c -o '${READ}'`, `zsh -co '${READ}'`, `zsh -c +O -e '${READ}'`, `zsh -c -e +o '${READ}'`]) {
+test('the value of -O and +O is read as a script, as zsh runs it; the value of -o and +o is an option name (item 4)', () => {
+  for (const text of [`zsh -c -O '${READ}'`, `zsh -c +O '${READ}'`, `zsh -cO '${READ}'`, `zsh -c +O -e '${READ}'`, `zsh -c -e -O '${READ}'`, `zsh -c -oO x '${READ}'`]) {
     denied(text, 'bash')
   }
+  // `-o` and `+o` take an option name; a script given there is never run (zsh 5.9: "no such option", bash 3.2.57: "invalid option name").
+  // The word right after the flag is always read, as main read it, so `-co` and a `-o` right after `-c` keep that.
+  for (const text of [`zsh -c -e -o '${READ}'`, `bash -c -e +o '${READ}'`, `bash -c -e -o x -o '${READ}'`, `zsh -c -o '${READ}'`]) allowed(text, 'bash')
+  for (const text of [`bash -co '${READ}'`, `bash -c -o errexit '${READ}'`, `bash -c -e -o errexit -- '${READ}'`]) denied(text, 'bash')
 })
 
 test('the flag can carry capital letters (item 4)', () => {
@@ -448,4 +452,63 @@ test('a redefined text-only word has its words read one by one as well as joined
   denied(`echo() { shift; "$@"; }; echo "it's" ${READ}`, 'bash')
   denied(`alias echo=true; echo "it's" ${READ}`, 'bash')
   denied(`function cat { "$@" }; cat "it's" ${READ}`, 'bash')
+})
+
+// --- Findings of the senior review of the second head (bef00ee) ---------------------------------------------------
+
+test('BL1: a long run of option values after -c costs a bounded number of readings', () => {
+  // Whatever the answer is (a value of -O is the script in zsh; a -o value is not), it comes fast, and the 8 MB shape of the review does too.
+  for (const unit of ['-o x ', '-O x ', '+O x ', 'x -o ', 'x -O ']) {
+    const start = Date.now()
+    const command = 'bash -co ' + unit.repeat(400000) + `'${READ}'`
+    checkCommand(command, SAVED, undefined)
+    assert.ok(Date.now() - start < 3000, `${unit}: ${command.length} characters took ${Date.now() - start} ms`)
+  }
+  // The value of the last -O is the script: refused.
+  assert.ok(checkCommand('zsh -c ' + '-O x '.repeat(1000) + `-O '${READ}'`, SAVED, 'bash'))
+  // Without a read in it, a command that long is let through, and just as fast.
+  const start = Date.now()
+  assert.equal(checkCommand('bash -c ' + '-O x '.repeat(400000) + 'y', SAVED, undefined), null)
+  assert.ok(Date.now() - start < 3000, `took ${Date.now() - start} ms`)
+})
+
+test('each script S-68 reads besides the word after -c costs a fixed amount of the work budget (BL1)', () => {
+  // 5,000 one-character -O values: the characters are about 25 KB (read two ways), the 5,000 readings cost 64 each, twice. The read at the end is
+  // an argument of the script `y`, not a script, so with enough budget the command is let through.
+  const command = 'bash -c ' + '-O x '.repeat(5000) + `y '${READ}'`
+  assert.equal(checkCommand(command, SAVED, 'bash'), null)
+  assert.equal(checkCommand(command, SAVED, 'bash', 1500000), null, 'the characters and the readings fit in 1.5 million')
+  const reason = checkCommand(command, SAVED, 'bash', 300000)?.reason
+  assert.ok(reason?.startsWith('keyprompt guard: this command is too long or too deeply nested'), 'the characters fit in 300,000, the readings do not, and the command names a read: refused')
+  assert.equal(checkCommand(command.replace(READ, 'ls'), SAVED, 'bash', 300000), null, 'out of budget with no read named: let through')
+})
+
+test('N1: `-` after sudo or doas is that wrapper\'s option, so an eval behind it and a zsh modifier is still found', () => {
+  for (const text of [`sudo - -u x noglob eval '${READ}'`, `doas - -g x repeat 1 eval '${READ}'`, `sudo - -u x nocorrect eval '${READ}'`, `sudo - -u x repeat $(true) eval '${READ}'`]) {
+    for (const shell of ['bash', undefined]) denied(text, shell)
+  }
+})
+
+test('N2: more definitions that change what a text-only name runs', () => {
+  for (const text of [
+    `functions+=(echo 'eval "$@"'); echo "${READ}"`,
+    `functions=(echo 'eval "$@"'); echo "${READ}"`,
+    `BASH_ALIASES[echo]=eval; echo "${READ}"`,
+    `BASH_CMDS[grep]=/bin/sh; grep "${READ}"`,
+    `noglob alias echo=eval\necho "${READ}"`,
+    `repeat 1 alias echo=eval\necho "${READ}"`,
+    `nocorrect function echo { eval "$@" }\necho "${READ}"`,
+    `echo (\\
+) { eval "$@"; }; echo "${READ}"`,
+    `eval eval eval eval eval 'echo() { eval "$@"; }'; echo "${READ}"`,
+  ]) {
+    denied(text, 'bash')
+  }
+})
+
+test('N3: a bare `alias` or `hash -r` only lists or clears, so it is not a definition', () => {
+  for (const text of [`hash -r; echo "run: ${READ}"`, `alias; echo "${READ}"`, `alias -p; echo "${READ}"`, `hash; echo ${READ}`, `function; echo "${READ}"`]) {
+    allowed(text, 'bash')
+  }
+  denied(`hash -p /bin/echo cat; cat ${READ}`, 'bash')
 })
