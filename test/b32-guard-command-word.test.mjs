@@ -512,3 +512,13 @@ test('N3: a bare `alias` or `hash -r` only lists or clears, so it is not a defin
   }
   denied(`hash -p /bin/echo cat; cat ${READ}`, 'bash')
 })
+
+test('N2: text nested past the depth limit is not read, so a text-only command after it is read without the exemption', () => {
+  // Five levels of $( ) around a definition: the guard cannot read it, so it cannot rule the definition out (it fails closed).
+  const deep = (levels) => 'echo $('.repeat(levels) + 'echo() { eval "$@"; }' + ')'.repeat(levels) + `; echo "${READ}"`
+  for (const levels of [5, 6, 8]) for (const shell of ['bash', undefined]) denied(deep(levels), shell)
+  // Four levels are read, and the definition inside a $( ) is seen as a definition too, so this one is refused for that reason.
+  denied(deep(4), 'bash')
+  // Deep text with no definition and no read in it changes nothing.
+  assert.equal(checkCommand('echo $('.repeat(6) + 'true' + ')'.repeat(6) + '; echo hi', SAVED, 'bash'), null)
+})
