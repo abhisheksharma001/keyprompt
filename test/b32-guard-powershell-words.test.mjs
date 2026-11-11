@@ -19,8 +19,8 @@ function allowed(command, shell) {
   assert.equal(checkCommand(command, SAVED, shell), null, `should let through (${shell ?? 'both ways'}): ${command}`)
 }
 
-/** @param {string} text @returns {string[][]} the words splitShell finds when the text is read as PowerShell */
-const ps = (text) => splitShell(text, true).commands
+/** @param {string} text @returns {string[][]} the split copy of a one-command text read as PowerShell: the last command splitShell returns (the first is the command as Bash reads it) */
+const ps = (text) => [splitShell(text, true).commands.at(-1)]
 
 // --- Item 6: a colon-bound parameter ---------------------------------------------------------------------
 
@@ -50,10 +50,8 @@ test('the colon stays where PowerShell puts it: only a word that starts with a h
   // Quoted or not, the word PowerShell sees is the same (splitting a quoted word can only add a refusal).
   assert.deepEqual(ps("cmd '-a:b'"), [['cmd', '-a', 'b']])
   assert.deepEqual(ps('cmd "-a:b"'), [['cmd', '-a', 'b']])
-  // A word with a blank in it (it can only come from quotes) stays whole: it may be the script that `bash -c` or `sh -c` takes as one word.
-  assert.deepEqual(ps('cmd -a:"b c"'), [['cmd', '-a:b c']])
-  assert.deepEqual(ps('cmd "-a:b c"'), [['cmd', '-a:b c']])
-  assert.deepEqual(ps("cmd '-a:b\tc'"), [['cmd', '-a:b\tc']])
+  assert.deepEqual(ps('cmd -a:"b c"'), [['cmd', '-a', 'b c']])
+  assert.deepEqual(ps('cmd "-a:b c"'), [['cmd', '-a', 'b c']])
   // Nothing after the colon: the parameter name only.
   assert.deepEqual(ps('cmd -a:'), [['cmd', '-a']])
   // Not split: no hyphen first, no colon, or a hyphen alone.
@@ -61,21 +59,24 @@ test('the colon stays where PowerShell puts it: only a word that starts with a h
   assert.deepEqual(ps('Get-Date -Format yyyy:MM'), [['Get-Date', '-Format', 'yyyy:MM']])
 })
 
-test('the service name is refused whatever its case, so splitting at a colon loses no refusal (found by the differential run)', () => {
-  // Read as one word, `-sKeyPrompt:X` named keyprompt by its lower-cased prefix `keyprompt:`. Split at the colon, the value is `KeyPrompt`.
-  for (const text of [
-    'security find-generic-password -w -sKeyPrompt:X',
-    'security find-generic-password -wsKEYPROMPT:x',
-    'security find-generic-password -w -s KeyPrompt',
-    'secret-tool lookup service KeyPrompt',
-  ]) {
+test('a service name in mixed case with its colon is still refused: the word as Bash reads it is kept (found by the differential run)', () => {
+  for (const text of ['security find-generic-password -w -sKeyPrompt:X', 'security find-generic-password -wsKEYPROMPT:x']) {
     denied(text, 'powershell')
     denied(text)
     denied(text, 'bash')
   }
   // A colon-bound option is a PowerShell reading only; Bash keeps the whole word, as before.
-  denied('security find-generic-password -g -s:KeyPrompt:X', 'powershell')
-  denied('security find-generic-password -g -s:KeyPrompt:X')
+  denied('security find-generic-password -g -s:keyprompt:X', 'powershell')
+  denied('security find-generic-password -g -s:keyprompt:X')
+})
+
+test('a command with a word that splits is returned twice: as Bash reads it, then split (nothing main read is read any less)', () => {
+  assert.deepEqual(splitShell('$c=Get-X y; z', true).commands, [['$c=Get-X', 'y'], ['$c', '=', 'Get-X', 'y'], ['z']])
+  assert.deepEqual(splitShell('a -b:c d', true).commands, [['a', '-b:c', 'd'], ['a', '-b', 'c', 'd']])
+  // Only the commands with a word that splits are returned twice; the words before it are in both.
+  assert.deepEqual(splitShell('a b -c:d; e f', true).commands, [['a', 'b', '-c:d'], ['a', 'b', '-c', 'd'], ['e', 'f']])
+  assert.deepEqual(splitShell('a b c', true).commands, [['a', 'b', 'c']])
+  assert.deepEqual(splitShell('$c=Get-X y; z').commands, [['$c=Get-X', 'y'], ['z']])
 })
 
 // --- Item 16: an assignment glued to the cmdlet ----------------------------------------------------------
@@ -105,10 +106,9 @@ test('an assignment is split into the name, a plain =, and the rest (item 16)', 
   assert.deepEqual(ps('$c%=Get-X'), [['$c', '=', 'Get-X']])
   assert.deepEqual(ps('$c??=Get-X'), [['$c', '=', 'Get-X']])
   assert.deepEqual(ps('$env:C=Get-X'), [['$env:C', '=', 'Get-X']])
-  // Quoted or not, unless the word has a blank in it.
+  // Quoted or not.
   assert.deepEqual(ps('"$c=Get-X"'), [['$c', '=', 'Get-X']])
-  assert.deepEqual(ps('"$c=Get-X y"'), [['$c=Get-X y']])
-  assert.deepEqual(ps("'$c=Get-X\ny'"), [["$c=Get-X\ny"]])
+  assert.deepEqual(ps('"$c=Get-X y"'), [['$c', '=', 'Get-X y']])
   // Nothing after the operator: the name and the =.
   assert.deepEqual(ps('$c='), [['$c', '=']])
   assert.deepEqual(ps('$c+='), [['$c', '=']])

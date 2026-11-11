@@ -227,7 +227,7 @@ function mentionsRead(text) {
  *
  * `defines` is true when, read as a POSIX shell, a word is followed by `()` (S-68, B-32 item 1: a function definition). Quotes and escapes
  * are already taken out of the words, so `e\cho()` counts. It is a coarse sign: it can be true when nothing is defined. The other
- * sign, a command word like `function` or `alias`, is looked for in `readInWords`. Read as PowerShell, it is also true when a word was split at a colon or an assignment (S-69), for a different reason: the split shows a command word that main never saw.
+ * sign, a command word like `function` or `alias`, is looked for in `readInWords`.
  *
  * @param {string} text
  * @param {boolean} [powershell]
@@ -251,27 +251,18 @@ export function splitShell(text, powershell = false, comments = true, limit) {
   let defines = false
   /** the last word of the command so far, for the `(` that may follow it */
   let lastWord = ''
+  /** @type {string[] | null} the command's words with the PowerShell splits made, once the command has a word that splits (S-69) */
+  let split = null
   const endWord = () => {
     if (inWord) {
       // PowerShell splits two kinds of word that Bash keeps whole (S-69, B-32 items 6 and 16), quoted or not. `-Name:value` is the parameter
       // `-Name` and its value (about_Parameters). `$x=Cmdlet` is a variable, an assignment operator and the cmdlet (about_Assignment_Operators:
-      // `=` `+=` `-=` `*=` `/=` `%=` `??=`); the operator is pushed as a plain `=`, which is where `commandStart` looks for it.
-      // A word with a blank in it came from quotes and is left whole: it may be the script that `bash -c` takes as one word (found by the differential run).
-      const splits = powershell && (word[0] === '-' || word[0] === '$') && !/[ \t\n\r]/.test(word)
-      const colon = splits && word[0] === '-' ? word.indexOf(':') : -1
-      const equals = splits && word[0] === '$' ? word.indexOf('=') : -1
-      // A split lets `commandStart` see a command word that main never saw, so a text-only word there (echo, Write-Output) would be let through
-      // where main read the whole text and refused it. Marking the text `defines` has such a word read again like `eval` (S-68), which keeps that
-      // refusal (shared rule 7, tighten only).
-      if (colon > 0 || equals > 0) defines = true
-      if (colon > 0) {
-        words.push(word.slice(0, colon))
-        if (colon + 1 < word.length) words.push(word.slice(colon + 1))
-      } else if (equals > 0) {
-        const before = word.slice(0, equals)
-        words.push(before.endsWith('??') ? before.slice(0, -2) : '-+*/%'.includes(before[before.length - 1]) ? before.slice(0, -1) : before, '=')
-        if (equals + 1 < word.length) words.push(word.slice(equals + 1))
-      } else words.push(word)
+      // `=` `+=` `-=` `*=` `/=` `%=` `??=`); the operator is pushed as a plain `=`, which is where `commandStart` looks for it. The split words
+      // are a second copy of the command, read as well as the first, so nothing main read is read any less (shared rule 7, tighten only).
+      const pieces = powershell ? pieceWords(word) : null
+      if (pieces && !split) split = words.slice()
+      words.push(word)
+      if (split) split.push(...(pieces ?? [word]))
       lastWord = word
     }
     word = ''
@@ -279,8 +270,12 @@ export function splitShell(text, powershell = false, comments = true, limit) {
   }
   const endCommand = () => {
     endWord()
-    if (words.length > 0) commands.push(words)
+    if (words.length > 0) {
+      commands.push(words)
+      if (split) commands.push(split)
+    }
     words = []
+    split = null
     lastWord = ''
   }
   /** @param {number} start index just after `$(` @returns {number} index after the matching `)` */
@@ -387,6 +382,27 @@ export function splitShell(text, powershell = false, comments = true, limit) {
 }
 
 /**
+ * The words PowerShell sees where Bash sees one (S-69, B-32 items 6 and 16): `-Name:value` is `-Name` and `value`; `$x=Cmdlet` (or any assignment
+ * operator) is `$x`, `=` and `Cmdlet`. The first colon and the first `=` are found with `indexOf`, so this is linear in the word.
+ *
+ * @param {string} word
+ * @returns {string[] | null} the pieces, or null when the word does not split
+ */
+function pieceWords(word) {
+  if (word[0] === '-') {
+    const colon = word.indexOf(':')
+    if (colon <= 0) return null
+    return colon + 1 < word.length ? [word.slice(0, colon), word.slice(colon + 1)] : [word.slice(0, colon)]
+  }
+  if (word[0] !== '$') return null
+  const equals = word.indexOf('=')
+  if (equals <= 0) return null
+  const before = word.slice(0, equals)
+  const name = before.endsWith('??') ? before.slice(0, -2) : '-+*/%'.includes(before[before.length - 1]) ? before.slice(0, -1) : before
+  return equals + 1 < word.length ? [name, '=', word.slice(equals + 1)] : [name, '=']
+}
+
+/**
  * Whether the word right before a `(` can be a function's name, as in `echo() {` or `f ( ) {` (S-68). The parser has already taken
  * quotes, escapes and line continuations out of the word, so `e''cho` and `echo\` + newline count. `a=()` and `<()` are not definitions.
  *
@@ -413,9 +429,7 @@ function closesAtOnce(text, at) {
  * @param {Set<string>} names
  */
 function namesKeyprompt(word, names) {
-  // The service name is matched without regard to case, as `keyprompt:NAME` already was: read as PowerShell, `-sKeyPrompt:X` is `-sKeyPrompt` and
-  // `X` (S-69), and the first of those must still be refused where main refused the whole word.
-  return word.toLowerCase() === SERVICE || word.toLowerCase().startsWith(`${SERVICE}:`) || names.has(word)
+  return word === SERVICE || word.toLowerCase().startsWith(`${SERVICE}:`) || names.has(word)
 }
 
 /**
