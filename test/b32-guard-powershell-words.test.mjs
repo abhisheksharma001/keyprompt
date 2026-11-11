@@ -248,3 +248,17 @@ test('a nested pwsh -c text full of split words needs no more of the work budget
     assert.equal(checkCommand(text, SAVED, undefined, 12 * text.length + 1000), null, `the budget ran out reading ${unit.trim()} words`)
   }
 })
+
+test('one word of 150,000 chained assignments after a read does not crash the guard, so the read is still refused (review of PR #75, B1)', () => {
+  // A guard that throws is skipped by the hook (exit 1 lets the call through), so a crash would turn a refusal into a pass.
+  const chain = '$a='.repeat(150_000) + '1'
+  for (const [text, shell] of [
+    [`Get-StoredCredential -Target keyprompt:X ; ${chain}`, 'powershell'],
+    [`if(1){Get-StoredCredential -Target keyprompt:X} ${chain}`, undefined],
+    [`pwsh -c 'Get-StoredCredential -Target keyprompt:X ; ${chain}'`, 'bash'],
+  ]) {
+    let found
+    assert.doesNotThrow(() => (found = checkCommand(text, SAVED, shell)), `threw (${shell ?? 'both ways'})`)
+    assert.ok(found, `should refuse (${shell ?? 'both ways'}) a read followed by a long chain`)
+  }
+})
