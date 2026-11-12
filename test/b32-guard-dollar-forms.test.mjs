@@ -123,6 +123,49 @@ test('subshell: what it skips is quoted text, double-quoted text, a backslash pa
   assert.equal(dollarWords(`x $(a 'b)`).open, true)
 })
 
+test('subshell: more places where the Bash scan must end a span where the shell does (the mutation run of PR #79 found no test for these)', () => {
+  const nested = (text) => dollarWords(text).nested
+  // A `$` in double quotes that is not followed by `(` opens nothing; a `(` after another character opens nothing.
+  assert.deepEqual(nested(`x $(a "$x" b) c`), [`a "$x" b`])
+  assert.deepEqual(nested(`x $(a "x(y" b) c`), [`a "x(y" b`])
+  // A `$` that a continuation joins to `(` opens code inside double quotes, where a `)` in quotes ends nothing.
+  assert.deepEqual(nested(`x $(a "$\\\n(b ")" )" c) d`), [`a "$\\\n(b ")" )" c`])
+  // In double quotes `$'` is two plain characters, and a `(` that a continuation joins to a character other than `$` is a plain `(`.
+  assert.deepEqual(nested(`x $(a "$'" b) c`), [`a "$'" b`])
+  assert.deepEqual(nested(`x $(a "b\\\n(c" d) e`), [`a "b\\\n(c" d`])
+  // In code, a `$` that a continuation joins to `(` is `$(`, not the start of `$'…'`.
+  assert.deepEqual(nested(`x $(a $\\\n(b) c) d`), [`a $\\\n(b) c`])
+  // `$'…'` in code: a `)` in it ends nothing, `\\'` does not end it, and its end is the first `'` that no backslash escapes.
+  assert.deepEqual(nested(`x $(a $')' b) c`), [`a $')' b`])
+  assert.deepEqual(nested(`x $(a $'\\')' b) c`), [`a $'\\')' b`])
+  assert.deepEqual(nested(`x $(a $'ab' b) c`), [`a $'ab' b`])
+  // A `#` at the very start of the span is a comment.
+  assert.deepEqual(nested(`x $(# )\nb) c`), [`# )\nb`])
+})
+
+test('the first reading is main\'s, and it says when the second one is needed: the words, the nested texts and the mark', () => {
+  const main = (text) => splitShell(text, false, true)
+  // No quote and no `#` in the span: nothing to find out, so no second reading. A quote or a `#`: the mark is set.
+  assert.equal(main('echo $(true) x').dollar, false)
+  assert.equal(main("echo $(a 'b') x").dollar, true)
+  assert.equal(main('echo $(a # b\n) x').dollar, true)
+  // `$'…'` and a `$` joined by continuations are plain characters to main: the `$` stays in the word.
+  assert.deepEqual(main("echo $'a b'").commands, [['echo', '$a b']])
+  assert.equal(main("echo $'a b'").dollar, true)
+  assert.deepEqual(main("echo $\\\n'a b'").commands, [['echo', '$a b']])
+  assert.equal(main("echo $\\\n'a b'").dollar, true)
+  assert.deepEqual(main('echo "$\\\n(true)"').commands, [['echo', '$(true)']])
+  assert.deepEqual(main('echo "$\\\n(true)"').nested, [])
+  assert.equal(main('echo "$\\\n(true)"').dollar, true)
+  // The new reading takes them out: the `$` goes, and the joined `$(` is a span.
+  assert.deepEqual(dollarWords("echo $'a b'").commands, [['echo', 'a b']])
+  assert.deepEqual(dollarWords('echo "$\\\n(true)"').nested, ['true'])
+  // A `(` after a continuation that follows another character is no `$(`.
+  assert.deepEqual(main('echo "a\\\n(true)"').nested, [])
+  assert.deepEqual(dollarWords('echo "a\\\n(true)"').nested, [])
+  assert.equal(main('echo "a\\\n(true)"').dollar, false)
+})
+
 // --- Item 20: a line continuation between `$` and `(` -----------------------------------------------------
 
 test('join: a $ that a line continuation joins to ( is $( (item 20)', () => {
