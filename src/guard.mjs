@@ -271,8 +271,8 @@ function mentionsRead(text) {
  * @param {boolean} [comments] skip comments
  * @param {Limit} [limit] the work budget: the text's length is taken off `left`, and reading stops (throws `OUT_OF_WORK`) when it goes below 0
  * @param {boolean} [dollarForms] read the three Bash forms above (Bash only: read as PowerShell, nothing changes)
- * @param {boolean} [braceForms] read the `${…}`, `((…))` and `$((…))` pieces above (pass `dollarForms` as well)
- * @returns {{ commands: string[][], nested: string[], open: boolean, defines: boolean, dollar: boolean, braces: boolean }}
+ * @param {boolean | 'zsh'} [braceForms] read the `${…}`, `((…))` and `$((…))` pieces above (pass `dollarForms` as well); 'zsh' counts a bare `{` inside `${…}`
+ * @returns {{ commands: string[][], nested: string[], open: boolean, defines: boolean, dollar: boolean, braces: boolean, bare: boolean }}
  */
 export function splitShell(text, powershell = false, comments = true, limit, dollarForms = false, braceForms = false) {
   if (limit && (limit.left -= text.length) < 0) throw OUT_OF_WORK
@@ -290,11 +290,15 @@ export function splitShell(text, powershell = false, comments = true, limit, dol
   let defines = false
   let dollar = false
   let braces = false
+  /** a `{` that a `${…}` piece did not count (zsh counts it, bash does not), so the caller reads the text the other way too */
+  let bare = false
   dollarForms &&= !powershell
-  /** `((` and `$((` are read as one piece in Bash only (S-71); `${` in both shells */
-  const bashBraces = braceForms && !powershell
+  /** zsh counts a `{` inside `${…}` as one more level; bash ends the expansion at the first `}` (checked in bash 3.2.57 and zsh 5.9) */
+  const countBare = braceForms === 'zsh'
   /** where `dollarJoin` found a `(` or `'` */
   let look = -1
+  /** the opener `opening` found: the index after it, the character that opens a level, the one that closes it, and the levels open */
+  let piece = null
   /** the last word of the command so far, for the `(` that may follow it */
   let lastWord = ''
   /** @type {string[] | null} the command's words with the PowerShell splits made, once the command has a word that splits (S-69) */
@@ -345,8 +349,6 @@ export function splitShell(text, powershell = false, comments = true, limit, dol
       // Main's scan counts parentheses and skips the character after a backslash. It notes a quote or a `#`: only with one in the span can the
       // Bash scan end it anywhere else, so the text is marked and the caller reads it a second time. Not exact: the mark also fires when both
       // ends turn out the same. That is the price of a single pass here; finding out would take the Bash scan, once per `$(`, to the end of the text.
-      // `$((` is arithmetic in the other reading, not a `$(` (S-71), so it is marked too.
-      if (!powershell && text[start] === '(') braces = true
       while (j < text.length && depth > 0) {
         const ch = text[j]
         if (ch === escape) j++
@@ -369,10 +371,35 @@ export function splitShell(text, powershell = false, comments = true, limit, dol
     return stop + 1
   }
   /**
-   * Bash, second reading only (S-71, B-32 items 13 and 14): `${…}`, `((…))` and `$((…))` are one piece that goes into the current word, so a
-   * `#` or a quote inside starts nothing in the text around it. Inside, `\` pairs are skipped, and so are single quotes (not inside double
-   * quotes) and the text between double quotes (where a brace or a parenthesis counts for nothing); `$(…)` and backticks are still nested
-   * texts. The piece ends where its opening brace or parentheses close. One pass, and the caller goes on after the end it finds.
+   * Bash: where `at` ends up when line continuations (backslash and newline) after it are taken out (they are gone before the shell reads
+   * the characters on either side). PowerShell has none of these. Each continuation is looked at once, by the character before it.
+   * @param {number} at @returns {number}
+   */
+  const joined = (at) => {
+    if (!powershell) while (text[at] === '\\' && text[at + 1] === '\n') at += 2
+    return at
+  }
+  /**
+   * The start of a piece of the third reading (S-71) at `at`, which holds a `$` or a `(`, with continuations between its characters taken out:
+   * `${` (both shells), and in Bash `$((`, and `((` where a word starts.
+   * @param {number} at
+   * @returns {[number, string, string, number] | null} the index after the opener, the character that opens a level, the one that closes it, and the levels open
+   */
+  const opening = (at) => {
+    if (text[at] === '$') {
+      const k = joined(at + 1)
+      if (text[k] === '{') return [k + 1, '{', '}', 1]
+      if (!powershell && text[k] === '(' && text[joined(k + 1)] === '(') return [joined(k + 1) + 1, '(', ')', 2]
+    } else if (!powershell && !inWord && text[joined(at + 1)] === '(') return [joined(at + 1) + 1, '(', ')', 2]
+    return null
+  }
+  /**
+   * Bash, third reading only (S-71, B-32 items 13 and 14): `${…}`, `((…))` and `$((…))` are one piece that goes into the current word, so a
+   * `#` or a quote inside starts nothing in the text around it. Inside, `\` pairs are skipped, and so are single quotes and `$'…'` strings
+   * (not inside double quotes) and the text between double quotes (where a brace or a parenthesis counts for nothing); `$(…)` and backticks
+   * are still nested texts, and a `${` inside a `${…}` is one more level. The piece ends where its opening brace or parentheses close. A
+   * bare `{` is one more level only in the zsh reading (`countBare`); in the other it is noted in `bare`. One pass, and the caller goes on
+   * after the end it finds.
    * @param {number} from index of the piece's first character
    * @param {number} start index just after its opening: `${` or `((`, or `$((`
    * @param {string} opener the character that opens one more level inside it: `{` or `(`
@@ -393,10 +420,23 @@ export function splitShell(text, powershell = false, comments = true, limit, dol
       } else if (ch === '"') {
         quoted = !quoted
         j++
-      } else if (ch === '$' && text[j + 1] === '(') j = subshell(j + 2)
-      else if (ch === '`') j = backtick(j + 1)
+      } else if (ch === '$') {
+        const k = joined(j + 1)
+        if (text[k] === '(') j = subshell(k + 1)
+        else if (text[k] === '{' && opener === '{') {
+          // A nested `${`: one more level, unless it sits in double quotes inside the piece, where no brace is counted.
+          if (!quoted) depth++
+          j = k + 1
+        } else if (text[k] === "'" && !quoted && !inDouble) {
+          // `$'…'`: ends at the first `'` that no backslash escapes.
+          j = k + 1
+          while (j < text.length && text[j] !== "'") j += text[j] === '\\' ? 2 : 1
+          j++
+        } else j++
+      } else if (ch === '`') j = backtick(j + 1)
       else if (!quoted && ch === opener) {
-        depth++
+        if (opener === '{' && !countBare) bare = true
+        else depth++
         j++
       } else if (!quoted && ch === closer) {
         depth--
@@ -410,7 +450,7 @@ export function splitShell(text, powershell = false, comments = true, limit, dol
     return j
   }
   /**
-   * PowerShell, second reading only (S-71, B-32 item 13): `${…}` is one variable name. It ends at the first `}` that no backtick escapes; a
+   * PowerShell, third reading only (S-71, B-32 item 13): `${…}` is one variable name. It ends at the first `}` that no backtick escapes; a
    * quote, a `#` or a `<#` inside is part of the name (tokenizer.cs, `ScanVariable`, PowerShell master cb9cf48, read 2026-11-12: the loop
    * stops at `}`, a backtick takes the next character, and only `{` is reported as an error).
    * @param {number} from index of the `$` @returns {number} index after the `}`
@@ -439,7 +479,7 @@ export function splitShell(text, powershell = false, comments = true, limit, dol
   while (i < text.length) {
     const c = text[i]
     // Main's reading takes `${…}` and `((` apart; the text is marked, and the caller reads it again with the pieces taken whole (S-71).
-    if (!braceForms && ((c === '$' && text[i + 1] === '{') || (!powershell && c === '(' && text[i + 1] === '(' && !inWord))) braces = true
+    if (!braceForms && (c === '$' || c === '(') && opening(i)) braces = true
     if (c === escape) {
       const skip = continuation(i)
       if (skip === 0) {
@@ -467,7 +507,7 @@ export function splitShell(text, powershell = false, comments = true, limit, dol
       inWord = true
       i++
       while (i < text.length && (text[i] !== '"' || (powershell && text[i + 1] === '"'))) {
-        if (!braceForms && text[i] === '$' && text[i + 1] === '{') braces = true
+        if (!braceForms && text[i] === '$' && opening(i)) braces = true
         if (text[i] === '"') {
           word += '"'
           i += 2
@@ -476,10 +516,8 @@ export function splitShell(text, powershell = false, comments = true, limit, dol
           const skip = continuation(i)
           if (skip === 0) word += powershell || '$`"\\'.includes(text[i + 1]) ? text[i + 1] : text[i] + text[i + 1]
           i += skip || 2
-        } else if (braceForms && text[i] === '$' && text[i + 1] === '{') {
-          i = powershell ? psName(i) : bashPiece(i, i + 2, '{', '}', 1, true)
-        } else if (bashBraces && text[i] === '$' && text[i + 1] === '(' && text[i + 2] === '(') {
-          i = bashPiece(i, i + 3, '(', ')', 2, true)
+        } else if (braceForms && text[i] === '$' && (piece = opening(i))) {
+          i = powershell ? psName(i) : bashPiece(i, piece[0], piece[1], piece[2], piece[3], true)
         } else if (text[i] === '$' && text[i + 1] === '(') {
           i = subshell(i + 2)
         } else if (text[i] === '$' && !powershell && (look = dollarJoin(text, i)) !== -1 && text[look] === '(') {
@@ -499,12 +537,8 @@ export function splitShell(text, powershell = false, comments = true, limit, dol
       }
       if (i >= text.length) open = true
       i++
-    } else if (braceForms && c === '$' && text[i + 1] === '{') {
-      i = powershell ? psName(i) : bashPiece(i, i + 2, '{', '}', 1, false)
-    } else if (bashBraces && c === '$' && text[i + 1] === '(' && text[i + 2] === '(') {
-      i = bashPiece(i, i + 3, '(', ')', 2, false)
-    } else if (bashBraces && c === '(' && text[i + 1] === '(' && !inWord) {
-      i = bashPiece(i, i + 2, '(', ')', 2, false)
+    } else if (braceForms && (c === '$' || c === '(') && (piece = opening(i))) {
+      i = powershell ? psName(i) : bashPiece(i, piece[0], piece[1], piece[2], piece[3], false)
     } else if (c === '$' && text[i + 1] === '(') {
       i = subshell(i + 2)
     } else if (c === '$' && !powershell && (look = dollarJoin(text, i)) !== -1) {
@@ -547,7 +581,7 @@ export function splitShell(text, powershell = false, comments = true, limit, dol
     }
   }
   endCommand()
-  return { commands, nested, open, defines, dollar, braces }
+  return { commands, nested, open, defines, dollar, braces, bare }
 }
 
 /**
@@ -1043,7 +1077,11 @@ function readInShell(text, names, depth, powershell, comments, limit, refuseOpen
     // The text holds `${`, `((` or `$((` (S-71, B-32 items 13 and 14). A third reading takes them whole, with S-70's forms read as well, and
     // adds what it finds. It is a reading of its own and does not replace the second: a piece that runs to the end of an unfinished `${`
     // hides what the second reading found (the differential run on this step found 25 such texts in 600,000 when it did).
-    add(splitShell(text, powershell, comments, limit, true, true))
+    const third = splitShell(text, powershell, comments, limit, true, true)
+    add(third)
+    // Bash ends a `${…}` at the first `}` even after a bare `{`; zsh counts the `{`. When the third reading met one, the text is read the zsh
+    // way as well, so a piece that ends early in one shell cannot hide what the other shell runs.
+    if (third.bare) add(splitShell(text, powershell, comments, limit, true, 'zsh'))
   }
   if (defines) limit.defines = true
   for (const words of commands) {

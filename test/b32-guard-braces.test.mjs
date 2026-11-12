@@ -239,6 +239,59 @@ test('splitShell, PowerShell: the second reading ends a `${…}` name at the fir
   assert.deepEqual(formWords('Write-Output $((1)) ((2))', true).commands, splitShell('Write-Output $((1)) ((2))', true).commands)
 })
 
+// --- Found by the diff review of this step ---------------------------------------------------------------
+
+test('a `$\'…\'` string inside a piece ends at its own closing quote, so a `\\\'` in it does not open a quote that swallows the read (review finding 1)', () => {
+  for (const text of [
+    `x=; \${x:+$'\\'' #} ${READ}`,
+    `x=; \${x:+$'\\\\' #} ${READ}`,
+    `x=; \${x:+$'a\\'b' #} ${READ}`,
+    `x=; $(( 1 + $'\\'' # )); ${READ}`,
+    `x=; \${x:+$\\\n'\\'' #} ${READ}`,
+  ]) {
+    for (const shell of BASH_TOOLS) denied(text, shell)
+  }
+  assert.deepEqual(formWords(`\${x:+$'\\'' #} z`).commands, [[`\${x:+$'\\'' #}`, 'z']])
+  // Inside double quotes `$'` is plain text, and a lone quote after it is a character there.
+  assert.deepEqual(formWords(`"\${x:+$'a} z" y`).commands, [[`\${x:+$'a} z`, 'y']])
+})
+
+test('line continuations between the characters of an opener are taken out first, as the shell does (review finding 2)', () => {
+  for (const text of [
+    `x=; $\\\n{x:+ #} ${READ}`,
+    `x=; $\\\n\\\n{x:+ #} ${READ}`,
+    `(\\\n( 1 # )); ${READ}`,
+    `echo $\\\n(( 1 # )); ${READ}`,
+    `echo $(\\\n( 1 # )); ${READ}`,
+    `echo $\\\n(\\\n( 1 # )); ${READ}`,
+  ]) {
+    for (const shell of BASH_TOOLS) denied(text, shell)
+  }
+  assert.deepEqual(formWords('$\\\n{x:+ #} z').commands, [['$\\\n{x:+ #}', 'z']])
+  assert.deepEqual(formWords('"$\\\n{x:-a #}" z').commands, [['$\\\n{x:-a #}', 'z']])
+  assert.equal(splitShell('$\\\n{x}').braces, true)
+  assert.equal(splitShell('(\\\n(x))').braces, true)
+  assert.equal(splitShell('echo $\\\n((x))').braces, true)
+  // A continuation in PowerShell is a backtick, and `$` then a continuation is not a variable name.
+  assert.equal(splitShell('$\\\n{x}', true).braces, false)
+})
+
+test('a bare `{` inside `${…}` ends nothing in bash and is one more level in zsh, so the text is read both ways (review finding 5)', () => {
+  // bash 3.2.57 runs the command after the first one (checked with echo); zsh 5.9 counts the brace (`[${x:-{a} b}]` is one word there).
+  for (const text of [`true \${x:-a #{}; ${READ}`, `true \${x:-a {} #}; ${READ}`, `true \${x:-a {b} #}; ${READ}`, `true \${x:-{{a} #}}; ${READ}`]) {
+    for (const shell of BASH_TOOLS) denied(text, shell)
+  }
+  const bashWay = formWords('${x:-{a} b} z')
+  assert.deepEqual(bashWay.commands, [['${x:-{a}', 'b}', 'z']])
+  assert.equal(bashWay.bare, true)
+  const zshWay = splitShell('${x:-{a} b} z', false, true, undefined, true, 'zsh')
+  assert.deepEqual(zshWay.commands, [['${x:-{a} b}', 'z']])
+  // No bare brace, nothing to read the other way.
+  assert.equal(formWords('${x:-${y}} z').bare, false)
+  assert.equal(formWords('${x:-a} z').bare, false)
+  assert.equal(formWords('(( 1 )) { z').bare, false)
+})
+
 // --- Nothing main refused is let through, and the new reading is only made when needed ---------------------
 
 test('the third reading is added to the second, it does not replace it: texts that S-70\'s reading refuses stay refused when a `${` or `((` swallows the rest', () => {
