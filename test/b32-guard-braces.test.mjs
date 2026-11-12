@@ -337,6 +337,30 @@ test('the third reading is added to the second, it does not replace it: texts th
   }
 })
 
+// B-32 item 46 (senior review of PR #81, blocker 1): the extra readings spent the work budget main's own readings needed. A text with a
+// few thousand `${a:-{}` pieces made the third reading's commands, read again at every `eval` depth, use the whole budget before main's reading
+// reached the read; the fallback (a name check) does not know the shape of item 39 (`fi\$\'nd\'`), so the text was let through. Bash 3.2.57 runs it.
+const READ_39 = `security fi\\$\\'nd\\'-generic-password -s keyprompt -w`
+
+test('the extra readings never use the budget main\'s readings need: a long run of `${a:-{}` before an obfuscated read is still refused (senior review, blocker 1)', () => {
+  for (const copies of [3500, 5000]) {
+    const pieces = Array(copies).fill('${a:-{}').join(' ')
+    for (const shell of BASH_TOOLS) denied(`eval eval eval eval ${pieces}; eval ${READ_39}`, shell)
+  }
+})
+
+test('the extra readings never use the budget main\'s readings need: with the read first and the budget cut to what main\'s two readings need, the read is still refused', () => {
+  // Main reads the text twice (the second time with the `$'…'` form read) and finds the read; a third reading of the same length must not
+  // take what is left. The budget is two readings of the text and a little more.
+  for (const piece of ['${a{} ', '${a:-{} ', '(( ']) {
+    const text = `eval ${READ_39}; ${piece.repeat(200)}`
+    for (const shell of BASH_TOOLS) {
+      const found = checkCommand(text, SAVED, shell, 2 * text.length + 10)
+      assert.ok(found, `should refuse (${shell ?? 'both ways'}, budget ${2 * text.length + 10}): ${piece}`)
+    }
+  }
+})
+
 /** Every text of up to `left` more symbols, each handed to `check`. */
 function all(symbols, text, left, check) {
   check(text)
