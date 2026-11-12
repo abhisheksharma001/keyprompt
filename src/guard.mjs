@@ -145,6 +145,7 @@ KIND[41] = ENDS
  * The rule. The letters of a name stand in the text in order, and what stands between two letters that are next to each other
  * in the name (a gap) is made only of these pieces, any number of them in a row:
  *   - a DROPPED character or a backtick;
+ *   - a `$` that stands before a `'`, or before line continuations and a `'` (S-70: the Bash reading takes `$'…'` out of a word);
  *   - a `$`, then anything, then a `(`, then anything, then a `)` or a backtick;
  *   - a backtick, then anything, then a backtick or a `)`.
  *
@@ -160,6 +161,10 @@ KIND[41] = ENDS
  * is again made of these pieces, so the rule holds for any number of readings: no way of quoting a read for an outer shell
  * steps outside it. The test file checks the two halves of this: `splitShell` against the rule, and this function against the
  * rule written out the slow way.
+ *
+ * The Bash reading with the dollar forms (S-70) also leaves out a `$` that stands before a `'` (`$'…'`; line continuations may stand
+ * between them), so a name written `fi$'nd'-generic-password` is one piece away from `find-generic-password`: that is the second
+ * piece in the list above. It leaves out nothing else, and decodes nothing (`\x73` stays four characters), so no character is made up.
  *
  * It is not exact in the other direction: it also refuses a text that only looks like a split name, such as "`secret-` and
  * `tool`" in a pull request body, or `secret-$x (y)tool`. That is the cost of refusing when unsure, and it applies only where
@@ -188,6 +193,8 @@ function mentionsRead(text) {
     const kind = ascii ? KIND[c] : c >= 0x2018 && c <= 0x201e ? DROPPED : KEPT
     const todo = inPlain | (ascii ? STARTS[c] : 0) | (kind === OPENS ? inDollar : kind === ENDS || kind === TICK ? inSpan : 0)
     if (todo === 0) continue
+    // A `$` that stands before a `'`, or before line continuations and a `'`, is the start of `$'…'`, and the Bash reading leaves it out (S-70).
+    const before = kind === DOLLAR && lower[dollarJoin(lower, i)] === "'"
     for (let t = 0; t < tools; t++) {
       const bit = 1 << t
       if ((todo & bit) === 0) continue
@@ -199,6 +206,7 @@ function mentionsRead(text) {
         if ((span[t] |= was) > 1) inSpan |= bit
       } else if (kind === DOLLAR) {
         if ((dollar[t] |= was) > 1) inDollar |= bit
+        if (before) now |= was
       } else if (kind === OPENS) {
         if ((span[t] |= dollar[t]) > 1) inSpan |= bit
       } else if (kind === ENDS) now |= span[t]
@@ -239,13 +247,22 @@ function mentionsRead(text) {
  * are already taken out of the words, so `e\cho()` counts. It is a coarse sign: it can be true when nothing is defined. The other
  * sign, a command word like `function` or `alias`, is looked for in `readInWords`.
  *
+ * Three Bash forms are read only with `dollarForms` (S-70, B-32 items 2, 3 and 20); without it the text is read as main read it, so a
+ * caller that reads both loses nothing main read. (1) `$'…'` is an ANSI-C string: it runs to the first `'` that no `\` escapes, `\'`
+ * and `\\` give `'` and `\`, any other escape stays as written (nothing is decoded, so `\x73` stays four characters), and the `$` is
+ * left out. (2) The end of a `$( )` is found with its quotes, `$'…'` strings, double quotes (with a nested `$( )` in them), backslash
+ * pairs and comments skipped. (3) A `$` that line continuations (backslash and newline) join to a `(` or a `'` is a `$(` or a `$'`.
+ * `dollar` is true when the text holds one of the three in a place where this reading and main's can differ: while it is false,
+ * both readings are the same, word for word, so a caller reads the text a second time only when it is true.
+ *
  * @param {string} text
  * @param {boolean} [powershell]
  * @param {boolean} [comments] skip comments
  * @param {Limit} [limit] the work budget: the text's length is taken off `left`, and reading stops (throws `OUT_OF_WORK`) when it goes below 0
- * @returns {{ commands: string[][], nested: string[], open: boolean, defines: boolean }}
+ * @param {boolean} [dollarForms] read the three Bash forms above (Bash only: read as PowerShell, nothing changes)
+ * @returns {{ commands: string[][], nested: string[], open: boolean, defines: boolean, dollar: boolean }}
  */
-export function splitShell(text, powershell = false, comments = true, limit) {
+export function splitShell(text, powershell = false, comments = true, limit, dollarForms = false) {
   if (limit && (limit.left -= text.length) < 0) throw OUT_OF_WORK
   if (powershell) text = text.replace(/[‘’‚‛]/g, "'").replace(/[“”„]/g, '"')
   const escape = powershell ? '`' : '\\'
@@ -259,6 +276,10 @@ export function splitShell(text, powershell = false, comments = true, limit) {
   let inWord = false
   let open = false
   let defines = false
+  let dollar = false
+  dollarForms &&= !powershell
+  /** where `dollarJoin` found a `(` or `'` */
+  let look = -1
   /** the last word of the command so far, for the `(` that may follow it */
   let lastWord = ''
   /** @type {string[] | null} the command's words with the PowerShell splits made, once the command has a word that splits (S-69) */
@@ -300,11 +321,25 @@ export function splitShell(text, powershell = false, comments = true, limit) {
   const subshell = (start) => {
     let depth = 1
     let j = start
+    // Main's scan counts parentheses and skips the character after a backslash. It notes a quote or a `#`: only with one in the span can the
+    // Bash scan below (S-70, B-32 item 3) end it anywhere else, so a span without one costs no second scan.
+    let quoted = false
     while (j < text.length && depth > 0) {
-      if (text[j] === escape) j++
-      else if (text[j] === '(') depth++
-      else if (text[j] === ')') depth--
+      const ch = text[j]
+      if (ch === escape) j++
+      else if (ch === '(') depth++
+      else if (ch === ')') depth--
+      else if (ch === "'" || ch === '"' || ch === '#') quoted = true
       j++
+    }
+    if (!powershell && quoted) {
+      const bash = bashSubshellEnd(text, start)
+      if (bash.end !== Math.min(j, text.length) || bash.closed !== (depth === 0)) {
+        if (dollarForms) {
+          j = bash.end
+          depth = bash.closed ? 0 : 1
+        } else dollar = true
+      }
     }
     if (depth > 0) open = true
     nested.push(text.slice(start, depth === 0 ? j - 1 : j))
@@ -369,6 +404,14 @@ export function splitShell(text, powershell = false, comments = true, limit) {
           i += skip || 2
         } else if (text[i] === '$' && text[i + 1] === '(') {
           i = subshell(i + 2)
+        } else if (text[i] === '$' && !powershell && (look = dollarJoin(text, i)) !== -1 && text[look] === '(') {
+          // Line continuations between the `$` and the `(` are taken out before the shell reads the substitution (B-32 item 20).
+          if (dollarForms) i = subshell(look + 1)
+          else {
+            dollar = true
+            word += '$'
+            i++
+          }
         } else if (text[i] === '`') {
           i = backtick(i + 1)
         } else {
@@ -380,6 +423,30 @@ export function splitShell(text, powershell = false, comments = true, limit) {
       i++
     } else if (c === '$' && text[i + 1] === '(') {
       i = subshell(i + 2)
+    } else if (c === '$' && !powershell && (look = dollarJoin(text, i)) !== -1) {
+      if (!dollarForms) {
+        // Main's reading: a plain character. The text holds a form that only the other reading takes, which the caller is told.
+        dollar = true
+        word += '$'
+        inWord = true
+        i++
+      } else if (text[look] === '(') i = subshell(look + 1)
+      else {
+        // `$'…'`: an ANSI-C string (bash and zsh). `\'` and `\\` give `'` and `\`; any other escape stays as written.
+        inWord = true
+        i = look + 1
+        while (i < text.length && text[i] !== "'") {
+          if (text[i] === '\\' && i + 1 < text.length) {
+            word += text[i + 1] === "'" || text[i + 1] === '\\' ? text[i + 1] : text[i] + text[i + 1]
+            i += 2
+          } else {
+            word += text[i]
+            i++
+          }
+        }
+        if (i >= text.length) open = true
+        i++
+      }
     } else if (c === '`') {
       i = backtick(i + 1)
     } else if (separators.includes(c)) {
@@ -396,7 +463,77 @@ export function splitShell(text, powershell = false, comments = true, limit) {
     }
   }
   endCommand()
-  return { commands, nested, open, defines }
+  return { commands, nested, open, defines, dollar }
+}
+
+/**
+ * Bash: where the `$` at `at` ends up when line continuations (backslash and newline) between it and the next character are taken out: the
+ * index of that character if it is a `'` (the start of `$'…'`) or, only when a continuation was taken out, a `(` (a `$(` joined by one;
+ * a `$(` with nothing between is found by the caller). -1 when it is neither (S-70, B-32 items 2 and 20). Each continuation is looked at
+ * by the one `$` before it, so this is linear in the text.
+ *
+ * @param {string} text
+ * @param {number} at
+ */
+function dollarJoin(text, at) {
+  let k = at + 1
+  while (text[k] === '\\' && text[k + 1] === '\n') k += 2
+  return text[k] === "'" || (k > at + 1 && text[k] === '(') ? k : -1
+}
+
+/**
+ * Bash: where a `$( )` that starts at `start` (just after the `$(`) ends, with the shell's own quoting taken into account (S-70, B-32
+ * item 3). Parentheses count only in code: not in single quotes, `$'…'` strings (where `\'` does not end the string), double quotes
+ * (where a `$(` opens code again, and a backslash escapes the next character) or a comment (a `#` at the start of the span, or after a
+ * blank, `;`, `&`, `|`, `(` or a newline, to the end of the line). A backslash escapes the next character in code. One pass; each
+ * character is looked at once, apart from the line a comment skips (found with `indexOf`).
+ *
+ * @param {string} text
+ * @param {number} start
+ * @returns {{ end: number, closed: boolean }} the index after the `)` that ends it, or the text's length when it does not end
+ */
+function bashSubshellEnd(text, start) {
+  const n = text.length
+  // What is open, innermost last: 0 is code (the span itself, a `(` or a nested `$(`), 1 is a double quote.
+  const open = [0]
+  let j = start
+  while (j < n && open.length > 0) {
+    const ch = text[j]
+    if (open[open.length - 1] === 1) {
+      if (ch === '\\') j += 2
+      else if (ch === '"') {
+        open.pop()
+        j++
+      } else if (ch === '$' && text[j + 1] === '(') {
+        open.push(0)
+        j += 2
+      } else if (ch === '$' && dollarJoin(text, j) !== -1 && text[dollarJoin(text, j)] === '(') {
+        open.push(0)
+        j = dollarJoin(text, j) + 1
+      } else j++
+    } else if (ch === '\\') j += 2
+    else if (ch === "'") {
+      const close = text.indexOf("'", j + 1)
+      j = close === -1 ? n : close + 1
+    } else if (ch === '"') {
+      open.push(1)
+      j++
+    } else if (ch === '$' && dollarJoin(text, j) !== -1 && text[dollarJoin(text, j)] === "'") {
+      j = dollarJoin(text, j) + 1
+      while (j < n && text[j] !== "'") j += text[j] === '\\' ? 2 : 1
+      j++
+    } else if (ch === '#' && (j === start || ' \t\n;&|('.includes(text[j - 1]))) {
+      const newline = text.indexOf('\n', j)
+      j = newline === -1 ? n : newline
+    } else if (ch === '(') {
+      open.push(0)
+      j++
+    } else if (ch === ')') {
+      open.pop()
+      j++
+    } else j++
+  }
+  return { end: Math.min(j, n), closed: open.length === 0 }
 }
 
 /**
@@ -802,7 +939,19 @@ function readInShell(text, names, depth, powershell, comments, limit, refuseOpen
   // nothing (remembering every reading tripled the memory of an 8 MB Bash text; round-2 review).
   const how = depth * 16 + (powershell ? 8 : 0) + (comments ? 4 : 0) + (refuseOpen ? 2 : 0) + (limit.strict ? 1 : 0)
   if (limit.copies && limit.read?.[how]?.has(text)) return null
-  const { commands, nested, open, defines } = splitShell(text, powershell, comments, limit)
+  let { commands, nested, open, defines, dollar } = splitShell(text, powershell, comments, limit)
+  if (dollar) {
+    // The text holds a Bash form that main read as plain characters (S-70, B-32 items 2, 3 and 20). It is read a second time with the forms
+    // read, and whatever that finds that the first reading did not is read as well: the first reading is main's, so nothing main refused
+    // is let through (tighten only, by construction). Without such a form (the mark is false) there is no second reading and no cost.
+    const more = splitShell(text, powershell, comments, limit, true)
+    const known = new Set(commands.map((words) => JSON.stringify(words)))
+    commands = commands.concat(more.commands.filter((words) => !known.has(JSON.stringify(words))))
+    const scripts = new Set(nested)
+    nested = nested.concat(more.nested.filter((script) => !scripts.has(script)))
+    open ||= more.open
+    defines ||= more.defines
+  }
   if (defines) limit.defines = true
   for (const words of commands) {
     const copy = FIRST_SPLIT.has(words)

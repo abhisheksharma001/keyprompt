@@ -129,7 +129,7 @@ test('join: a $ that a line continuation joins to ( is $( (item 20)', () => {
     `echo $\\\n(${READ})`,
     `echo $\\\n\\\n(${READ})`,
     `a=$\\\n(${READ})`,
-    `echo $\\\n'security' find-generic-password -s keyprompt -w`,
+    `env $\\\n'security' find-generic-password -s keyprompt -w`,
     `$\\\n'security' find-generic-password -s keyprompt -w`,
     `true $\\\n'\\'' ; ${READ} #'`,
     `echo "$\\\n(echo ')' ; ${READ})"`,
@@ -165,6 +165,8 @@ test('the Bash reading does not refuse text that only uses these forms', () => {
   ]) {
     for (const shell of BASH_TOOLS) allowed(text, shell)
   }
+  // Bash joins the continuation into `$'security'` and echo prints it. (Read as PowerShell, the newline ends the command, as on main.)
+  allowed(`echo $\\\n'security' find-generic-password -s keyprompt -w`, 'bash')
 })
 
 test('PowerShell: answers on the dollar forms are the ones main gave (the PowerShell reading has no change)', () => {
@@ -203,7 +205,7 @@ test('splitShell says there is a dollar form when, and only when, the new readin
     }
   })
   assert.ok(texts > 1_000_000, `${texts} readings`)
-  assert.ok(marked > 100_000 && marked < texts, `${marked} of ${texts} marked, so both answers were tested`)
+  assert.ok(marked > 20_000 && marked < texts / 2, `${marked} of ${texts} marked, so both answers were tested`)
 })
 
 test('the mark and the new reading, on 40,000 seeded longer texts of 12 kinds of symbol (the mark, random)', () => {
