@@ -796,12 +796,10 @@ function readInShell(text, names, depth, powershell, comments, limit, refuseOpen
   }
   // A split copy (S-69) can reach a text that was already read the same way and held no read. Reading it again finds nothing new, and it made
   // the copy's work double at each nesting level (senior review, B2). Only a reading inside a copy skips: every reading main makes is still
-  // made, so this never does less work than main, and a text main refused as too long to read is still refused.
+  // made, so this never does less work than main, and a text main refused as too long to read is still refused. A skip is not charged: it
+  // looks up a text its caller has just joined from words, and main joins each script it reads uncharged too, so the work stays in step.
   const how = `${depth} ${powershell} ${comments} ${Boolean(refuseOpen)} ${Boolean(limit.strict)}`
-  if (limit.copies && limit.read?.get(text)?.has(how)) {
-    if ((limit.left -= WORK_PER_EXTRA_SCRIPT) < 0) throw OUT_OF_WORK
-    return null
-  }
+  if (limit.copies && limit.read?.get(text)?.has(how)) return null
   const { commands, nested, open, defines } = splitShell(text, powershell, comments, limit)
   if (defines) limit.defines = true
   for (const words of commands) {
@@ -822,9 +820,8 @@ function readInShell(text, names, depth, powershell, comments, limit, refuseOpen
     if (found) return found
   }
   if (refuseOpen && open && mentionsRead(text)) return UNCLOSED
-  limit.read ??= new Map()
-  if (!limit.read.has(text)) limit.read.set(text, new Set())
-  limit.read.get(text)?.add(how)
+  const read = (limit.read ??= new Map())
+  read.set(text, (read.get(text) ?? new Set()).add(how))
   return null
 }
 
