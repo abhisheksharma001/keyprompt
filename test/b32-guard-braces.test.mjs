@@ -177,6 +177,8 @@ test('splitShell: the second reading takes `${…}` and `(( ))` as one word, and
   assert.deepEqual(formWords('(( $(ls) ))').nested, ['ls'])
   // A double quote or a quote inside the piece hides what it holds: a brace or a parenthesis there ends nothing.
   assert.deepEqual(formWords('${x:-")"} z').commands, [['${x:-")"}', 'z']])
+  // A nested expansion inside the double quotes of a piece is no level of its own: no brace counts there.
+  assert.deepEqual(formWords('${x:-"${y}"} z').commands, [['${x:-"${y}"}', 'z']])
   assert.deepEqual(formWords('${x:-"}"} z').commands, [['${x:-"}"}', 'z']])
   assert.deepEqual(formWords('${x:-"{"} z').commands, [['${x:-"{"}', 'z']])
   assert.deepEqual(formWords('(( "))" 1 )) z').commands, [['(( "))" 1 ))', 'z']])
@@ -278,7 +280,8 @@ test('line continuations between the characters of an opener are taken out first
 
 test('a bare `{` inside `${…}` ends nothing in bash and is one more level in zsh, so the text is read both ways (review finding 5)', () => {
   // bash 3.2.57 runs the command after the first one (checked with echo); zsh 5.9 counts the brace (`[${x:-{a} b}]` is one word there).
-  for (const text of [`true \${x:-a #{}; ${READ}`, `true \${x:-a {} #}; ${READ}`, `true \${x:-a {b} #}; ${READ}`, `true \${x:-{{a} #}}; ${READ}`]) {
+  // The first two run only in bash, the second two only in zsh, and nothing but the third reading shows the read in either.
+  for (const text of [`nice \${x:+ #{} ${READ}`, `nice \${x:+ {} #} ${READ}`, `true \${x:-a #{}; ${READ}`, `true \${x:-a {} #}; ${READ}`, `true \${x:-a {b} #}; ${READ}`, `true \${x:-{{a} #}}; ${READ}`]) {
     for (const shell of BASH_TOOLS) denied(text, shell)
   }
   const bashWay = formWords('${x:-{a} b} z')
