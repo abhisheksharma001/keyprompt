@@ -268,6 +268,22 @@ test('a text a split copy reads again after a function is defined is read again 
   denied("function f {}; $a=pwsh -c 'echo Get-StoredCredential -Target keyprompt:X'", 'powershell')
 })
 
+test('a text read once is still read again when a split copy reaches it deeper, so the depth limit still holds', () => {
+  // `$a=pwsh` is split into `$a`, `=`, `pwsh`, so the copy has one more level than the original: its innermost `pwsh -c` script is past the
+  // depth limit. The texts the copy reaches were read before, by the first command, but less deep.
+  const P = (n) => 'pwsh -c '.repeat(n) + 'find-generic-password'
+  const found = checkCommand(`${P(3)} ; $a=${P(5)}`, SAVED, 'powershell')
+  assert.match(found?.reason ?? '', /too long or too deeply nested/)
+})
+
+test('outside a split copy every reading is made, as on main, so a text main runs out of budget on is still refused', () => {
+  // The same nested text twice: main reads it twice and needs about 9 units of the budget for each character. Skipping the second reading
+  // outside a copy would need about 4, and let through a text main refuses.
+  const inner = 'pwsh -c '.repeat(2) + 'z '.repeat(500) + 'find-generic-password'
+  const text = `${inner} ; ${inner}`
+  assert.ok(checkCommand(text, SAVED, 'powershell', 6 * text.length), 'should refuse: the budget runs out on main')
+})
+
 test('one word of 150,000 chained assignments after a read does not crash the guard, so the read is still refused (review of PR #75, B1)', () => {
   // A guard that throws is skipped by the hook (exit 1 lets the call through), so a crash would turn a refusal into a pass.
   const chain = '$a='.repeat(150_000) + '1'
