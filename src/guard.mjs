@@ -47,7 +47,7 @@ const WORK_PER_EXTRA_SCRIPT = 64
  * command was let through unread, `defines` when any text read has a word that defines a function or alias, and `strict` makes the next
  * reading read a text-only command word like `eval` instead of exempting it. For S-69, `copies` counts the split copies the reading is inside,
  * and `read` holds, for each way of reading (a small number), the texts read inside a copy that held no read.
- * @typedef {{ left: number, defines?: boolean, exempted?: boolean, strict?: boolean, copies?: number, read?: Set<string>[] }} Limit
+ * @typedef {{ left: number, defines?: boolean, exempted?: boolean, strict?: boolean, copies?: number, read?: Set<string>[], extras?: boolean, braces?: boolean, ranOut?: boolean }} Limit
  */
 /** Thrown when the budget runs out, to stop reading at once. */
 const OUT_OF_WORK = Symbol('out of work')
@@ -271,8 +271,8 @@ function mentionsRead(text) {
  * @param {boolean} [comments] skip comments
  * @param {Limit} [limit] the work budget: the text's length is taken off `left`, and reading stops (throws `OUT_OF_WORK`) when it goes below 0
  * @param {boolean} [dollarForms] read the three Bash forms above (Bash only: read as PowerShell, nothing changes)
- * @param {boolean | 'zsh'} [braceForms] read the `${…}`, `((…))` and `$((…))` pieces above (pass `dollarForms` as well); 'zsh' counts a bare `{` inside `${…}`
- * @returns {{ commands: string[][], nested: string[], open: boolean, defines: boolean, dollar: boolean, braces: boolean, bare: boolean }}
+ * @param {boolean | 'zsh' | 'bashq'} [braceForms] read the `${…}`, `((…))` and `$((…))` pieces above (pass `dollarForms` as well); 'zsh' counts a bare `{` inside `${…}`; 'bashq' starts a quote at a single quote inside a piece in double quotes
+ * @returns {{ commands: string[][], nested: string[], open: boolean, defines: boolean, dollar: boolean, braces: boolean, bare: boolean, sq: boolean }}
  */
 export function splitShell(text, powershell = false, comments = true, limit, dollarForms = false, braceForms = false) {
   if (limit && (limit.left -= text.length) < 0) throw OUT_OF_WORK
@@ -295,6 +295,10 @@ export function splitShell(text, powershell = false, comments = true, limit, dol
   dollarForms &&= !powershell
   /** zsh counts a `{` inside `${…}` as one more level; bash ends the expansion at the first `}` (checked in bash 3.2.57 and zsh 5.9) */
   const countBare = braceForms === 'zsh'
+  /** a single quote met inside a piece that sits in double quotes: bash 3.2.57 starts a quote there, zsh 5.9 reads a plain character */
+  let sq = false
+  /** the reading that starts a quote at a single quote inside double quotes, as bash 3.2.57 does */
+  const quoteInDouble = braceForms === 'bashq'
   /** where `dollarJoin` found a `(` or `'` */
   let look = -1
   /** the opener `opening` found: the index after it, the character that opens a level, the one that closes it, and the levels open */
@@ -396,16 +400,17 @@ export function splitShell(text, powershell = false, comments = true, limit, dol
   /**
    * Bash, third reading only (S-71, B-32 items 13 and 14): `${…}`, `((…))` and `$((…))` are one piece that goes into the current word, so a
    * `#` or a quote inside starts nothing in the text around it. Inside, `\` pairs are skipped, and so are single quotes and `$'…'` strings
-   * (not inside double quotes) and the text between double quotes (where a brace or a parenthesis counts for nothing); `$(…)` and backticks
-   * are still nested texts, and a `${` inside a `${…}` is one more level. The piece ends where its opening brace or parentheses close. A
-   * bare `{` is one more level only in the zsh reading (`countBare`); in the other it is noted in `bare`. One pass, and the caller goes on
-   * after the end it finds.
+   * and the text between double quotes (where a brace or a parenthesis counts for nothing); `$(…)` and backticks are still nested texts,
+   * and a `${` inside a `${…}` is one more level. The piece ends where its opening brace or parentheses close. Two things differ between
+   * the shells, so each is read both ways: a bare `{` is one more level only in zsh (the `zsh` reading, `countBare`; otherwise it is noted
+   * in `bare`), and a single quote inside a piece that sits in double quotes starts a quote only in bash 3.2.57 (the `bashq` reading,
+   * `quoteInDouble`; otherwise it is noted in `sq`). One pass, and the caller goes on after the end it finds.
    * @param {number} from index of the piece's first character
    * @param {number} start index just after its opening: `${` or `((`, or `$((`
    * @param {string} opener the character that opens one more level inside it: `{` or `(`
    * @param {string} closer the character that closes a level: `}` or `)`
    * @param {number} depth levels open at `start`: 1 for `${`, 2 for `((`
-   * @param {boolean} inDouble the piece sits inside double quotes, where a single quote is only a character
+   * @param {boolean} inDouble the piece sits inside double quotes, where a single quote is a plain character (zsh) or starts a quote (bash 3.2.57)
    * @returns {number} index after the piece
    */
   const bashPiece = (from, start, opener, closer, depth, inDouble) => {
@@ -414,9 +419,13 @@ export function splitShell(text, powershell = false, comments = true, limit, dol
     while (j < text.length && depth > 0) {
       const ch = text[j]
       if (ch === '\\') j += 2
-      else if (ch === "'" && !quoted && !inDouble) {
+      else if (ch === "'" && !quoted && (!inDouble || quoteInDouble)) {
         const close = text.indexOf("'", j + 1)
         j = close === -1 ? text.length : close + 1
+      } else if (ch === "'" && !quoted) {
+        // Inside double quotes: a plain character here, and a quote in bash 3.2.57. Noted, so the caller reads the text the other way too.
+        sq = true
+        j++
       } else if (ch === '"') {
         quoted = !quoted
         j++
@@ -581,7 +590,7 @@ export function splitShell(text, powershell = false, comments = true, limit, dol
     }
   }
   endCommand()
-  return { commands, nested, open, defines, dollar, braces, bare }
+  return { commands, nested, open, defines, dollar, braces, bare, sq }
 }
 
 /**
@@ -1073,15 +1082,24 @@ function readInShell(text, names, depth, powershell, comments, limit, refuseOpen
     // is let through (tighten only, by construction). Without such a form (the mark is false) there is no second reading and no cost.
     add(splitShell(text, powershell, comments, limit, true))
   }
-  if (braces) {
-    // The text holds `${`, `((` or `$((` (S-71, B-32 items 13 and 14). A third reading takes them whole, with S-70's forms read as well, and
-    // adds what it finds. It is a reading of its own and does not replace the second: a piece that runs to the end of an unfinished `${`
-    // hides what the second reading found (the differential run on this step found 25 such texts in 600,000 when it did).
+  if (braces && !limit.extras) {
+    // The text holds `${`, `((` or `$((` (S-71, B-32 items 13 and 14). Main's readings (this pass) do not read them: they only note it, and
+    // `checkCommand` makes a second pass with its own budget (`limit.extras`). The extra readings must never share the budget of main's:
+    // their commands are read again at every `eval` depth, and a few thousand pieces used the whole budget before main's own reading reached
+    // an obfuscated read, which the name check that follows a lost budget does not know (B-32 items 39 and 46, senior review of PR #81).
+    limit.braces = true
+  } else if (braces) {
+    // A third reading takes them whole, with S-70's forms read as well, and adds what it finds. It is a reading of its own and does not
+    // replace the second: a piece that runs to the end of an unfinished `${` hides what the second reading found (the differential run on
+    // this step found 25 such texts in 600,000 when it did).
     const third = splitShell(text, powershell, comments, limit, true, true)
     add(third)
     // Bash ends a `${…}` at the first `}` even after a bare `{`; zsh counts the `{`. When the third reading met one, the text is read the zsh
     // way as well, so a piece that ends early in one shell cannot hide what the other shell runs.
     if (third.bare) add(splitShell(text, powershell, comments, limit, true, 'zsh'))
+    // A single quote inside a piece that sits in double quotes starts a quote in bash 3.2.57 and is a plain character in zsh 5.9 (and in the
+    // reading above), so a piece can end later in one than in the other; the text is read the bash way as well.
+    if (third.sq) add(splitShell(text, powershell, comments, limit, true, 'bashq'))
   }
   if (defines) limit.defines = true
   for (const words of commands) {
@@ -1165,7 +1183,27 @@ function wordIn(text, word) {
  */
 export function checkCommand(command, savedNames = [], shell, workLimit = Math.min(WORK_PER_CHAR * command.length + WORK_BASE, WORK_MOST)) {
   const names = new Set(savedNames)
-  const limit = { left: workLimit }
+  // Main's readings, on main's whole budget. Nothing S-71 adds draws on it, so what main refused it still refuses (senior review of PR #81).
+  const first = { left: workLimit }
+  let found = readings(command, names, shell, first)
+  // The text holds a `${`, `((` or `$((` that main's readings take as plain characters, and they finished without a read (when they ran out
+  // of work the answer is main's own): read it again with the brace forms, on a budget of its own. A refusal found there is added to main's,
+  // and if that budget runs out, a command that names a read tool is refused, as it is when main's does.
+  if (!found && first.braces && !first.ranOut) found = readings(command, names, shell, { left: workLimit, extras: true })
+  return found ? { reason: `${found} ${RUN_INSTEAD}` } : null
+}
+
+/**
+ * One pass of readings over a command: the text read as the shell or shells in question, then once more with no exemption when a function or
+ * alias was defined (S-68). `limit` is the pass's own work budget and its marks; `limit.extras` makes the S-71 readings of `${…}` and `(( ))`.
+ *
+ * @param {string} command
+ * @param {Set<string>} names
+ * @param {'bash' | 'powershell' | undefined} shell
+ * @param {Limit} limit
+ * @returns {string | null | false}
+ */
+function readings(command, names, shell, limit) {
   /** @type {string | null | false} */
   let found
   try {
@@ -1180,9 +1218,10 @@ export function checkCommand(command, savedNames = [], shell, workLimit = Math.m
   } catch (error) {
     if (error !== OUT_OF_WORK) throw error
     // The budget ran out before a read was found: slowness must never turn into a pass, so a command that names a read tool is refused.
+    limit.ranOut = true
     found = mentionsRead(command) ? UNREAD : null
   }
-  return found ? { reason: `${found} ${RUN_INSTEAD}` } : null
+  return found
 }
 
 /**

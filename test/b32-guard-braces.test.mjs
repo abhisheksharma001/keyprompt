@@ -189,7 +189,8 @@ test('splitShell: the second reading takes `${…}` and `(( ))` as one word, and
   assert.deepEqual(formWords('${x:-\\{} z').commands, [['${x:-\\{}', 'z']])
   assert.deepEqual(formWords('(( 1 \\) )) z').commands, [['(( 1 \\) ))', 'z']])
   assert.deepEqual(formWords("${x:-\\'} z").commands, [["${x:-\\'}", 'z']])
-  // Inside double quotes a single quote is only a character, so it hides nothing.
+  // Inside double quotes a single quote is only a character in this reading (zsh 5.9 reads it so; bash 3.2.57 starts a quote, which the
+  // `bashq` reading does, see the test below), so it hides nothing here.
   assert.deepEqual(formWords(`"\${x:-a'b}" z`).commands, [["${x:-a'b}", 'z']])
   assert.equal(formWords(`"\${x:-a'b}" z`).open, false)
   assert.deepEqual(formWords(`"$((1 ' 2))" z`).commands, [["$((1 ' 2))", 'z']])
@@ -334,6 +335,24 @@ test('the third reading is added to the second, it does not replace it: texts th
     `$((1 $''${READ}'`,
   ]) {
     for (const shell of BASH_TOOLS) denied(text, shell)
+  }
+})
+
+test('a single quote inside a piece in double quotes starts a quote in bash 3.2.57 and is a plain character in zsh 5.9, so the text is read both ways (senior review, finding 2)', () => {
+  // Checked with echo in place of the read: `echo "${x:-'}"'}" ; echo RAN` prints RAN in bash 3.2.57 and is an error in zsh 5.9.
+  for (const text of [`echo "\${x:-'}"'}" ; ${READ}`, `echo "\${x:-'}"'}" ; nice \${x:+ #} ${READ}`, `x=; echo "\${x:-'}"'}"; timeout 5 ${READ}`]) {
+    for (const shell of BASH_TOOLS) denied(text, shell)
+  }
+  const quote = `echo "\${x:-'}"'}" ; z`
+  assert.equal(splitShell(quote, false, true, undefined, true, true).sq, true)
+  // The bash reading takes `'}"'` as a quote inside the string, which ends at the second `"`; the other one ends the string at the first
+  // `"` and the `'` after it opens a quote that runs to the end of the text, so the command after it is never seen.
+  assert.deepEqual(splitShell(quote, false, true, undefined, true, 'bashq').commands, [['echo', `\${x:-'}"'}`], ['z']])
+  assert.deepEqual(splitShell(quote, false, true, undefined, true, true).commands, [['echo', `\${x:-'}}" ; z`]])
+  // Only a quote inside a piece that sits in double quotes is noted.
+  for (const text of [`echo '\${x}' z`, `echo "\${HOME}'s" z`, `echo \${x:-'a'} z`, `echo "\${x:-a}" 'b' z`]) {
+    assert.equal(splitShell(text, false, true, undefined, true, true).sq, false, text)
+    allowed(text, 'bash')
   }
 })
 
