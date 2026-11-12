@@ -295,6 +295,27 @@ test('a bare `{` inside `${…}` ends nothing in bash and is one more level in z
   assert.equal(formWords('(( 1 )) { z').bare, false)
 })
 
+test('what is not an opener is not read as one: no piece starts at a `$` or a `(` that something else follows (mutation run)', () => {
+  // A character between the `$` and the brace or parenthesis, a backslash that is not before a newline, and a word before a `(`.
+  for (const text of ['$a\n{x}', '$a{x}', '$\\a{x}', '$\\\\{x}', 'echo $a(b)', 'echo $\\a((b))', 'echo a((b))', 'echo $x(( 1 ))', '$ {x}']) {
+    assert.equal(splitShell(text).braces, false, text)
+  }
+  // A continuation is taken out once, and only a backslash before a newline is one.
+  assert.equal(splitShell('$\\\n\\\n{x}').braces, true)
+  assert.equal(splitShell('$\\\n\\a{x}').braces, false)
+  assert.deepEqual(formWords('$a\n{x} z').commands, [['$a'], ['{x}', 'z']])
+  // A `${` inside `(( ))` is not a level of its own: the parentheses are what count there.
+  assert.deepEqual(formWords('(( ${x} )) ls').commands, [['(( ${x} ))', 'ls']])
+  assert.deepEqual(formWords('(( (1) * (2) )) ls').commands, [['(( (1) * (2) ))', 'ls']])
+})
+
+test('the zsh reading reads the forms of S-70 as well: a `$\'…\'` name after a piece that only zsh closes late', () => {
+  // bash ends `${x:+ {}` at the first `}` and zsh at the second; only the zsh reading shows the command, and in it `sec$\'ur\'ity` is `security`.
+  for (const text of [`nice \${x:+ {} #} sec$'ur'ity find-generic-password -s keyprompt -w`, `nice \${x:+ {} #} $'security' find-generic-password -s keyprompt -w`]) {
+    for (const shell of BASH_TOOLS) denied(text, shell)
+  }
+})
+
 // --- Nothing main refused is let through, and the new reading is only made when needed ---------------------
 
 test('the third reading is added to the second, it does not replace it: texts that S-70\'s reading refuses stay refused when a `${` or `((` swallows the rest', () => {
