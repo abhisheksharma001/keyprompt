@@ -40,6 +40,12 @@ const READ_TOOLS = ['find-generic-password', 'dump-keychain', 'secret-tool', 'ge
 const WORK_PER_CHAR = 12
 const WORK_BASE = 1000000
 const WORK_MOST = 16000000
+/**
+ * The longest command that gets the second pass of S-71 (the brace forms). That pass costs a reading of its own, about two to three times
+ * main's on a megabyte of short `${…}` pieces (measured, senior review of PR #81, finding 4), and the hook lets a command through when it
+ * takes 10 seconds. Longer than this, the pass is not made and a command that names a read tool is refused, as when a budget runs out.
+ */
+const EXTRAS_MOST_CHARS = 1000000
 /** What each script that S-68 reads besides the word right after `-c` costs besides its characters, so the number of those readings is bounded too (1.6 million one-character option values after `-c` were 1.6 million readings and took 8 s). Main's readings cost their characters only, as the S-67 tests pin. */
 const WORK_PER_EXTRA_SCRIPT = 64
 /**
@@ -1189,7 +1195,10 @@ export function checkCommand(command, savedNames = [], shell, workLimit = Math.m
   // The text holds a `${`, `((` or `$((` that main's readings take as plain characters, and they finished without a read (when they ran out
   // of work the answer is main's own): read it again with the brace forms, on a budget of its own. A refusal found there is added to main's,
   // and if that budget runs out, a command that names a read tool is refused, as it is when main's does.
-  if (!found && first.braces && !first.ranOut) found = readings(command, names, shell, { left: workLimit, extras: true })
+  if (!found && first.braces && !first.ranOut) {
+    if (command.length > EXTRAS_MOST_CHARS) found = mentionsRead(command) ? UNREAD : null
+    else found = readings(command, names, shell, { left: workLimit, extras: true })
+  }
   return found ? { reason: `${found} ${RUN_INSTEAD}` } : null
 }
 

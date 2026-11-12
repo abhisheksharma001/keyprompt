@@ -380,6 +380,21 @@ test('the extra readings never use the budget main\'s readings need: with the re
   }
 })
 
+test('a command longer than a megabyte does not get the second pass, so the extra reading never narrows the hook\'s time margin; one that names a read tool is refused, one that does not is let through', () => {
+  const padding = '${a}x '
+  const hidden = `nice \${x:+ #} ${READ}`
+  // Short enough for the second pass: the brace forms find the read behind the `#`.
+  denied(`${padding.repeat(1000)}; ${hidden}`, 'bash')
+  // Past the limit the pass is not made, and the name check refuses the command because it names the read tool.
+  const long = `${padding.repeat(200_100)}; ${hidden}`
+  assert.ok(long.length > 1_000_000)
+  assert.match(checkCommand(long, SAVED, 'bash')?.reason ?? '', /too long or too deeply nested/)
+  // The same length without a read tool in it is let through.
+  const benign = padding.repeat(200_100)
+  assert.ok(benign.length > 1_000_000)
+  allowed(benign, 'bash')
+})
+
 /** Every text of up to `left` more symbols, each handed to `check`. */
 function all(symbols, text, left, check) {
   check(text)
@@ -470,18 +485,3 @@ test('checkCommand reads 200 KB of braces and parentheses well inside the hook\'
   }
 })
 
-// --- Seeded generators --------------------------------------------------------------------------------------
-
-/** @param {number} seed @returns {() => number} a small deterministic generator (mulberry32) */
-function seeded(seed) {
-  let a = seed >>> 0
-  return () => {
-    a = (a + 0x6d2b79f5) >>> 0
-    let t = a
-    t = Math.imul(t ^ (t >>> 15), t | 1)
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
-  }
-}
-const between = (/** @type {() => number} */ rand, /** @type {number} */ low, /** @type {number} */ high) => low + Math.floor(rand() * (high - low + 1))
-const pick = (/** @type {() => number} */ rand, /** @type {any[]} */ list) => list[Math.floor(rand() * list.length)]
