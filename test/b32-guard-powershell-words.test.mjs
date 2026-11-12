@@ -308,6 +308,22 @@ test('a text a split copy reaches is read again when it is read in another comme
   }
 })
 
+test('a text one split copy read is read again when another copy reaches it deeper', () => {
+  // Both commands start with `$a=pwsh`, so only their split copies see the nesting. The second copy reaches, one level deeper, texts the first
+  // copy read; read again there, its innermost `pwsh -c` script is past the depth limit.
+  const P = (n) => 'pwsh -c '.repeat(n) + 'find-generic-password'
+  const found = checkCommand(`$a=${P(3)} ; $a=${P(5)}`, SAVED, 'powershell')
+  assert.match(found?.reason ?? '', /too long or too deeply nested/)
+})
+
+test('a text a split copy read is still read again by the commands outside it, as on main', () => {
+  // Main reads the nested text three times and needs about 11 units of the budget for each character. Skipping the two readings after the
+  // copy's would need about 8, and let through a text main refuses.
+  const inner = 'pwsh -c '.repeat(2) + 'z '.repeat(500) + 'find-generic-password'
+  const text = `-a:b pwsh -c ${inner} ; pwsh -c ${inner} ; pwsh -c ${inner}`
+  assert.ok(checkCommand(text, SAVED, 'powershell', Math.floor(9.5 * text.length)), 'should refuse: the budget runs out on main')
+})
+
 test('one word of 150,000 chained assignments after a read does not crash the guard, so the read is still refused (review of PR #75, B1)', () => {
   // A guard that throws is skipped by the hook (exit 1 lets the call through), so a crash would turn a refusal into a pass.
   const chain = '$a='.repeat(150_000) + '1'
