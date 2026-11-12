@@ -258,14 +258,23 @@ function mentionsRead(text) {
  * out the same (a `$( )` that holds a quote or a `#` is marked without finding where the Bash scan would end it, which would cost a second
  * scan to the end of the text for each `$(`); then the second reading finds nothing new.
  *
+ * Two more forms are read only with `braceForms` (S-71, B-32 items 13 and 14), always together with `dollarForms`, as a third reading
+ * that is added to the first two and replaces neither. Bash: `${…}` and `((…))` and `$((…))` are each one piece that goes into the current
+ * word, ending at the matching brace or parentheses with quotes, backslash pairs and `#` taken as the shell takes them inside (a `#` starts
+ * no comment, a brace in quotes ends nothing; `$( )` and backticks inside are still nested texts). PowerShell: `${…}` is one variable
+ * name that ends at the first `}` that no backtick escapes (tokenizer.cs, `ScanVariable`). `braces` is true when the text holds a `${`, a
+ * `((` where a word starts, or a `$((`, outside single quotes and escapes: the third reading is made only then. It is not exact either
+ * (it is true for `${HOME}` too), and a text it marks that reads the same costs one more scan.
+ *
  * @param {string} text
  * @param {boolean} [powershell]
  * @param {boolean} [comments] skip comments
  * @param {Limit} [limit] the work budget: the text's length is taken off `left`, and reading stops (throws `OUT_OF_WORK`) when it goes below 0
  * @param {boolean} [dollarForms] read the three Bash forms above (Bash only: read as PowerShell, nothing changes)
- * @returns {{ commands: string[][], nested: string[], open: boolean, defines: boolean, dollar: boolean }}
+ * @param {boolean} [braceForms] read the `${…}`, `((…))` and `$((…))` pieces above (pass `dollarForms` as well)
+ * @returns {{ commands: string[][], nested: string[], open: boolean, defines: boolean, dollar: boolean, braces: boolean }}
  */
-export function splitShell(text, powershell = false, comments = true, limit, dollarForms = false) {
+export function splitShell(text, powershell = false, comments = true, limit, dollarForms = false, braceForms = false) {
   if (limit && (limit.left -= text.length) < 0) throw OUT_OF_WORK
   if (powershell) text = text.replace(/[‘’‚‛]/g, "'").replace(/[“”„]/g, '"')
   const escape = powershell ? '`' : '\\'
@@ -280,9 +289,10 @@ export function splitShell(text, powershell = false, comments = true, limit, dol
   let open = false
   let defines = false
   let dollar = false
-  /** `${…}` is read as one piece in both shells (S-71); the other forms are Bash's only */
-  const braceForms = dollarForms
+  let braces = false
   dollarForms &&= !powershell
+  /** `((` and `$((` are read as one piece in Bash only (S-71); `${` in both shells */
+  const bashBraces = braceForms && !powershell
   /** where `dollarJoin` found a `(` or `'` */
   let look = -1
   /** the last word of the command so far, for the `(` that may follow it */
@@ -336,7 +346,7 @@ export function splitShell(text, powershell = false, comments = true, limit, dol
       // Bash scan end it anywhere else, so the text is marked and the caller reads it a second time. Not exact: the mark also fires when both
       // ends turn out the same. That is the price of a single pass here; finding out would take the Bash scan, once per `$(`, to the end of the text.
       // `$((` is arithmetic in the other reading, not a `$(` (S-71), so it is marked too.
-      if (!powershell && text[start] === '(') dollar = true
+      if (!powershell && text[start] === '(') braces = true
       while (j < text.length && depth > 0) {
         const ch = text[j]
         if (ch === escape) j++
@@ -429,7 +439,7 @@ export function splitShell(text, powershell = false, comments = true, limit, dol
   while (i < text.length) {
     const c = text[i]
     // Main's reading takes `${…}` and `((` apart; the text is marked, and the caller reads it again with the pieces taken whole (S-71).
-    if (!braceForms && ((c === '$' && text[i + 1] === '{') || (!powershell && c === '(' && text[i + 1] === '(' && !inWord))) dollar = true
+    if (!braceForms && ((c === '$' && text[i + 1] === '{') || (!powershell && c === '(' && text[i + 1] === '(' && !inWord))) braces = true
     if (c === escape) {
       const skip = continuation(i)
       if (skip === 0) {
@@ -457,7 +467,7 @@ export function splitShell(text, powershell = false, comments = true, limit, dol
       inWord = true
       i++
       while (i < text.length && (text[i] !== '"' || (powershell && text[i + 1] === '"'))) {
-        if (!braceForms && text[i] === '$' && text[i + 1] === '{') dollar = true
+        if (!braceForms && text[i] === '$' && text[i + 1] === '{') braces = true
         if (text[i] === '"') {
           word += '"'
           i += 2
@@ -468,7 +478,7 @@ export function splitShell(text, powershell = false, comments = true, limit, dol
           i += skip || 2
         } else if (braceForms && text[i] === '$' && text[i + 1] === '{') {
           i = powershell ? psName(i) : bashPiece(i, i + 2, '{', '}', 1, true)
-        } else if (dollarForms && text[i] === '$' && text[i + 1] === '(' && text[i + 2] === '(') {
+        } else if (bashBraces && text[i] === '$' && text[i + 1] === '(' && text[i + 2] === '(') {
           i = bashPiece(i, i + 3, '(', ')', 2, true)
         } else if (text[i] === '$' && text[i + 1] === '(') {
           i = subshell(i + 2)
@@ -491,9 +501,9 @@ export function splitShell(text, powershell = false, comments = true, limit, dol
       i++
     } else if (braceForms && c === '$' && text[i + 1] === '{') {
       i = powershell ? psName(i) : bashPiece(i, i + 2, '{', '}', 1, false)
-    } else if (dollarForms && c === '$' && text[i + 1] === '(' && text[i + 2] === '(') {
+    } else if (bashBraces && c === '$' && text[i + 1] === '(' && text[i + 2] === '(') {
       i = bashPiece(i, i + 3, '(', ')', 2, false)
-    } else if (dollarForms && c === '(' && text[i + 1] === '(' && !inWord) {
+    } else if (bashBraces && c === '(' && text[i + 1] === '(' && !inWord) {
       i = bashPiece(i, i + 2, '(', ')', 2, false)
     } else if (c === '$' && text[i + 1] === '(') {
       i = subshell(i + 2)
@@ -537,7 +547,7 @@ export function splitShell(text, powershell = false, comments = true, limit, dol
     }
   }
   endCommand()
-  return { commands, nested, open, defines, dollar }
+  return { commands, nested, open, defines, dollar, braces }
 }
 
 /**
@@ -1013,18 +1023,27 @@ function readInShell(text, names, depth, powershell, comments, limit, refuseOpen
   // nothing (remembering every reading tripled the memory of an 8 MB Bash text; round-2 review).
   const how = depth * 16 + (powershell ? 8 : 0) + (comments ? 4 : 0) + (refuseOpen ? 2 : 0) + (limit.strict ? 1 : 0)
   if (limit.copies && limit.read?.[how]?.has(text)) return null
-  let { commands, nested, open, defines, dollar } = splitShell(text, powershell, comments, limit)
-  if (dollar) {
-    // The text holds a Bash form that main read as plain characters (S-70, B-32 items 2, 3 and 20). It is read a second time with the forms
-    // read, and whatever that finds that the first reading did not is read as well: the first reading is main's, so nothing main refused
-    // is let through (tighten only, by construction). Without such a form (the mark is false) there is no second reading and no cost.
-    const more = splitShell(text, powershell, comments, limit, true)
+  let { commands, nested, open, defines, dollar, braces } = splitShell(text, powershell, comments, limit)
+  /** @param {{ commands: string[][], nested: string[], open: boolean, defines: boolean }} more another reading of the same text: add what it finds that the readings so far did not */
+  const add = (more) => {
     const known = new Set(commands.map((words) => JSON.stringify(words)))
     commands = commands.concat(more.commands.filter((words) => !known.has(JSON.stringify(words))))
     const scripts = new Set(nested)
     nested = nested.concat(more.nested.filter((script) => !scripts.has(script)))
     open ||= more.open
     defines ||= more.defines
+  }
+  if (dollar) {
+    // The text holds a Bash form that main read as plain characters (S-70, B-32 items 2, 3 and 20). It is read a second time with the forms
+    // read, and whatever that finds that the first reading did not is read as well: the first reading is main's, so nothing main refused
+    // is let through (tighten only, by construction). Without such a form (the mark is false) there is no second reading and no cost.
+    add(splitShell(text, powershell, comments, limit, true))
+  }
+  if (braces) {
+    // The text holds `${`, `((` or `$((` (S-71, B-32 items 13 and 14). A third reading takes them whole, with S-70's forms read as well, and
+    // adds what it finds. It is a reading of its own and does not replace the second: a piece that runs to the end of an unfinished `${`
+    // hides what the second reading found (the differential run on this step found 25 such texts in 600,000 when it did).
+    add(splitShell(text, powershell, comments, limit, true, true))
   }
   if (defines) limit.defines = true
   for (const words of commands) {

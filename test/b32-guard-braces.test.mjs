@@ -28,7 +28,7 @@ const BASH_TOOLS = ['bash', undefined]
 const PS_TOOLS = ['powershell', undefined]
 
 /** @param {string} text the text read with the new forms (the second reading) */
-const formWords = (text, powershell = false, comments = true) => splitShell(text, powershell, comments, undefined, true)
+const formWords = (text, powershell = false, comments = true) => splitShell(text, powershell, comments, undefined, true, true)
 
 // --- Item 14: `${…}` in Bash -------------------------------------------------------------------------------
 
@@ -210,20 +210,20 @@ test('splitShell: an unfinished `${`, `((` or `$((` is open', () => {
 test('splitShell: the first reading is main\'s and says when the second one is needed', () => {
   // The mark is set by every `${`, every `((` where a word starts and every `$((`, outside single quotes and escapes.
   for (const text of ['${x}', 'echo ${x}', 'echo "${x}"', '((1))', 'echo $((1))', 'echo "$((1))"', 'ls; ((1))', 'a=${b:-c}', 'echo "a${b}"', 'echo ((']) {
-    assert.equal(splitShell(text).dollar, true, text)
-    assert.equal(splitShell(text, false, false).dollar, true, text)
+    assert.equal(splitShell(text).braces, true, text)
+    assert.equal(splitShell(text, false, false).braces, true, text)
   }
   for (const text of ['echo hi', "echo '${x}'", 'echo \\${x}', 'echo "\\${x}"', '# ${x}', 'echo $x', 'echo a((b))', 'echo $', 'x=$(ls)', 'echo { }']) {
-    assert.equal(splitShell(text).dollar, false, text)
+    assert.equal(splitShell(text).braces, false, text)
   }
   // Main's reading of the text that needs the second one is unchanged: the `#` is a comment, the `'` a quote.
   assert.deepEqual(splitShell('true ${x:-a #}; ls').commands, [['true', '${x:-a']])
   assert.deepEqual(splitShell("Write-Output ${a'}; ls", true).commands, [['Write-Output', '$'], ['a}; ls']])
-  assert.equal(splitShell('Write-Output ${a}', true).dollar, true)
-  assert.equal(splitShell('Write-Output "${a}"', true).dollar, true)
-  assert.equal(splitShell('Write-Output $((1))', true).dollar, false)
-  assert.equal(splitShell('Write-Output ((1))', true).dollar, false)
-  assert.equal(splitShell("Write-Output '${a}'", true).dollar, false)
+  assert.equal(splitShell('Write-Output ${a}', true).braces, true)
+  assert.equal(splitShell('Write-Output "${a}"', true).braces, true)
+  assert.equal(splitShell('Write-Output $((1))', true).braces, false)
+  assert.equal(splitShell('Write-Output ((1))', true).braces, false)
+  assert.equal(splitShell("Write-Output '${a}'", true).braces, false)
 })
 
 test('splitShell, PowerShell: the second reading ends a `${…}` name at the first `}` that no backtick escapes', () => {
@@ -255,9 +255,9 @@ test('splitShell says there is a form to read whenever the second reading can di
     for (const powershell of [false, true]) {
       for (const comments of [true, false]) {
         const old = splitShell(text, powershell, comments)
-        const now = splitShell(text, powershell, comments, undefined, true)
+        const now = splitShell(text, powershell, comments, undefined, true, true)
         texts++
-        if (old.dollar) {
+        if (old.dollar || old.braces) {
           marked++
           continue
         }
@@ -304,8 +304,8 @@ test('reading the braces costs time in step with a text of the same length: 200 
     ['PowerShell ${ open', '${a`'.repeat(n), 'x{a`'.repeat(n), true],
     ['PowerShell backticks', '${a`}'.repeat(n), 'x{a`}'.repeat(n), true],
   ]) {
-    const base = median3(() => splitShell(flat, powershell, true, undefined, true))
-    const took = median3(() => splitShell(shape, powershell, true, undefined, true))
+    const base = median3(() => splitShell(flat, powershell, true, undefined, true, true))
+    const took = median3(() => splitShell(shape, powershell, true, undefined, true, true))
     assert.ok(took < 4 * base + 300, `${what}: ${took.toFixed(0)} ms against ${base.toFixed(0)} ms for the same length`)
     const old = median3(() => splitShell(shape, powershell, true))
     assert.ok(old < 4 * base + 300, `${what} (first reading): ${old.toFixed(0)} ms against ${base.toFixed(0)} ms for the same length`)
