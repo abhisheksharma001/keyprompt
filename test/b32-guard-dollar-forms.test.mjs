@@ -166,6 +166,14 @@ test('the first reading is main\'s, and it says when the second one is needed: t
   assert.equal(main('echo "a\\\n(true)"').dollar, false)
 })
 
+test('the answers main gave on two texts the round-2 review found are kept (the first reading stays main\'s, and no second reading is made without the mark)', () => {
+  // `x$`, a continuation and `()` is a function definition to main; the word `x$` keeps its `$`, and the quoted read after it is refused.
+  for (const shell of BASH_TOOLS) denied(`x$\\\n() ; echo '${READ}'`, shell)
+  // A long text of plain words that only names a read tool is let through by main as Bash: a second reading made when there is no mark
+  // would cost the work budget twice over and turn that into a refusal.
+  allowed(`eval eval eval ${'z '.repeat(50_000)}find-generic-password`, 'bash')
+})
+
 // --- Item 20: a line continuation between `$` and `(` -----------------------------------------------------
 
 test('join: a $ that a line continuation joins to ( is $( (item 20)', () => {

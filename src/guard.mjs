@@ -158,9 +158,10 @@ KIND[41] = ENDS
  * reading can find a `$(` whose two characters had something between them that the first reading left out (`$''(`, `\$\(`,
  * `$$(true)(`), which is why the rule allows anything between them; and a blank that a join put in can only be left out as
  * part of a span, where anything is allowed already. A gap made of these pieces, with more such pieces between its characters,
- * is again made of these pieces, so the rule holds for any number of readings: no way of quoting a read for an outer shell
- * steps outside it. The test file checks the two halves of this: `splitShell` against the rule, and this function against the
- * rule written out the slow way.
+ * is again made of these pieces, so the rule holds for the readings `splitShell` makes of a piece of the text. It does not hold for a
+ * `$` and a `'` that an outer shell's own reading joins, as `eval security fi\$\'nd\'-generic-password` does: S-67's warning N5 is
+ * only partly met, and the gap is B-32 item 39 (main has it too). The test file checks the two halves of the rule: `splitShell`
+ * against the rule, and this function against the rule written out the slow way. Both read the text once, which is why neither sees that gap.
  *
  * The Bash reading with the dollar forms (S-70) also leaves out a `$` that stands before a `'` (`$'…'`; line continuations may stand
  * between them), so a name written `fi$'nd'-generic-password` is one piece away from `find-generic-password`: that is the second
