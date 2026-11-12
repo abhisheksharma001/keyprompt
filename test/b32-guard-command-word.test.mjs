@@ -459,11 +459,15 @@ test('a redefined text-only word has its words read one by one as well as joined
 test('BL1: a long run of option values after -c costs a bounded number of readings', () => {
   // Measured against the same command with every option value turned into a plain `-e` flag (same length, no value to read), median of 3 runs,
   // so a slow or busy machine slows both. Before the fix this ratio was about 10 at 2 MB.
+  // S-78 (B-37): the time is the CPU time this process used (user + system), not the wall clock. A busy machine can make a run wait for its turn on
+  // the processor, and that wait landed on one side of the ratio and failed the test once; waiting is not CPU time. A guard that does more work
+  // still uses more CPU time, so the 3 * flat + 300 line below is the same line as before.
   const median = (command) => {
     const times = [0, 1, 2].map(() => {
-      const start = process.hrtime.bigint()
+      const start = process.cpuUsage()
       checkCommand(command, SAVED, undefined)
-      return Number(process.hrtime.bigint() - start) / 1e6
+      const used = process.cpuUsage(start)
+      return (used.user + used.system) / 1e3
     })
     return times.sort((a, b) => a - b)[1]
   }
@@ -472,7 +476,7 @@ test('BL1: a long run of option values after -c costs a bounded number of readin
     const shape = (word) => prefix + unit.replace(/[-+][oO]/, word).repeat(400000) + suffix
     const took = median(shape(unit.match(/[-+][oO]/)[0]))
     const flat = median(shape('-e'))
-    assert.ok(took < 3 * flat + 300, `${prefix}${JSON.stringify(unit)}: ${took.toFixed(0)} ms against ${flat.toFixed(0)} ms for the same length of plain flags`)
+    assert.ok(took < 3 * flat + 300, `${prefix}${JSON.stringify(unit)}: ${took.toFixed(0)} ms of CPU time against ${flat.toFixed(0)} ms for the same length of plain flags`)
   }
   // The value of the last -O is the script: refused.
   assert.ok(checkCommand('zsh -c ' + '-O x '.repeat(1000) + `-O '${READ}'`, SAVED, 'bash'))

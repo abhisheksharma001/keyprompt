@@ -1600,6 +1600,30 @@ Why that order: S-66 first, so that the extra readings later steps add cannot ma
 **Verify:** `npm ci`, `npm test`. Break test: commit, make the name check keep line feeds as letters (`KIND` in `src/guard.mjs`), run `node --test test/b32-guard-unfinished.test.mjs`: the changed test fails; `git checkout -- src/guard.mjs`. `git diff --name-only main -- test/` lists only `test/b32-guard-unfinished.test.mjs`, and its diff touches only lines inside that one test.
 **Must not:** change `src/`; loosen the comparison for any text without a `$` before a `'`; touch another test; plus the shared rules.
 
+### S-78 — test-change: the BL1 timing test measures CPU time, not the wall clock (bug B-37)
+
+**PR:** one. Not part of the B-32 chain: it touches one test file and blocks no step.
+**Depends on:** S-68 merged (done, PR #73; it wrote the test). **Blocks:** nothing.
+**Research:** none.
+**Model:** sonnet.
+**Senior review:** required — it changes a test yardstick (the timing test later guard steps are judged by); a fresh Opus session that did not build it reads the PR before merge.
+**Confidence:** 0.75 — the cause (wall-clock noise on one side of a ratio) is shown by measurement, but the one real failure was not reproduced (0 of 80 runs before the change under a load average of 9 to 100); the fix is judged by what it removes and by the break check, not by a failure count going from some number to 0.
+**Files:** `test/b32-guard-command-word.test.mjs` (only the helper `median` and one assertion message inside the test "BL1: a long run of option values after -c costs a bounded number of readings"), `docs/steps.md`, `docs/bugs.md`.
+**Locked tests:** every file in `test/` except `test/b32-guard-command-word.test.mjs`; in that file, every test except the BL1 test named above.
+**Today:** the test times `checkCommand` on a 1.6 MB command and on the same command with plain `-e` flags, takes the median of 3 for each, and fails when `took >= 3 * flat + 300` (milliseconds on the wall clock). Both sides are timed one after the other, so a stretch of heavy load that hits one side and not the other moves the ratio; it failed once that way (B-37, load average about 10). The wall clock counts time a run spends waiting for a turn on the processor; CPU time does not. Measured by S-78's builder on this machine, 80 processes (10 rounds of 8 at once, load average 48 to 202) each timing the four shapes, so 320 shape checks: the plain-flag side took 598 to 2,109 ms on the wall clock (3.5 times apart) and 558 to 693 ms of CPU time (1.2 times apart); the took/flat ratio was 0.67 to 2.6 on the wall clock and 1.08 to 1.47 on CPU time.
+**Change:**
+1. In the BL1 test's `median` helper, time each run with `process.cpuUsage()` (user plus system, in ms) instead of `process.hrtime.bigint()`.
+2. Keep the median of 3, the four shapes, the 400,000 repeats and the line `took < 3 * flat + 300` as they are. Add "of CPU time" to the assertion message.
+3. A comment in the test names this step and says why.
+4. Report in the PR body the number of failures out of 20 rounds (4 copies at once) before and after, the load average, and the break check.
+**Why CPU time and not the other two options in B-37.** More runs per median (5) still reads the wall clock, so a stretch of load longer than the runs still fails it, and it makes the test 66% longer. A larger margin loosens the line a real slowdown is judged by: the line is the one thing this step must keep. CPU time removes the cause (waiting) and leaves the line where it is. CPU time is not free of load (two processes on one core's two threads, or a shared cache, make both sides slower), but it does so on both sides alike.
+**Acceptance:**
+- WHEN `checkCommand` is made to rescan the whole text once for each of the first 1,000 option values (a scratch change to `src/guard.mjs`) THEN the changed test SHALL fail, as the unchanged test does.
+- WHEN the guard is unchanged THEN the changed test SHALL pass, 20 rounds of 4 copies at once.
+- WHEN any other test in the repo runs THEN its result SHALL be unchanged.
+**Verify:** `npm ci`, `npm test`. Break test: commit, add the rescan loop at the top of `checkCommand`, run `node --test test/b32-guard-command-word.test.mjs`: the BL1 test fails; `git checkout -- src/guard.mjs`; `git status` is clean. `git diff --name-only origin/main` lists only the test file, `docs/steps.md` and `docs/bugs.md`.
+**Must not:** change `src/`; change the `3 * flat + 300` line or the 400,000 repeats; touch another test, including the other timing tests (`test/b25-guard-plain-forms.test.mjs`, `test/b32-guard-dollar-forms.test.mjs`, `test/b32-guard-powershell-words.test.mjs`, which read the wall clock too: they are not part of B-37 and are left as they are); plus the shared rules.
+
 ### Open flags for S-66 to S-75
 
 Facts not checked when these steps were written (no shell, no network). Each says where to check.
