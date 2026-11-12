@@ -610,6 +610,7 @@ test('the name check answers exactly as its rule written out the slow way, on 30
   const TOKENS = ['$', '(', ')', '`', '\\', '"', "'", '\n', '\r', ' ', 'x', '‘', '”', '$(', '$()', ';', '#', '{', 'K', 'K', 'İ']
   const rand = seeded(20261114)
   let yes = 0
+  let skipped = 0
   for (let n = 0; n < 30000; n++) {
     const name = pick(rand, ['find-generic-password', 'dump-keychain', 'secret-tool', 'Get-StoredCredential', 'CredRead'])
     let text = pick(rand, ['', 'x', '$', '`', '$('])
@@ -618,12 +619,20 @@ test('the name check answers exactly as its rule written out the slow way, on 30
       if (rand() < 0.99) text += name[i]
     }
     text += pick(rand, ['', ')', ' y'])
+    // S-77 (B-32 item 38): the Bash reading with the dollar forms (S-70) also leaves out a `$` that stands before a `'`, or before line
+    // continuations and a `'`. The rule written out here does not have that piece, so such a text is left out of this comparison; the
+    // test file of S-70 (test/b32-guard-dollar-forms.test.mjs) compares them with the rule that has it.
+    if (/\$(?:\\\n)*'/.test(text)) {
+      skipped++
+      continue
+    }
     const rule = TOOL_NAMES.some((tool) => madeFrom(text.toLowerCase(), tool))
     // A budget of 1 character runs out at once, so the answer is the name check's.
     assert.equal(checkCommand(text, SAVED, 'bash', 1) !== null, rule, JSON.stringify(text))
     if (rule) yes++
   }
   assert.ok(yes > 3000 && yes < 27000, `${yes} of 30,000 named a tool, so both answers were tested`)
+  assert.ok(skipped < 600, `${skipped} of 30,000 texts were left out for holding a $ before a quote, so almost all of them were compared`)
 })
 
 test('9,000 seeded reads, obfuscated and then quoted again for 0 to 3 outer shells: whatever the guard finds a read in, the fallback names it too (property, round 3)', () => {
