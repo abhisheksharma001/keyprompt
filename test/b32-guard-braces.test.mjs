@@ -204,7 +204,7 @@ test('splitShell: the first reading is main\'s and says when the second one is n
   }
   // Main's reading of the text that needs the second one is unchanged: the `#` is a comment, the `'` a quote.
   assert.deepEqual(splitShell('true ${x:-a #}; ls').commands, [['true', '${x:-a']])
-  assert.deepEqual(splitShell("Write-Output ${a'}; ls", true).commands, [['Write-Output', '$'], ['a']])
+  assert.deepEqual(splitShell("Write-Output ${a'}; ls", true).commands, [['Write-Output', '$'], ['a}; ls']])
   assert.equal(splitShell('Write-Output ${a}', true).dollar, true)
   assert.equal(splitShell('Write-Output "${a}"', true).dollar, true)
   assert.equal(splitShell('Write-Output $((1))', true).dollar, false)

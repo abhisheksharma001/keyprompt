@@ -280,6 +280,8 @@ export function splitShell(text, powershell = false, comments = true, limit, dol
   let open = false
   let defines = false
   let dollar = false
+  /** `${…}` is read as one piece in both shells (S-71); the other forms are Bash's only */
+  const braceForms = dollarForms
   dollarForms &&= !powershell
   /** where `dollarJoin` found a `(` or `'` */
   let look = -1
@@ -333,6 +335,8 @@ export function splitShell(text, powershell = false, comments = true, limit, dol
       // Main's scan counts parentheses and skips the character after a backslash. It notes a quote or a `#`: only with one in the span can the
       // Bash scan end it anywhere else, so the text is marked and the caller reads it a second time. Not exact: the mark also fires when both
       // ends turn out the same. That is the price of a single pass here; finding out would take the Bash scan, once per `$(`, to the end of the text.
+      // `$((` is arithmetic in the other reading, not a `$(` (S-71), so it is marked too.
+      if (!powershell && text[start] === '(') dollar = true
       while (j < text.length && depth > 0) {
         const ch = text[j]
         if (ch === escape) j++
@@ -354,6 +358,62 @@ export function splitShell(text, powershell = false, comments = true, limit, dol
     nested.push(text.slice(start, stop))
     return stop + 1
   }
+  /**
+   * Bash, second reading only (S-71, B-32 items 13 and 14): `${…}`, `((…))` and `$((…))` are one piece that goes into the current word, so a
+   * `#` or a quote inside starts nothing in the text around it. Inside, `\` pairs are skipped, and so are single quotes (not inside double
+   * quotes) and the text between double quotes (where a brace or a parenthesis counts for nothing); `$(…)` and backticks are still nested
+   * texts. The piece ends where its opening brace or parentheses close. One pass, and the caller goes on after the end it finds.
+   * @param {number} from index of the piece's first character
+   * @param {number} start index just after its opening: `${` or `((`, or `$((`
+   * @param {string} opener the character that opens one more level inside it: `{` or `(`
+   * @param {string} closer the character that closes a level: `}` or `)`
+   * @param {number} depth levels open at `start`: 1 for `${`, 2 for `((`
+   * @param {boolean} inDouble the piece sits inside double quotes, where a single quote is only a character
+   * @returns {number} index after the piece
+   */
+  const bashPiece = (from, start, opener, closer, depth, inDouble) => {
+    let j = start
+    let quoted = false
+    while (j < text.length && depth > 0) {
+      const ch = text[j]
+      if (ch === '\\') j += 2
+      else if (ch === "'" && !quoted && !inDouble) {
+        const close = text.indexOf("'", j + 1)
+        j = close === -1 ? text.length : close + 1
+      } else if (ch === '"') {
+        quoted = !quoted
+        j++
+      } else if (ch === '$' && text[j + 1] === '(') j = subshell(j + 2)
+      else if (ch === '`') j = backtick(j + 1)
+      else if (!quoted && ch === opener) {
+        depth++
+        j++
+      } else if (!quoted && ch === closer) {
+        depth--
+        j++
+      } else j++
+    }
+    j = Math.min(j, text.length)
+    if (depth > 0) open = true
+    word += text.slice(from, j)
+    inWord = true
+    return j
+  }
+  /**
+   * PowerShell, second reading only (S-71, B-32 item 13): `${…}` is one variable name. It ends at the first `}` that no backtick escapes; a
+   * quote, a `#` or a `<#` inside is part of the name (tokenizer.cs, `ScanVariable`, PowerShell master cb9cf48, read 2026-11-12: the loop
+   * stops at `}`, a backtick takes the next character, and only `{` is reported as an error).
+   * @param {number} from index of the `$` @returns {number} index after the `}`
+   */
+  const psName = (from) => {
+    let j = from + 2
+    while (j < text.length && text[j] !== '}') j += text[j] === '`' ? 2 : 1
+    if (j >= text.length) open = true
+    j = Math.min(j + 1, text.length)
+    word += text.slice(from, j)
+    inWord = true
+    return j
+  }
 
   /**
    * A line continuation: Bash drops a backslash-newline, PowerShell a backtick at the end of a line.
@@ -368,6 +428,8 @@ export function splitShell(text, powershell = false, comments = true, limit, dol
   let i = 0
   while (i < text.length) {
     const c = text[i]
+    // Main's reading takes `${…}` and `((` apart; the text is marked, and the caller reads it again with the pieces taken whole (S-71).
+    if (!braceForms && ((c === '$' && text[i + 1] === '{') || (!powershell && c === '(' && text[i + 1] === '(' && !inWord))) dollar = true
     if (c === escape) {
       const skip = continuation(i)
       if (skip === 0) {
@@ -395,6 +457,7 @@ export function splitShell(text, powershell = false, comments = true, limit, dol
       inWord = true
       i++
       while (i < text.length && (text[i] !== '"' || (powershell && text[i + 1] === '"'))) {
+        if (!braceForms && text[i] === '$' && text[i + 1] === '{') dollar = true
         if (text[i] === '"') {
           word += '"'
           i += 2
@@ -403,6 +466,10 @@ export function splitShell(text, powershell = false, comments = true, limit, dol
           const skip = continuation(i)
           if (skip === 0) word += powershell || '$`"\\'.includes(text[i + 1]) ? text[i + 1] : text[i] + text[i + 1]
           i += skip || 2
+        } else if (braceForms && text[i] === '$' && text[i + 1] === '{') {
+          i = powershell ? psName(i) : bashPiece(i, i + 2, '{', '}', 1, true)
+        } else if (dollarForms && text[i] === '$' && text[i + 1] === '(' && text[i + 2] === '(') {
+          i = bashPiece(i, i + 3, '(', ')', 2, true)
         } else if (text[i] === '$' && text[i + 1] === '(') {
           i = subshell(i + 2)
         } else if (text[i] === '$' && !powershell && (look = dollarJoin(text, i)) !== -1 && text[look] === '(') {
@@ -422,6 +489,12 @@ export function splitShell(text, powershell = false, comments = true, limit, dol
       }
       if (i >= text.length) open = true
       i++
+    } else if (braceForms && c === '$' && text[i + 1] === '{') {
+      i = powershell ? psName(i) : bashPiece(i, i + 2, '{', '}', 1, false)
+    } else if (dollarForms && c === '$' && text[i + 1] === '(' && text[i + 2] === '(') {
+      i = bashPiece(i, i + 3, '(', ')', 2, false)
+    } else if (dollarForms && c === '(' && text[i + 1] === '(' && !inWord) {
+      i = bashPiece(i, i + 2, '(', ')', 2, false)
     } else if (c === '$' && text[i + 1] === '(') {
       i = subshell(i + 2)
     } else if (c === '$' && !powershell && (look = dollarJoin(text, i)) !== -1) {
