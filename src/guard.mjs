@@ -45,8 +45,9 @@ const WORK_PER_EXTRA_SCRIPT = 64
 /**
  * What the readings of one command share: `left`, the work budget, and three marks for S-68 (B-32 item 1). `exempted` is set when a text-only
  * command was let through unread, `defines` when any text read has a word that defines a function or alias, and `strict` makes the next
- * reading read a text-only command word like `eval` instead of exempting it.
- * @typedef {{ left: number, defines?: boolean, exempted?: boolean, strict?: boolean }} Limit
+ * reading read a text-only command word like `eval` instead of exempting it. For S-69, `copies` counts the split copies the reading is inside,
+ * and `read` holds each text read so far that held no read, with the ways it was read.
+ * @typedef {{ left: number, defines?: boolean, exempted?: boolean, strict?: boolean, copies?: number, read?: Map<string, Set<string>> }} Limit
  */
 /** Thrown when the budget runs out, to stop reading at once. */
 const OUT_OF_WORK = Symbol('out of work')
@@ -793,11 +794,22 @@ function readInShell(text, names, depth, powershell, comments, limit, refuseOpen
     limit.defines = true
     return mentionsRead(text) ? UNREAD : null
   }
+  // A split copy (S-69) can reach a text that was already read the same way and held no read. Reading it again finds nothing new, and it made
+  // the copy's work double at each nesting level (senior review, B2). Only a reading inside a copy skips: every reading main makes is still
+  // made, so this never does less work than main, and a text main refused as too long to read is still refused.
+  const how = `${depth} ${powershell} ${comments} ${Boolean(refuseOpen)} ${Boolean(limit.strict)}`
+  if (limit.copies && limit.read?.get(text)?.has(how)) {
+    if ((limit.left -= WORK_PER_EXTRA_SCRIPT) < 0) throw OUT_OF_WORK
+    return null
+  }
   const { commands, nested, open, defines } = splitShell(text, powershell, comments, limit)
   if (defines) limit.defines = true
   for (const words of commands) {
+    const copy = FIRST_SPLIT.has(words)
+    if (copy) limit.copies = (limit.copies ?? 0) + 1
     const found = readInWords(words, names, depth, comments, limit)
     if (found) return found
+    if (copy) limit.copies--
   }
   // Windows: CredRead through Add-Type (how keyprompt itself reads, `src/store/windows.mjs`), naming a keyprompt target or a saved name.
   const runsAddType = commands.some((words) => base(words[commandStart(words)] ?? '') === 'add-type')
@@ -810,6 +822,9 @@ function readInShell(text, names, depth, powershell, comments, limit, refuseOpen
     if (found) return found
   }
   if (refuseOpen && open && mentionsRead(text)) return UNCLOSED
+  limit.read ??= new Map()
+  if (!limit.read.has(text)) limit.read.set(text, new Set())
+  limit.read.get(text)?.add(how)
   return null
 }
 
