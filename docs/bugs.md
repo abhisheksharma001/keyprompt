@@ -494,5 +494,5 @@ Found by S-67 (PR #69, 2026-11-11) and its four senior reviews, 21 to 27. String
 **Introduced by:** S-68 (PR #73), which wrote the test.
 **Escaped past:** S-68's runs and its reviews, which ran on a less loaded machine.
 **New check:** the fix step reruns the test 20 times under a parallel load (for example 4 copies of the suite at once) and records how many fail, before and after.
-**Fix step:** none yet. Options for the step: more runs per median (5), a larger margin, or comparing CPU time instead of wall time. Not started; Abhishek decides when.
+**Fix step:** S-78 (`docs/steps.md`, test-change, senior review required): the BL1 test measures the process's CPU time (`process.cpuUsage()`) instead of the wall clock, and keeps the median of 3 and the `3 * flat + 300` line as they are. Options weighed: more runs per median (still the wall clock, so a burst of load longer than five runs still fails it), a larger margin (loosens the line a real slowdown is judged by), CPU time (waiting for a turn on the processor is not counted, so load cannot slow one side only). Abhishek said go on 2026-11-13. Not done.
 
