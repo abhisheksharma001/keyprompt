@@ -241,6 +241,22 @@ test('splitShell, PowerShell: the second reading ends a `${…}` name at the fir
 
 // --- Nothing main refused is let through, and the new reading is only made when needed ---------------------
 
+test('the third reading is added to the second, it does not replace it: texts that S-70\'s reading refuses stay refused when a `${` or `((` swallows the rest', () => {
+  // Found by the differential run on the first build of this step: 25 texts in 600,000 that main refused and that build let through, because
+  // an unfinished `${` made one piece to the end of the text and hid the `$'…'` read that S-70's reading found (B-32 item 45).
+  for (const text of [
+    `\${x:-($''${READ}'\${x:+ #}$(}$`,
+    `\${x:+ #}x=\${x:+ #}${PS_READ}|$'\\\n$''${READ}'}`,
+    `\${x:- # @{\n$''${READ}'@"find . -exec`,
+    `@""@\\;\${&&$@{|$''${READ}'#)`,
+    `bash -c\${&$''${READ}'\${x:- \nWrite-Output@{$(${READ})`,
+    `((1 $''${READ}'`,
+    `$((1 $''${READ}'`,
+  ]) {
+    for (const shell of BASH_TOOLS) denied(text, shell)
+  }
+})
+
 /** Every text of up to `left` more symbols, each handed to `check`. */
 function all(symbols, text, left, check) {
   check(text)
