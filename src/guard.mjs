@@ -45,8 +45,9 @@ const WORK_PER_EXTRA_SCRIPT = 64
 /**
  * What the readings of one command share: `left`, the work budget, and three marks for S-68 (B-32 item 1). `exempted` is set when a text-only
  * command was let through unread, `defines` when any text read has a word that defines a function or alias, and `strict` makes the next
- * reading read a text-only command word like `eval` instead of exempting it.
- * @typedef {{ left: number, defines?: boolean, exempted?: boolean, strict?: boolean }} Limit
+ * reading read a text-only command word like `eval` instead of exempting it. For S-69, `copies` counts the split copies the reading is inside,
+ * and `read` holds, for each way of reading (a small number), the texts read inside a copy that held no read.
+ * @typedef {{ left: number, defines?: boolean, exempted?: boolean, strict?: boolean, copies?: number, read?: Set<string>[] }} Limit
  */
 /** Thrown when the budget runs out, to stop reading at once. */
 const OUT_OF_WORK = Symbol('out of work')
@@ -88,6 +89,13 @@ const DEFINERS = new Set(['function', 'filter', 'alias', 'set-alias', 'new-alias
 const LAUNCHERS = new Set(['keyprompt', 'keyprompt.mjs', 'npx', 'node'])
 /** Tools whose `tool_input.command` is shell text (R-12: PowerShell has the same fields as Bash). */
 const SHELL_TOOLS = new Set(['Bash', 'PowerShell', 'Monitor'])
+/**
+ * For each split copy of a command (S-69), the index of its first word made by a split. Words before it are the command's own, so a script
+ * read from a flag before it is the script the original command reads too, and the nested reading splits its words again: reading it from
+ * the copy would only repeat that work (it took a nested text full of split words past the work budget).
+ * @type {WeakMap<string[], number>}
+ */
+const FIRST_SPLIT = new WeakMap()
 /** `security find-generic-password` options that take a value (`man security`, macOS 27.0). */
 const SECURITY_VALUES = new Set(['a', 'c', 'C', 'D', 'G', 'j', 'l', 's'])
 
@@ -221,6 +229,8 @@ function mentionsRead(text) {
  * curly quotes are quotes (CharTraits.cs), braces also end a command,
  * backticks run nothing, and `<#` where a word starts opens a comment that
  * ends at the first `#>` (about_Comments; tokenizer.cs, ScanBlockComment).
+ * A command with a word PowerShell splits (`-Name:value`, `$x=Cmdlet`; S-69) comes back twice in `commands`: the words as Bash reads
+ * them, then the words with the splits made. The first is what main read, so nothing main refused can be lost.
  *
  * `open` is true when the text ends inside something it opened and never
  * closed: a quote, a `<#` comment, `$(` or a backtick (S-67).
@@ -251,9 +261,23 @@ export function splitShell(text, powershell = false, comments = true, limit) {
   let defines = false
   /** the last word of the command so far, for the `(` that may follow it */
   let lastWord = ''
+  /** @type {string[] | null} the command's words with the PowerShell splits made, once the command has a word that splits (S-69) */
+  let split = null
+  let firstSplit = 0
   const endWord = () => {
     if (inWord) {
+      // PowerShell splits two kinds of word that Bash keeps whole (S-69, B-32 items 6 and 16), quoted or not. `-Name:value` is the parameter
+      // `-Name` and its value (about_Parameters). `$x=Cmdlet` is a variable, an assignment operator and the cmdlet (about_Assignment_Operators:
+      // `=` `+=` `-=` `*=` `/=` `%=` `??=`); the operator is pushed as a plain `=`, which is where `commandStart` looks for it. The split words
+      // are a second copy of the command, read as well as the first, so nothing main read is read any less (shared rule 7, tighten only).
+      const pieces = powershell ? pieceWords(word) : null
+      if (pieces && !split) {
+        split = words.slice()
+        firstSplit = split.length
+      }
       words.push(word)
+      // Pushed one at a time: spreading a word of 100,000 or more pieces into `push` throws, and a guard that throws lets the command run.
+      if (split) for (const piece of pieces ?? [word]) split.push(piece)
       lastWord = word
     }
     word = ''
@@ -261,8 +285,15 @@ export function splitShell(text, powershell = false, comments = true, limit) {
   }
   const endCommand = () => {
     endWord()
-    if (words.length > 0) commands.push(words)
+    if (words.length > 0) {
+      commands.push(words)
+      if (split) {
+        commands.push(split)
+        FIRST_SPLIT.set(split, firstSplit)
+      }
+    }
     words = []
+    split = null
     lastWord = ''
   }
   /** @param {number} start index just after `$(` @returns {number} index after the matching `)` */
@@ -366,6 +397,33 @@ export function splitShell(text, powershell = false, comments = true, limit) {
   }
   endCommand()
   return { commands, nested, open, defines }
+}
+
+/**
+ * The words PowerShell sees where Bash sees one (S-69, B-32 items 6 and 16): `-Name:value` is `-Name` and `value`; `$x=Cmdlet` (or any assignment
+ * operator) is `$x`, `=` and `Cmdlet`, and `$a=$b=Cmdlet` is each name and `=` in turn. The first colon and each `=` are found with `indexOf` from
+ * where the last stopped, so this is linear in the word.
+ *
+ * @param {string} word
+ * @returns {string[] | null} the pieces, or null when the word does not split
+ */
+function pieceWords(word) {
+  if (word[0] === '-') {
+    const colon = word.indexOf(':')
+    if (colon <= 0) return null
+    return colon + 1 < word.length ? [word.slice(0, colon), word.slice(colon + 1)] : [word.slice(0, colon)]
+  }
+  if (word[0] !== '$') return null
+  const pieces = []
+  let from = 0
+  // Each name is the text from `from` up to the operator, and the operator is a plain `=` (`commandStart` looks for that one).
+  for (let equals; word[from] === '$' && (equals = word.indexOf('=', from)) > from; from = equals + 1) {
+    const name = word.slice(from, equals)
+    pieces.push(name.endsWith('??') ? name.slice(0, -2) : '-+*/%'.includes(name[name.length - 1]) ? name.slice(0, -1) : name, '=')
+  }
+  if (pieces.length === 0) return null
+  if (from < word.length) pieces.push(word.slice(from))
+  return pieces
 }
 
 /**
@@ -608,6 +666,8 @@ function readInWords(words, names, depth, comments, limit) {
   if (start >= words.length) return null
   // An option skipped before the first word may have taken it as its value (`env -u echo …`), so only a start past no option counts as text.
   const text = TEXT_ONLY.has(base(words[start])) && !words.slice(0, start).some((w) => w.startsWith('-'))
+  // In a split copy (S-69), a script after a word that is not a split is read from the original command, so it is not read again here.
+  const firstSplit = FIRST_SPLIT.get(words) ?? -1
   // A command that defines a function or alias may have redefined the text-only name (S-68, B-32 item 1). The first reading uses the exemption and
   // notes that it did; `checkCommand` reads again without it when the command also defines something, and then such a word is read like `eval`.
   if (text && !limit.strict) {
@@ -687,9 +747,9 @@ function readInWords(words, names, depth, comments, limit) {
         // No script follows.
       } else if (i === start) {
         // As the command, pwsh takes every word after the flag as its script, so that check settles the rest.
-        scripts.push([`powershell ${flag}`, () => words.slice(flag + 1).join(' ')])
+        if (flag >= firstSplit) scripts.push([`powershell ${flag}`, () => words.slice(flag + 1).join(' ')])
         end = Math.min(end, flag + 1)
-      } else {
+      } else if (flag >= firstSplit) {
         // Elsewhere (`find … -exec pwsh -c …`) it may be no call at all (`find -name pwsh -o -name -c`), and its words can open a quote or a
         // block comment that hides a real call after it. So the words up to the next PowerShell word are read on their own, once per flag:
         // those stretches never overlap, which keeps this linear. The whole tail is read once too, for a script that runs past a later
@@ -734,11 +794,23 @@ function readInShell(text, names, depth, powershell, comments, limit, refuseOpen
     limit.defines = true
     return mentionsRead(text) ? UNREAD : null
   }
+  // A split copy (S-69) can reach a text that was already read the same way and held no read. Reading it again finds nothing new, and it made
+  // the copy's work double at each nesting level (senior review, B2). Only a reading inside a copy skips: every reading main makes is still
+  // made, so this never does less work than main, and a text main refused as too long to read is still refused. A skip is not charged: its
+  // text was just built from part of a text already charged (words joined, a `$( )` slice, the word after `bash -c`), and main builds each
+  // script it reads uncharged too, so the work stays in step. Only readings inside a copy are remembered, so a text with no split word keeps
+  // nothing (remembering every reading tripled the memory of an 8 MB Bash text; round-2 review).
+  const how = depth * 16 + (powershell ? 8 : 0) + (comments ? 4 : 0) + (refuseOpen ? 2 : 0) + (limit.strict ? 1 : 0)
+  if (limit.copies && limit.read?.[how]?.has(text)) return null
   const { commands, nested, open, defines } = splitShell(text, powershell, comments, limit)
   if (defines) limit.defines = true
   for (const words of commands) {
+    const copy = FIRST_SPLIT.has(words)
+    if (copy) limit.copies = (limit.copies ?? 0) + 1
     const found = readInWords(words, names, depth, comments, limit)
+    // A found read, like a throw, ends the whole check, so the count needs putting back only here.
     if (found) return found
+    if (copy) limit.copies--
   }
   // Windows: CredRead through Add-Type (how keyprompt itself reads, `src/store/windows.mjs`), naming a keyprompt target or a saved name.
   const runsAddType = commands.some((words) => base(words[commandStart(words)] ?? '') === 'add-type')
@@ -751,6 +823,7 @@ function readInShell(text, names, depth, powershell, comments, limit, refuseOpen
     if (found) return found
   }
   if (refuseOpen && open && mentionsRead(text)) return UNCLOSED
+  if (limit.copies) ((limit.read ??= [])[how] ??= new Set()).add(text)
   return null
 }
 
