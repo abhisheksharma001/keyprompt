@@ -284,6 +284,20 @@ test('outside a split copy every reading is made, as on main, so a text main run
   assert.ok(checkCommand(text, SAVED, 'powershell', 6 * text.length), 'should refuse: the budget runs out on main')
 })
 
+test('after a split copy is read, the readings outside it are all made again, as on main', () => {
+  // The first command `-a:b` has a split copy; once it is read, the skip must not carry on into the commands after it.
+  const inner = 'pwsh -c '.repeat(2) + 'z '.repeat(500) + 'find-generic-password'
+  const text = `-a:b ; ${inner} ; ${inner}`
+  assert.ok(checkCommand(text, SAVED, 'powershell', 6 * text.length), 'should refuse: the budget runs out on main')
+})
+
+test('a split copy of many small commands needs little more of the work budget than main', () => {
+  // 2,000 commands, each with a split word and a one-word `pwsh -c` script the copy has already seen. Main needs about 2 units of the
+  // budget for each character; the copy's skips must not cost more than reading those scripts would.
+  const text = '-a:b pwsh -c x ; '.repeat(2000) + 'find-generic-password'
+  assert.equal(checkCommand(text, SAVED, 'powershell', 3 * text.length), null)
+})
+
 test('one word of 150,000 chained assignments after a read does not crash the guard, so the read is still refused (review of PR #75, B1)', () => {
   // A guard that throws is skipped by the hook (exit 1 lets the call through), so a crash would turn a refusal into a pass.
   const chain = '$a='.repeat(150_000) + '1'
