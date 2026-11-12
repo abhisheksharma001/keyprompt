@@ -249,6 +249,25 @@ test('a nested pwsh -c text full of split words needs no more of the work budget
   }
 })
 
+test('a split word before a nested pwsh -c flag, or beside eval, does not double the work at each level (review of PR #75, B2)', () => {
+  // Each text names a read tool without running one, about 40 to 100 KB and 2 to 4 levels deep. Main lets each one through within its
+  // budget. Reading the split copy's scripts again at every level made each one run out of budget, so it was refused as too long to read.
+  const read = 'find-generic-password'
+  for (const text of [
+    '-a:b pwsh -c '.repeat(4) + '-a:b '.repeat(20_000) + read,
+    '$a=pwsh -c '.repeat(4) + '$a=b '.repeat(20_000) + read,
+    'pwsh -c eval pwsh -c eval ' + 'z '.repeat(20_000) + read + ' -a:b',
+    'eval pwsh -c eval pwsh -c ' + 'z '.repeat(20_000) + read + ' -a:b',
+  ]) {
+    for (const shell of /** @type {const} */ (['powershell', 'bash'])) allowed(text, shell)
+  }
+})
+
+test('a text a split copy reads again after a function is defined is read again without the text-only exemption', () => {
+  // Only the split copy sees `pwsh` here. The first reading lets `echo` through; the second (S-68) reads it like eval and finds the read.
+  denied("function f {}; $a=pwsh -c 'echo Get-StoredCredential -Target keyprompt:X'", 'powershell')
+})
+
 test('one word of 150,000 chained assignments after a read does not crash the guard, so the read is still refused (review of PR #75, B1)', () => {
   // A guard that throws is skipped by the hook (exit 1 lets the call through), so a crash would turn a refusal into a pass.
   const chain = '$a='.repeat(150_000) + '1'
