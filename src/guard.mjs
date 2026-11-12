@@ -253,7 +253,9 @@ function mentionsRead(text) {
  * left out. (2) The end of a `$( )` is found with its quotes, `$'…'` strings, double quotes (with a nested `$( )` in them), backslash
  * pairs and comments skipped. (3) A `$` that line continuations (backslash and newline) join to a `(` or a `'` is a `$(` or a `$'`.
  * `dollar` is true when the text holds one of the three in a place where this reading and main's can differ: while it is false,
- * both readings are the same, word for word, so a caller reads the text a second time only when it is true.
+ * both readings are the same, word for word, so a caller reads the text a second time only when it is true. It can be true when they turn
+ * out the same (a `$( )` that holds a quote or a `#` is marked without finding where the Bash scan would end it, which would cost a second
+ * scan to the end of the text for each `$(`); then the second reading finds nothing new.
  *
  * @param {string} text
  * @param {boolean} [powershell]
@@ -321,24 +323,22 @@ export function splitShell(text, powershell = false, comments = true, limit, dol
   const subshell = (start) => {
     let depth = 1
     let j = start
-    // Main's scan counts parentheses and skips the character after a backslash. It notes a quote or a `#`: only with one in the span can the
-    // Bash scan below (S-70, B-32 item 3) end it anywhere else, so a span without one costs no second scan.
-    let quoted = false
-    while (j < text.length && depth > 0) {
-      const ch = text[j]
-      if (ch === escape) j++
-      else if (ch === '(') depth++
-      else if (ch === ')') depth--
-      else if (ch === "'" || ch === '"' || ch === '#') quoted = true
-      j++
-    }
-    if (!powershell && quoted) {
+    if (dollarForms) {
+      // The Bash scan alone (S-70, B-32 item 3): one pass, and the caller goes on after the end it finds, so no character is scanned twice.
       const bash = bashSubshellEnd(text, start)
-      if (bash.end !== Math.min(j, text.length) || bash.closed !== (depth === 0)) {
-        if (dollarForms) {
-          j = bash.end
-          depth = bash.closed ? 0 : 1
-        } else dollar = true
+      j = bash.end
+      depth = bash.closed ? 0 : 1
+    } else {
+      // Main's scan counts parentheses and skips the character after a backslash. It notes a quote or a `#`: only with one in the span can the
+      // Bash scan end it anywhere else, so the text is marked and the caller reads it a second time. Not exact: the mark also fires when both
+      // ends turn out the same. That is the price of a single pass here; finding out would take the Bash scan, once per `$(`, to the end of the text.
+      while (j < text.length && depth > 0) {
+        const ch = text[j]
+        if (ch === escape) j++
+        else if (ch === '(') depth++
+        else if (ch === ')') depth--
+        else if (!powershell && (ch === "'" || ch === '"' || ch === '#')) dollar = true
+        j++
       }
     }
     if (depth > 0) open = true

@@ -108,6 +108,10 @@ test('subshell: what it skips is quoted text, double-quoted text, a backslash pa
   assert.deepEqual(nested(`x $(a \\) b) c`), ['a \\) b'])
   assert.deepEqual(nested(`x $(a "$(b ")")" c) d`), ['a "$(b ")")" c'])
   assert.deepEqual(nested(`x $(a # )\nb) c`), ['a # )\nb'])
+  // A backslash in double quotes escapes the next character, so `\"` does not end the quote (the review of PR #79 found no test for this).
+  assert.deepEqual(nested(`x $(a "\\")" b) c`), [`a "\\")" b`])
+  // A `#` right after `(` starts a comment: the `)` in it ends nothing.
+  assert.deepEqual(nested(`x $( (# )\ntrue); true) d`), [` (# )\ntrue); true`])
   // A `#` that follows a word is no comment: `$#`, `${#x}` and `a#b` keep the parenthesis counting.
   assert.deepEqual(nested(`x $(a$# ) b`), ['a$# '])
   assert.deepEqual(nested(`x $(a#b ) c`), ['a#b '])
@@ -185,7 +189,7 @@ function all(symbols, text, left, check) {
   if (left > 0) for (const symbol of symbols) all(symbols, text + symbol, left - 1, check)
 }
 
-test('splitShell says there is a dollar form when, and only when, the new reading can differ: every text of up to 6 symbols (the mark, exhaustive)', () => {
+test('splitShell says there is a dollar form whenever the new reading can differ (it may also say so when it cannot): every text of up to 6 symbols (the mark, exhaustive)', () => {
   const SYMBOLS = ['$', "'", '"', '#', '\\', '\n', '(', ')', 'a']
   let texts = 0
   let marked = 0
@@ -387,6 +391,11 @@ test('reading the dollar forms costs time in step with a text of the same length
     ['$( nested in double quotes', '"$(a '.repeat(n) + '")'.repeat(n), '"$(b '.repeat(n) + '")'.repeat(n)],
     ['continuations', '$\\\n'.repeat(n * 2) + "'a'", 'x\\\n'.repeat(n * 2) + "'a'"],
     ['comments', "$(# ' \n".repeat(n), '$(x x \n'.repeat(n)],
+    // The review of PR #79 found these three: main's count never closes a span that holds a `(` in quotes (or a lone `"`), so a scan made for
+    // each `$(` ran to the end of the text each time, and 200 KB took 24 s.
+    ['$( with a ( in quotes', "$('(') ".repeat(n), '$(a ) '.repeat(n)],
+    ['$( with an open "', '$(") '.repeat(n), '$(a) '.repeat(n)],
+    ['$( with a # then a line break', '$(#)\n'.repeat(n), '$(a)\n'.repeat(n)],
     ['quote runs', "$'".repeat(n * 2), "x'".repeat(n * 2)],
     ['backslash runs', "$'\\".repeat(n * 2), "x'\\".repeat(n * 2)],
   ]) {
