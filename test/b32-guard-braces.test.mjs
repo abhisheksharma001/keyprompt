@@ -175,8 +175,22 @@ test('splitShell: the second reading takes `${…}` and `(( ))` as one word, and
   assert.deepEqual(formWords('echo $((1 + 2)) x').nested, [])
   assert.deepEqual(formWords('(( (1 + 2) * 3 )) ls').commands, [['(( (1 + 2) * 3 ))', 'ls']])
   assert.deepEqual(formWords('(( $(ls) ))').nested, ['ls'])
-  // A double quote or a quote inside the piece hides what it holds.
+  // A double quote or a quote inside the piece hides what it holds: a brace or a parenthesis there ends nothing.
   assert.deepEqual(formWords('${x:-")"} z').commands, [['${x:-")"}', 'z']])
+  assert.deepEqual(formWords('${x:-"}"} z').commands, [['${x:-"}"}', 'z']])
+  assert.deepEqual(formWords('${x:-"{"} z').commands, [['${x:-"{"}', 'z']])
+  assert.deepEqual(formWords('(( "))" 1 )) z').commands, [['(( "))" 1 ))', 'z']])
+  assert.deepEqual(formWords("${x:-'}'} z").commands, [["${x:-'}'}", 'z']])
+  assert.deepEqual(formWords("(( ')' 1 )) z").commands, [["(( ')' 1 ))", 'z']])
+  // A backslash hides the next character.
+  assert.deepEqual(formWords('${x:-\\}} z').commands, [['${x:-\\}}', 'z']])
+  assert.deepEqual(formWords('${x:-\\{} z').commands, [['${x:-\\{}', 'z']])
+  assert.deepEqual(formWords('(( 1 \\) )) z').commands, [['(( 1 \\) ))', 'z']])
+  assert.deepEqual(formWords("${x:-\\'} z").commands, [["${x:-\\'}", 'z']])
+  // Inside double quotes a single quote is only a character, so it hides nothing.
+  assert.deepEqual(formWords(`"\${x:-a'b}" z`).commands, [["${x:-a'b}", 'z']])
+  assert.equal(formWords(`"\${x:-a'b}" z`).open, false)
+  assert.deepEqual(formWords(`"$((1 ' 2))" z`).commands, [["$((1 ' 2))", 'z']])
   // Inside double quotes the piece is part of the string.
   assert.deepEqual(formWords('"${x:-a #}" z').commands, [['${x:-a #}', 'z']])
   assert.deepEqual(formWords('"$((1 # ))" z').commands, [['$((1 # ))', 'z']])
