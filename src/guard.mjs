@@ -46,8 +46,8 @@ const WORK_PER_EXTRA_SCRIPT = 64
  * What the readings of one command share: `left`, the work budget, and three marks for S-68 (B-32 item 1). `exempted` is set when a text-only
  * command was let through unread, `defines` when any text read has a word that defines a function or alias, and `strict` makes the next
  * reading read a text-only command word like `eval` instead of exempting it. For S-69, `copies` counts the split copies the reading is inside,
- * and `read` holds each text read so far that held no read, with the ways it was read.
- * @typedef {{ left: number, defines?: boolean, exempted?: boolean, strict?: boolean, copies?: number, read?: Map<string, Set<string>> }} Limit
+ * and `read` holds, for each way of reading (a small number), the texts read inside a copy that held no read.
+ * @typedef {{ left: number, defines?: boolean, exempted?: boolean, strict?: boolean, copies?: number, read?: Set<string>[] }} Limit
  */
 /** Thrown when the budget runs out, to stop reading at once. */
 const OUT_OF_WORK = Symbol('out of work')
@@ -796,16 +796,19 @@ function readInShell(text, names, depth, powershell, comments, limit, refuseOpen
   }
   // A split copy (S-69) can reach a text that was already read the same way and held no read. Reading it again finds nothing new, and it made
   // the copy's work double at each nesting level (senior review, B2). Only a reading inside a copy skips: every reading main makes is still
-  // made, so this never does less work than main, and a text main refused as too long to read is still refused. A skip is not charged: it
-  // looks up a text its caller has just joined from words, and main joins each script it reads uncharged too, so the work stays in step.
-  const how = `${depth} ${powershell} ${comments} ${Boolean(refuseOpen)} ${Boolean(limit.strict)}`
-  if (limit.copies && limit.read?.get(text)?.has(how)) return null
+  // made, so this never does less work than main, and a text main refused as too long to read is still refused. A skip is not charged: its
+  // text was just built from part of a text already charged (words joined, a `$( )` slice, the word after `bash -c`), and main builds each
+  // script it reads uncharged too, so the work stays in step. Only readings inside a copy are remembered, so a text with no split word keeps
+  // nothing (remembering every reading tripled the memory of an 8 MB Bash text; round-2 review).
+  const how = depth * 16 + (powershell ? 8 : 0) + (comments ? 4 : 0) + (refuseOpen ? 2 : 0) + (limit.strict ? 1 : 0)
+  if (limit.copies && limit.read?.[how]?.has(text)) return null
   const { commands, nested, open, defines } = splitShell(text, powershell, comments, limit)
   if (defines) limit.defines = true
   for (const words of commands) {
     const copy = FIRST_SPLIT.has(words)
     if (copy) limit.copies = (limit.copies ?? 0) + 1
     const found = readInWords(words, names, depth, comments, limit)
+    // A found read, like a throw, ends the whole check, so the count needs putting back only here.
     if (found) return found
     if (copy) limit.copies--
   }
@@ -820,8 +823,7 @@ function readInShell(text, names, depth, powershell, comments, limit, refuseOpen
     if (found) return found
   }
   if (refuseOpen && open && mentionsRead(text)) return UNCLOSED
-  const read = (limit.read ??= new Map())
-  read.set(text, (read.get(text) ?? new Set()).add(how))
+  if (limit.copies) ((limit.read ??= [])[how] ??= new Set()).add(text)
   return null
 }
 
