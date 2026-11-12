@@ -380,6 +380,16 @@ test('the extra readings never use the budget main\'s readings need: with the re
   }
 })
 
+test('the second pass has a budget of its own: with 3 times the text, a read behind `${x:+ #}` is found by the brace readings, not given up on as too long', () => {
+  // The first pass (main's readings) uses about twice the text; a second pass that shared what was left would run out and fall back to the
+  // name check, which refuses with another message ("too long"). Measured: the window is 2 to 3.75 times the text (a mutation run).
+  for (const text of [`nice \${x:+ #} ${READ}`, `x=; \${x:+ #} ${READ}`, `true \${x:-a #}; env -u FOO ${READ}`]) {
+    const found = checkCommand(text, SAVED, 'bash', 3 * text.length)
+    assert.ok(found, text)
+    assert.match(found.reason, /this command reads a secret/, text)
+  }
+})
+
 test('a command longer than a megabyte does not get the second pass, so the extra reading never narrows the hook\'s time margin; one that names a read tool is refused, one that does not is let through', () => {
   const padding = '${a}x '
   const hidden = `nice \${x:+ #} ${READ}`
