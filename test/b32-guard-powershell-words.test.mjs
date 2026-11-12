@@ -298,6 +298,16 @@ test('a split copy of many small commands needs little more of the work budget t
   assert.equal(checkCommand(text, SAVED, 'powershell', 3 * text.length), null)
 })
 
+test('a text a split copy reaches is read again when it is read in another comments mode or as the other shell', () => {
+  // From the round-2 senior review of PR #75: with either left out of what marks a text as already read, the skip lets these through.
+  for (const text of [
+    '$v=pwsh -c eval x pwsh -c <# security dump-keychain -d )',
+    `eval $v=pwsh -c bash -c '"$( Get-StoredCredential -Target:keyprompt:X ' ; -a:b eval $v=pwsh -c bash -c '"$( Get-StoredCredential -Target:keyprompt:X '`,
+  ]) {
+    assert.ok(checkCommand(text, SAVED, 'powershell'), `should refuse: ${text}`)
+  }
+})
+
 test('one word of 150,000 chained assignments after a read does not crash the guard, so the read is still refused (review of PR #75, B1)', () => {
   // A guard that throws is skipped by the hook (exit 1 lets the call through), so a crash would turn a refusal into a pass.
   const chain = '$a='.repeat(150_000) + '1'
