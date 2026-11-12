@@ -17,7 +17,7 @@ Plan: `docs/prd/card-v2.md` (0.2.x) and `docs/prd/v0-3.md` (0.3). Rules: `.claud
 | 5 Release | S-29, S-34 | 0.2.1 on npm: the six steps since 0.2.0; 0.2.2: the four since (S-30 to S-33) |
 | Research | S-36 | R-9 answered: what keymask, the closest rival, is and is not |
 | 6 v0.3 | S-37 → S-38 → S-39 → S-40, then S-41 → S-47, S-42 → S-48, S-43 → S-49, then S-44 → S-45 → S-50, then the review fixes S-51 → S-52 → S-53, S-54 → S-55, then S-46 | The plan; the Claude Code guard (its check, its installer, its docs); `--json` results, and a reason when one fails (B-19); `keyprompt setup`, then the docs for both; a names-only activity log; research on MCP (R-6), then `keyprompt mcp`; release 0.3.0 |
-| 7 v0.3 audit | S-56, then S-57 → S-58 (dropped) → S-65 → S-66 → S-67 → S-76 → S-68 → S-69 → S-70 → S-71 → S-72 → S-73 → S-74 → S-59, S-60, S-61, S-62, S-63, S-64, and S-75 (B-32 fix chain: S-66 to S-75) | The feature-end audit (`docs/audits/v0-3-feature-end.md`): G2, G3, F and M met; G1, G1b, G4, J and L unmet. Then the fixes B-25 to B-31 and tests for the clauses no test pins |
+| 7 v0.3 audit | S-56, then S-57 → S-58 (dropped) → S-65 → S-66 → S-67 → S-76 → S-68 → S-69 → S-77 → S-70 → S-71 → S-72 → S-73 → S-74 → S-59, S-60, S-61, S-62, S-63, S-64, and S-75 (B-32 fix chain: S-66 to S-75) | The feature-end audit (`docs/audits/v0-3-feature-end.md`): G2, G3, F and M met; G1, G1b, G4, J and L unmet. Then the fixes B-25 to B-31 and tests for the clauses no test pins |
 
 Order: S-3, S-7, S-15 and S-18 touch different files from the S-2 → S-4 chain, so they can be built in parallel by separate sessions. Everything else follows the arrows.
 
@@ -1289,7 +1289,7 @@ Order and cadence are Abhishek's (D-10, D-13): one PR, then stop. S-38 and S-39 
 
 All ten steps edit `src/guard.mjs`, so they run one after another, never side by side.
 
-**Build order:** S-66 → S-67 → S-76 → S-68 → S-69 → S-70 → S-71 → S-72 → S-73 → S-74 (only once R-16 is answered) → S-75.
+**Build order:** S-66 → S-67 → S-76 → S-68 → S-69 → S-77 → S-70 → S-71 → S-72 → S-73 → S-74 (only once R-16 is answered) → S-75.
 
 Why that order: S-66 first, so that the extra readings later steps add cannot make the thin timing test fail by chance (item 18). S-67 second, so that from then on, too much work ends in a refusal and never in a pass (item 17), before any step adds parsing. Then the small word rules (S-68, S-69), then the parser steps from least to most risky (S-70, S-71, S-72, S-73), then the step that waits on research (S-74), then the PowerShell cross-check (S-75), which tests everything before it.
 
@@ -1407,7 +1407,7 @@ Why that order: S-66 first, so that the extra readings later steps add cannot ma
 ### S-70 — `splitShell` reads `$'…'`, a `$` joined to `(` by a line continuation, and quotes and comments inside `$( )` (bug B-32 items 2, 3, 20)
 
 **PR:** one.
-**Depends on:** S-69 merged. **Blocks:** S-71 (same file), S-59.
+**Depends on:** S-69 merged; S-77 merged (a locked test pins the name check past the limits, and this step changes it). **Blocks:** S-71 (same file), S-59.
 **Research:** lookup — ANSI-C quoting in bash and zsh (GNU Bash manual, "ANSI-C Quoting"; zsh manual, "Quoting"), read live, cited in the PR (F8).
 **Model:** sonnet.
 **Senior review:** required — loosening or tightening the guard changes access; a fresh Opus session that did not build it reads the PR before merge.
@@ -1570,6 +1570,30 @@ Why that order: S-66 first, so that the extra readings later steps add cannot ma
 - WHEN any other test in the repo runs THEN its result SHALL be unchanged.
 **Verify:** `npm ci`, `npm test`. Break test: commit, make the tail push twice (the doubling), run `node --test test/b25-guard-plain-forms.test.mjs`: only the changed test fails; `git checkout -- src/guard.mjs`. `git diff main -- test/` touches only lines inside that one test.
 **Must not:** change `src/`; loosen the ratio line; touch another test; plus the shared rules. The `Infinity` stays inside the test's child process: the guard itself still has the default budget.
+
+### S-77 — test-change: "the rule, half 2" leaves out texts with a `$` before a `'` (bug B-32 item 38)
+
+**PR:** one. Placed after S-69 and before S-70 (S-70 depends on it).
+**Depends on:** S-69 merged (done, PR #75). **Blocks:** S-70.
+**Research:** none.
+**Model:** sonnet.
+**Senior review:** required — it changes a yardstick (the test that pins the name check past the guard's limits to its written rule), so a fresh Opus session that did not build it reads the PR before merge.
+**Confidence:** 0.85 — found by S-70's builder: with S-70's fallback change in place, exactly this one locked test fails, and it passes again with the text class below left out (measured; the PR gives the counts).
+**Files:** `test/b32-guard-unfinished.test.mjs` (only the test "the name check answers exactly as its rule written out the slow way, on 30,000 seeded texts (the rule, half 2)"), `docs/steps.md`, `docs/bugs.md`.
+**Locked tests:** every file in `test/` except `test/b32-guard-unfinished.test.mjs`; in that file, every test except the one named above.
+**Today:** that test compares the name check (`mentionsRead`, reached through a budget of 1) with `madeFrom`, a rule written out in the test, on 30,000 seeded texts. S-70 makes the Bash reading leave out a `$` that stands before a `'` (an ANSI-C string, `$'…'`), so the name check has to allow that piece too (S-67's round-4 warning, N5); the rule in the test has no such piece, so the test fails on the first text that has one. The other name-check tests do not: "round 3" (whatever the guard finds a read in, the name check names too) needs the new piece and passes with it.
+**Change:**
+1. In that one test, leave out of the comparison every text where a `$` stands directly before a `'`, or before line continuations (a backslash and a newline, any number) and a `'`. The seeded generator still draws every text, so the other texts are the same ones as before.
+2. Count the texts left out and assert the count is small (fewer than 600 of 30,000), so the test cannot quietly stop comparing.
+3. A comment in the test names this step and says that S-70's own test file compares the name check with the rule that has the new piece.
+4. Report in the PR body how many texts are left out (174 of 30,000 when written).
+**Acceptance:**
+- WHEN the test runs on main THEN it SHALL pass.
+- WHEN the name check is made wrong in a way the test caught before (for example, a line feed no longer counts as a dropped character) THEN the changed test SHALL still fail.
+- WHEN S-70's guard is in place THEN the changed test SHALL pass.
+- WHEN any other test in the repo runs THEN its result SHALL be unchanged.
+**Verify:** `npm ci`, `npm test`. Break test: commit, make the name check keep line feeds as letters (`KIND` in `src/guard.mjs`), run `node --test test/b32-guard-unfinished.test.mjs`: the changed test fails; `git checkout -- src/guard.mjs`. `git diff --name-only main -- test/` lists only `test/b32-guard-unfinished.test.mjs`, and its diff touches only lines inside that one test.
+**Must not:** change `src/`; loosen the comparison for any text without a `$` before a `'`; touch another test; plus the shared rules.
 
 ### Open flags for S-66 to S-75
 
