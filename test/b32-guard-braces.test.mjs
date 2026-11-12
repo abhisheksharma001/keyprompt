@@ -307,6 +307,9 @@ test('what is not an opener is not read as one: no piece starts at a `$` or a `(
   // A `${` inside `(( ))` is not a level of its own: the parentheses are what count there.
   assert.deepEqual(formWords('(( ${x} )) ls').commands, [['(( ${x} ))', 'ls']])
   assert.deepEqual(formWords('(( (1) * (2) )) ls').commands, [['(( (1) * (2) ))', 'ls']])
+  // The same inside `$(( ))`, which has its own opener.
+  assert.deepEqual(formWords('echo $(( (1 + 2) * 3 )) z').commands, [['echo', '$(( (1 + 2) * 3 ))', 'z']])
+  assert.deepEqual(formWords('echo $(( (1) * (2) )) z').commands, [['echo', '$(( (1) * (2) ))', 'z']])
 })
 
 test('the zsh reading reads the forms of S-70 as well: a `$\'…\'` name after a piece that only zsh closes late', () => {
