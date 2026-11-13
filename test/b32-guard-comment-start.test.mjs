@@ -76,6 +76,11 @@ test('continuation: `splitShell` leaves a `#` after a joined word as a word, and
   assert.deepEqual(splitShell('x\\\n# y; z', false, true).commands, [['x#', 'y'], ['z']])
   assert.deepEqual(splitShell('x \\\n# y; z', false, true).commands, [['x']])
   assert.deepEqual(splitShell('x;\\\n# y\nz', false, true).commands, [['x'], ['z']])
+  // After a substitution or backticks no word is open, so only the flag tells a joined `#` from one after a blank.
+  assert.deepEqual(splitShell('x $(a)\\\n# y; z', false, true).commands, [['x', '#', 'y'], ['z']])
+  assert.deepEqual(splitShell('x `a`\\\n# y; z', false, true).commands, [['x', '#', 'y'], ['z']])
+  assert.deepEqual(splitShell('x $(a) \\\n# y; z', false, true).commands, [['x']])
+  assert.deepEqual(splitShell('x $(a)\n# y; z', false, true).commands, [['x']])
   // Main's reading (no comments) reads the joined word the same way, and a `#` after a blank as a plain word.
   assert.deepEqual(splitShell('x\\\n# y; z', false, false).commands, [['x#', 'y'], ['z']])
   assert.deepEqual(splitShell('x \\\n# y; z', false, false).commands, [['x', '#', 'y'], ['z']])
