@@ -179,6 +179,31 @@ test('paren: `splitShell` marks a `#` that follows `(` or `)` and reads it as a 
 
 // --- Time and size ---------------------------------------------------------------------------------------------
 
+test('budget: the join and paren readings never use the work that main\'s readings need (senior review of PR #81, item 46)', () => {
+  // The first build read these in main's own pass; the budget ran out before main's reading reached the read, and the name check that
+  // follows did not know its shape (`fi\$\'nd\'`). Main refuses all of them; found by a sweep of lowered budgets.
+  const obfuscated = "eval security fi\\$\\'nd\\'-generic-password -s keyprompt -w"
+  for (const wrap of ['eval ', 'eval eval ']) {
+    for (const copies of [16, 24]) {
+      const text = `${wrap}${'$(a)\\\n# '.repeat(copies)}\n${obfuscated}`
+      for (const shell of BASH_TOOLS) {
+        const found = checkCommand(text, SAVED, shell, Math.floor(1.5 * text.length) + 10)
+        assert.ok(found, `should refuse (${shell ?? 'both ways'}, ${copies} copies, ${wrap.trim()}): ${JSON.stringify(text)}`)
+      }
+    }
+  }
+})
+
+test('size: the extra readings are made up to 1,000,000 characters; past that a command that names a read tool is refused, as for S-71', () => {
+  const read = `(true)# don't\n${READ}`
+  const padded = (length) => `${read}${' '.repeat(length - read.length)}`
+  // At the limit the extra pass runs and finds the read behind the quote; one character past it, the command is refused as too long to read.
+  assert.match(checkCommand(padded(1000000), SAVED, 'bash')?.reason ?? '', /reads a secret/)
+  assert.match(checkCommand(padded(1000001), SAVED, 'bash')?.reason ?? '', /too long or too deeply nested/)
+  // Past the limit, a text that names no read tool is let through, as on main.
+  assert.equal(checkCommand(`(true)# don't\nls${' '.repeat(1000001)}`, SAVED, 'bash'), null)
+})
+
 test('paren: a long text with no `#` after a parenthesis is read once, and one with many is still read in bounded time', () => {
   const none = 'a (b) c; '.repeat(20000)
   const marked = '(a)# b\n'.repeat(20000)
