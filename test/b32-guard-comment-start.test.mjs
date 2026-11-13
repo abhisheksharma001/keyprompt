@@ -212,6 +212,9 @@ test('both kinds of `#` in one text: the join reading asks for the paren reading
     `true $(a)\\\n# x\n(true)# don't\n${READ}`,
     `(true)# don't\ntrue $(a)\\\n# x\n${READ}`,
     `true $(a)\\\n# x\n(# don't\n${READ}\n)`,
+    // The paren reading also reads a joined `#` as a word (it is the join reading plus one rule), so a read after one on the same line is seen
+    // once the first quote is a comment: with main's rule for a `#` after a continuation, that read would be hidden again.
+    `(true)# don't\ntrue $(a)\\\n# ; ${READ}`,
   ]) {
     for (const shell of BASH_TOOLS) denied(text, shell)
   }
@@ -233,6 +236,8 @@ test('size: the extra readings are made up to 1,000,000 characters; past that a 
   assert.match(checkCommand(padded(1000001), SAVED, 'bash')?.reason ?? '', /too long or too deeply nested/)
   // Past the limit, a text that names no read tool is let through, as on main.
   assert.equal(checkCommand(`(true)# don't\nls${' '.repeat(1000001)}`, SAVED, 'bash'), null)
+  // A text with neither kind of `#` gets no extra pass, so past the limit it is read as main read it: a word that only looks like a read tool is let through.
+  assert.equal(checkCommand(`echo find-generic-password${' '.repeat(1000100)}`, SAVED, 'bash'), null)
 })
 
 test('paren: a long text with no `#` after a parenthesis is read once, and one with many is still read in bounded time', () => {

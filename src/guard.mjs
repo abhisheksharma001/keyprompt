@@ -630,11 +630,11 @@ export function splitShell(text, powershell = false, comments = true, limit, dol
       inWord = true
       i++
     }
-    // What the last real character was, for the next `#`. Only a step that took exactly one character can leave a blank, separator or
-    // parenthesis behind (a word, a quote, a piece or an escape ends in some other character, or is longer).
+    // What the last real character was, for the next `#`. A step that starts with a blank, a separator or a parenthesis takes just that one
+    // character, or sets `inWord` (a `((` piece), which no `#` is read after; any other step ends in some other character.
     if (!continued) {
-      boundary = i === began + 1 && ' \t\n;&|'.includes(c)
-      afterParen = i === began + 1 && (c === '(' || c === ')')
+      boundary = ' \t\n;&|'.includes(c)
+      afterParen = c === '(' || c === ')'
     }
   }
   endCommand()
@@ -1171,22 +1171,20 @@ function readInShell(text, names, depth, powershell, comments, limit, refuseOpen
     const found = readScript(script, names, depth + 1, powershell, comments, limit)
     if (found) return found
   }
-  if (comments === true && (hashJoined || paren)) {
+  if (hashJoined || paren) {
     // The text holds a `#` that the shells read another way (S-72, B-32 items 9 and 15): one after a backslash-newline that the shell takes
     // out first (`hashJoined`: Bash joins the lines, so the `#` may sit inside a word), or one right after a `(` or `)` (`paren`: a comment in one
     // place and part of a word in another). Main's readings above took them as they always did and are not changed. Like S-71's, the extra
     // readings are made in a pass of their own, on a budget of their own (`checkCommand`): here the pass only notes that one is wanted.
     if (!limit.extras) limit.hashes = true
     else {
-      // The `'join'` reading reads the lines joined, and asks for the `'paren'` reading itself if it meets a `#` after a parenthesis. Without a
-      // joined `#` the two would read the same text, so the `'paren'` reading is asked for directly. Each reads the scripts it reaches in its
-      // own mode only, so the work grows by a fixed factor, never per nesting level.
+      // The `'join'` reading reads the lines joined, and asks for the `'paren'` reading itself if it meets a `#` after a parenthesis (only
+      // main's reading notes `hashJoined`, and the `'paren'` reading notes nothing, so the chain ends there). Without a joined `#` the two
+      // would read the same text, so the `'paren'` reading is asked for directly. Each reads the scripts it reaches in its own mode only,
+      // so the work grows by a fixed factor, never per nesting level.
       const found = readInShell(text, names, depth, powershell, hashJoined ? 'join' : 'paren', limit, refuseOpen)
       if (found) return found
     }
-  } else if (comments === 'join' && paren) {
-    const found = readInShell(text, names, depth, powershell, 'paren', limit, refuseOpen)
-    if (found) return found
   }
   if (refuseOpen && open && mentionsRead(text)) return UNCLOSED
   if (limit.copies) ((limit.read ??= [])[how] ??= new Set()).add(text)
