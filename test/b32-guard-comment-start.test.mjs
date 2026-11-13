@@ -220,6 +220,15 @@ test('both kinds of `#` in one text: the join reading asks for the paren reading
   }
 })
 
+test('a `#` after `(` or `)` that main\'s reading notes still asks for the paren reading when a later reading of the same text adds its own', () => {
+  // `((` is a piece in S-71's third reading, so that reading meets no `#` after a parenthesis; main's reading does, and the mark must stay.
+  for (const text of [`((#"\n${READ}`, `((#\\\n${READ}`, `((#'\n${READ}`, `x=((#"\n${READ}`]) {
+    for (const shell of BASH_TOOLS) denied(text, shell)
+  }
+  // The same for a `#` after a continuation (the join reading): main's reading notes it, the third reading does not meet it.
+  for (const text of [`((\\\n# ${READ}`, `x=((\\\n# ${READ}`, `((\\\n# ${PS_READ}`]) denied(text, undefined)
+})
+
 test('powershell: a backtick-newline stays a blank (unchanged from main), and a `#` after `{`, `}` or a carriage return is not noted', () => {
   // The join reading is Bash only. PowerShell's own continuation is treated as main treated it; `{` and `}` are left as main read them.
   allowed(`(1)#x\nWrite-Output $(1)\`\n# ${PS_READ}`, 'powershell')
