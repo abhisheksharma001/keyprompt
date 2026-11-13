@@ -76,8 +76,9 @@ test('continuation: `splitShell` leaves a `#` after a joined word as a word, and
   assert.deepEqual(splitShell('x\\\n# y; z', false, true).commands, [['x#', 'y'], ['z']])
   assert.deepEqual(splitShell('x \\\n# y; z', false, true).commands, [['x']])
   assert.deepEqual(splitShell('x;\\\n# y\nz', false, true).commands, [['x'], ['z']])
-  // Main's reading (no comments) is unchanged.
-  assert.deepEqual(splitShell('x\\\n# y; z', false, false).commands, [['x', '#', 'y'], ['z']])
+  // Main's reading (no comments) reads the joined word the same way, and a `#` after a blank as a plain word.
+  assert.deepEqual(splitShell('x\\\n# y; z', false, false).commands, [['x#', 'y'], ['z']])
+  assert.deepEqual(splitShell('x \\\n# y; z', false, false).commands, [['x', '#', 'y'], ['z']])
 })
 
 // --- Item 9: a `#` right after `(` or `)` ------------------------------------------------------------------------
