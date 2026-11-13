@@ -72,18 +72,42 @@ test('continuation: a backslash that is itself escaped is no continuation, and t
   for (const shell of BASH_TOOLS) allowed(`ls abc\\\\\n# ${READ}`, shell)
 })
 
-test('continuation: `splitShell` leaves a `#` after a joined word as a word, and after a joined blank as a comment (item 15)', () => {
-  assert.deepEqual(splitShell('x\\\n# y; z', false, true).commands, [['x#', 'y'], ['z']])
-  assert.deepEqual(splitShell('x \\\n# y; z', false, true).commands, [['x']])
-  assert.deepEqual(splitShell('x;\\\n# y\nz', false, true).commands, [['x'], ['z']])
+test('continuation: the `join` reading leaves a `#` after a joined word as a word, and after a joined blank as a comment (item 15)', () => {
+  const join = (text) => splitShell(text, false, 'join').commands
+  assert.deepEqual(join('x\\\n# y; z'), [['x#', 'y'], ['z']])
+  assert.deepEqual(join('x \\\n# y; z'), [['x']])
+  assert.deepEqual(join('x;\\\n# y\nz'), [['x'], ['z']])
   // After a substitution or backticks no word is open, so only the flag tells a joined `#` from one after a blank.
-  assert.deepEqual(splitShell('x $(a)\\\n# y; z', false, true).commands, [['x', '#', 'y'], ['z']])
-  assert.deepEqual(splitShell('x `a`\\\n# y; z', false, true).commands, [['x', '#', 'y'], ['z']])
-  assert.deepEqual(splitShell('x $(a) \\\n# y; z', false, true).commands, [['x']])
-  assert.deepEqual(splitShell('x $(a)\n# y; z', false, true).commands, [['x']])
+  assert.deepEqual(join('x $(a)\\\n# y; z'), [['x', '#', 'y'], ['z']])
+  assert.deepEqual(join('x `a`\\\n# y; z'), [['x', '#', 'y'], ['z']])
+  assert.deepEqual(join('x $(a) \\\n# y; z'), [['x']])
+  assert.deepEqual(join('x $(a)\n# y; z'), [['x']])
   // Main's reading (no comments) reads the joined word the same way, and a `#` after a blank as a plain word.
   assert.deepEqual(splitShell('x\\\n# y; z', false, false).commands, [['x#', 'y'], ['z']])
   assert.deepEqual(splitShell('x \\\n# y; z', false, false).commands, [['x', '#', 'y'], ['z']])
+})
+
+test('continuation: the first reading is main\'s, and notes a `#` that the join reading reads another way (item 15)', () => {
+  // The line break of a backslash-newline still counts as a line break here, as it did on main: the answer does not change.
+  assert.deepEqual(splitShell('x $(a)\\\n# y; z', false, true).commands, [['x']])
+  assert.equal(splitShell('x $(a)\\\n# y; z', false, true).hashJoined, true)
+  assert.equal(splitShell('x `a`\\\n# y; z', false, true).hashJoined, true)
+  // No mark when the two readings read the `#` the same way: after a real blank or separator, in a word, in quotes, or in PowerShell.
+  for (const text of ['x $(a) \\\n# y', 'x $(a)\n# y', 'x\\\n# y', 'x;\\\n# y', "x '\\\n#' y", '# y', 'x # y']) assert.equal(splitShell(text, false, true).hashJoined, false, text)
+  assert.equal(splitShell('x $(a)`\n# y', true, true).hashJoined, false)
+  assert.deepEqual(splitShell('x $(a)`\n# y; z', true, true).commands, [['x']])
+})
+
+test('continuation: a text main refused is still refused when the join reading would have read its `#` as a word (item 15, differential)', () => {
+  // Found by the differential run on this step's first build, which replaced main's comment test: there `(` + continuation + `#don't` was no
+  // comment, so the quote hid the read that main (which took the `#` for a comment and read `(# $(<read>)` as a word) refused.
+  for (const text of [
+    `$((\\\n#don't\n(# $(${READ})timeout 5trueecho`,
+    `(\\\n#don't\n(# $(${READ})`,
+    `(\\\n#don't\n(# $(${READ})\n)`,
+  ]) {
+    for (const shell of BASH_TOOLS) denied(text, shell)
+  }
 })
 
 // --- Item 9: a `#` right after `(` or `)` ------------------------------------------------------------------------

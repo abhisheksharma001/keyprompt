@@ -53,7 +53,7 @@ const WORK_PER_EXTRA_SCRIPT = 64
  * command was let through unread, `defines` when any text read has a word that defines a function or alias, and `strict` makes the next
  * reading read a text-only command word like `eval` instead of exempting it. For S-69, `copies` counts the split copies the reading is inside,
  * and `read` holds, for each way of reading (a small number), the texts read inside a copy that held no read.
- * @typedef {{ left: number, defines?: boolean, exempted?: boolean, strict?: boolean, copies?: number, read?: Set<string>[], extras?: boolean, braces?: boolean, ranOut?: boolean }} Limit
+ * @typedef {{ left: number, defines?: boolean, exempted?: boolean, strict?: boolean, copies?: number, read?: Set<string>[], extras?: boolean, braces?: boolean, hashes?: boolean, ranOut?: boolean }} Limit
  */
 /** Thrown when the budget runs out, to stop reading at once. */
 const OUT_OF_WORK = Symbol('out of work')
@@ -272,20 +272,21 @@ function mentionsRead(text) {
  * `((` where a word starts, or a `$((`, outside single quotes and escapes: the third reading is made only then. It is not exact either
  * (it is true for `${HOME}` too), and a text it marks that reads the same costs one more scan.
  *
+ * Where a `#` starts a comment, with `comments` on (S-72, B-32 items 9 and 15). With `comments` true it is main's reading: a `#` where a word
+ * starts, after a blank, `;`, `&`, `|` or a line break, taking the line break of a backslash-newline for one. It notes (`hashJoined`, `paren`) the
+ * two kinds of `#` that the shells read another way, and does not change its own answer for them, so it can never read less than main did. Two more
+ * readings are made by the caller when it is told (and only then). `'join'` (Bash): a backslash-newline is taken out before the shell reads
+ * the text, so a `#` after one is a comment only if it would be one with the two characters gone (`boundary`: the last real character was a
+ * blank, `;`, `&`, `|` or a line break); a `#` right after a `(` or `)` that is a separator is noted. `'paren'` is `'join'` with that `#`
+ * taken as the start of a comment as well, which some places do and others do not (PowerShell has no `'join'`: its continuation is a blank).
+ *
  * @param {string} text
  * @param {boolean} [powershell]
- * Where a `#` starts a comment (S-72, B-32 items 9 and 15), with `comments` on. It does where a word starts and the text before it is a blank,
- * `;`, `&`, `|` or a line break that is really there (`boundary`): in Bash a backslash-newline is taken out before the shell reads the text,
- * so a `#` after one is a comment only if it would be one with the two characters gone (PowerShell is left as main read it: its continuation
- * is a blank). A `#` right after a `(` or `)` that is a separator is a comment in some places and a plain character in others, so `comments`
- * can be `'paren'`, which also reads it as a comment, and `paren` is true when the text holds such a `#` (a reading with `comments` true read it
- * as a character): the caller then reads the text a second time in `'paren'` mode, and the first reading stays as it was.
- *
- * @param {boolean | 'paren'} [comments] skip comments; 'paren' also takes a `#` after a `(` or `)` as the start of one
+ * @param {boolean | 'join' | 'paren'} [comments] skip comments; see above
  * @param {Limit} [limit] the work budget: the text's length is taken off `left`, and reading stops (throws `OUT_OF_WORK`) when it goes below 0
  * @param {boolean} [dollarForms] read the three Bash forms above (Bash only: read as PowerShell, nothing changes)
  * @param {boolean | 'zsh' | 'bashq'} [braceForms] read the `${…}`, `((…))` and `$((…))` pieces above (pass `dollarForms` as well); 'zsh' counts a bare `{` inside `${…}`; 'bashq' starts a quote at a single quote inside a piece in double quotes
- * @returns {{ commands: string[][], nested: string[], open: boolean, defines: boolean, dollar: boolean, braces: boolean, bare: boolean, sq: boolean, paren: boolean }}
+ * @returns {{ commands: string[][], nested: string[], open: boolean, defines: boolean, dollar: boolean, braces: boolean, bare: boolean, sq: boolean, paren: boolean, hashJoined: boolean }}
  */
 export function splitShell(text, powershell = false, comments = true, limit, dollarForms = false, braceForms = false) {
   if (limit && (limit.left -= text.length) < 0) throw OUT_OF_WORK
@@ -312,10 +313,14 @@ export function splitShell(text, powershell = false, comments = true, limit, dol
   let sq = false
   /** the reading that starts a quote at a single quote inside double quotes, as bash 3.2.57 does */
   const quoteInDouble = braceForms === 'bashq'
+  /** the readings that take a backslash-newline out before looking for a comment (Bash only: PowerShell reads as main did) (S-72) */
+  const joinMode = (comments === 'join' || comments === 'paren') && !powershell
   /** the reading that also takes a `#` right after a `(` or `)` as the start of a comment (S-72) */
   const parenComments = comments === 'paren'
-  /** a `#` that follows a `(` or `)` was met and read as a character, which a reading with `parenComments` reads as a comment */
+  /** a `#` that follows a `(` or `)` was met and read as a character, which the `'paren'` reading reads as a comment */
   let paren = false
+  /** a `#` after a backslash-newline was met and read as a comment (main's reading), which the `'join'` reading does not */
+  let hashJoined = false
   /** the last real character was a blank, `;`, `&`, `|` or a line break (a backslash-newline is no character: it leaves this as it was) */
   let boundary = true
   /** the last real character was a `(` or `)` that is a separator (a continuation leaves this as it was too) */
@@ -513,11 +518,14 @@ export function splitShell(text, powershell = false, comments = true, limit, dol
     let continued = false
     // Main's reading takes `${…}` and `((` apart; the text is marked, and the caller reads it again with the pieces taken whole (S-71).
     if (!braceForms && (c === '$' || c === '(') && opening(i)) braces = true
-    // A `#` where a word starts is a comment after a real blank or separator (S-72, B-32 item 15), and in PowerShell after the character
-    // before it as main read it. Right after a `(` or `)` it is one only in the `'paren'` reading; any other reading notes it.
+    // A `#` where a word starts is a comment after a blank or separator (S-72, B-32 items 9 and 15). Main's reading takes the character before
+    // it, a line break of a backslash-newline too; the `'join'` and `'paren'` readings take the last real one (`boundary`). Right after a `(` or
+    // `)` it is a comment in the `'paren'` reading only. Main's reading notes both kinds of `#` and reads them as it always did.
     let comment = false
     if (comments && c === '#' && !inWord) {
-      comment = powershell ? i === 0 || ' \t\n;&|'.includes(text[i - 1]) : boundary
+      const mains = i === 0 || ' \t\n;&|'.includes(text[i - 1])
+      comment = joinMode ? boundary : mains
+      if (mains && !boundary && !joinMode && !powershell) hashJoined = true
       if (!comment && afterParen) {
         if (parenComments) comment = true
         else paren = true
@@ -630,7 +638,7 @@ export function splitShell(text, powershell = false, comments = true, limit, dol
     }
   }
   endCommand()
-  return { commands, nested, open, defines, dollar, braces, bare, sq, paren }
+  return { commands, nested, open, defines, dollar, braces, bare, sq, paren, hashJoined }
 }
 
 /**
@@ -957,7 +965,7 @@ function nextMatch(words, test) {
  * @param {string[]} words one simple command
  * @param {Set<string>} names
  * @param {number} depth
- * @param {boolean | 'paren'} comments the words come from a reading that skips comments
+ * @param {boolean | 'join' | 'paren'} comments the words come from a reading that skips comments
  * @param {Limit} limit the work budget, and the marks of S-68 (`checkCommand` always passes it)
  * @returns {string | null} the reason, when the command is a direct read
  */
@@ -1086,7 +1094,7 @@ function readInWords(words, names, depth, comments, limit) {
  * @param {Set<string>} names
  * @param {number} depth
  * @param {boolean} powershell read the text as PowerShell, not as a POSIX shell
- * @param {boolean | 'paren'} comments skip comments and look for a read anywhere in a command; false is main's reading
+ * @param {boolean | 'join' | 'paren'} comments skip comments and look for a read anywhere in a command; false is main's reading
  * @param {Limit} limit the work budget, and the marks of S-68 (`checkCommand` always passes it)
  * @param {boolean} [refuseOpen] refuse a text that ends inside a quote, a block comment or `$(` and names a read tool, when nothing else was found
  * @returns {string | null}
@@ -1104,10 +1112,10 @@ function readInShell(text, names, depth, powershell, comments, limit, refuseOpen
   // text was just built from part of a text already charged (words joined, a `$( )` slice, the word after `bash -c`), and main builds each
   // script it reads uncharged too, so the work stays in step. Only readings inside a copy are remembered, so a text with no split word keeps
   // nothing (remembering every reading tripled the memory of an 8 MB Bash text; round-2 review).
-  const how = depth * 32 + (comments === 'paren' ? 16 : 0) + (powershell ? 8 : 0) + (comments ? 4 : 0) + (refuseOpen ? 2 : 0) + (limit.strict ? 1 : 0)
+  const how = depth * 64 + (comments === 'join' ? 16 : comments === 'paren' ? 32 : 0) + (powershell ? 8 : 0) + (comments ? 4 : 0) + (refuseOpen ? 2 : 0) + (limit.strict ? 1 : 0)
   if (limit.copies && limit.read?.[how]?.has(text)) return null
-  let { commands, nested, open, defines, dollar, braces, paren } = splitShell(text, powershell, comments, limit)
-  /** @param {{ commands: string[][], nested: string[], open: boolean, defines: boolean, paren: boolean }} more another reading of the same text: add what it finds that the readings so far did not */
+  let { commands, nested, open, defines, dollar, braces, paren, hashJoined } = splitShell(text, powershell, comments, limit)
+  /** @param {{ commands: string[][], nested: string[], open: boolean, defines: boolean, paren: boolean, hashJoined: boolean }} more another reading of the same text: add what it finds that the readings so far did not */
   const add = (more) => {
     const known = new Set(commands.map((words) => JSON.stringify(words)))
     commands = commands.concat(more.commands.filter((words) => !known.has(JSON.stringify(words))))
@@ -1117,6 +1125,7 @@ function readInShell(text, names, depth, powershell, comments, limit, refuseOpen
     defines ||= more.defines
     // Any reading that met a `#` after a parenthesis (a reading of the pieces can reach one that the first does not) asks for the paren reading.
     paren ||= more.paren
+    hashJoined ||= more.hashJoined
   }
   if (dollar) {
     // The text holds a Bash form that main read as plain characters (S-70, B-32 items 2, 3 and 20). It is read a second time with the forms
@@ -1162,11 +1171,20 @@ function readInShell(text, names, depth, powershell, comments, limit, refuseOpen
     const found = readScript(script, names, depth + 1, powershell, comments, limit)
     if (found) return found
   }
-  if (paren && comments === true) {
-    // The text holds a `#` right after a `(` or `)` that the readings above took as a plain character (S-72, B-32 item 9). Shells differ here (a
-    // comment in one, part of a word in the other), so it is read once more with that `#` as a comment, in a mode of its own: the readings above
-    // are unchanged, so nothing they refused is let through, and the scripts it reaches are read in this mode only (never all three ways again).
-    // Only a text with such a `#` is read again, so every other text costs what it did.
+  if (comments === true && (hashJoined || paren)) {
+    // The text holds a `#` that the shells read another way (S-72, B-32 items 9 and 15): one after a backslash-newline that the shell takes
+    // out first (`hashJoined`: Bash joins the lines, so the `#` may sit inside a word), or one right after a `(` or `)` (`paren`: a comment in one
+    // place and part of a word in another). Main's readings above took them as they always did and are not changed. Like S-71's, the extra
+    // readings are made in a pass of their own, on a budget of their own (`checkCommand`): here the pass only notes that one is wanted.
+    if (!limit.extras) limit.hashes = true
+    else {
+      // The `'join'` reading reads the lines joined, and asks for the `'paren'` reading itself if it meets a `#` after a parenthesis. Without a
+      // joined `#` the two would read the same text, so the `'paren'` reading is asked for directly. Each reads the scripts it reaches in its
+      // own mode only, so the work grows by a fixed factor, never per nesting level.
+      const found = readInShell(text, names, depth, powershell, hashJoined ? 'join' : 'paren', limit, refuseOpen)
+      if (found) return found
+    }
+  } else if (comments === 'join' && paren) {
     const found = readInShell(text, names, depth, powershell, 'paren', limit, refuseOpen)
     if (found) return found
   }
@@ -1206,7 +1224,7 @@ function readBoth(text, names, depth, powershell, limit, refuseOpen) {
  * @param {Set<string>} names
  * @param {number} depth
  * @param {boolean} powershell
- * @param {boolean | 'paren'} comments
+ * @param {boolean | 'join' | 'paren'} comments
  * @param {Limit} [limit] the work budget
  * @param {boolean} [refuseOpen]
  * @returns {string | null}
@@ -1236,10 +1254,11 @@ export function checkCommand(command, savedNames = [], shell, workLimit = Math.m
   // Main's readings, on main's whole budget. Nothing S-71 adds draws on it, so what main refused it still refuses (senior review of PR #81).
   const first = { left: workLimit }
   let found = readings(command, names, shell, first)
-  // The text holds a `${`, `((` or `$((` that main's readings take as plain characters, and they finished without a read (when they ran out
-  // of work the answer is main's own): read it again with the brace forms, on a budget of its own. A refusal found there is added to main's,
-  // and if that budget runs out, a command that names a read tool is refused, as it is when main's does.
-  if (!found && first.braces && !first.ranOut) {
+  // The text holds a `${`, `((` or `$((` that main's readings take as plain characters (S-71), or a `#` that the shells read another way
+  // (S-72: one after a backslash-newline, or one right after a `(` or `)`), and they finished without a read (when they ran out of work the
+  // answer is main's own): read it again with those readings, on a budget of its own. A refusal found there is added to main's, and if that
+  // budget runs out, a command that names a read tool is refused, as it is when main's does.
+  if (!found && (first.braces || first.hashes) && !first.ranOut) {
     if (command.length > EXTRAS_MOST_CHARS) found = mentionsRead(command) ? UNREAD : null
     else found = readings(command, names, shell, { left: workLimit, extras: true })
   }
