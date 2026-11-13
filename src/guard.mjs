@@ -274,11 +274,18 @@ function mentionsRead(text) {
  *
  * @param {string} text
  * @param {boolean} [powershell]
- * @param {boolean} [comments] skip comments
+ * Where a `#` starts a comment (S-72, B-32 items 9 and 15), with `comments` on. It does where a word starts and the text before it is a blank,
+ * `;`, `&`, `|` or a line break that is really there (`boundary`): in Bash a backslash-newline is taken out before the shell reads the text,
+ * so a `#` after one is a comment only if it would be one with the two characters gone (PowerShell is left as main read it: its continuation
+ * is a blank). A `#` right after a `(` or `)` that is a separator is a comment in some places and a plain character in others, so `comments`
+ * can be `'paren'`, which also reads it as a comment, and `paren` is true when the text holds such a `#` (a reading with `comments` true read it
+ * as a character): the caller then reads the text a second time in `'paren'` mode, and the first reading stays as it was.
+ *
+ * @param {boolean | 'paren'} [comments] skip comments; 'paren' also takes a `#` after a `(` or `)` as the start of one
  * @param {Limit} [limit] the work budget: the text's length is taken off `left`, and reading stops (throws `OUT_OF_WORK`) when it goes below 0
  * @param {boolean} [dollarForms] read the three Bash forms above (Bash only: read as PowerShell, nothing changes)
  * @param {boolean | 'zsh' | 'bashq'} [braceForms] read the `${…}`, `((…))` and `$((…))` pieces above (pass `dollarForms` as well); 'zsh' counts a bare `{` inside `${…}`; 'bashq' starts a quote at a single quote inside a piece in double quotes
- * @returns {{ commands: string[][], nested: string[], open: boolean, defines: boolean, dollar: boolean, braces: boolean, bare: boolean, sq: boolean }}
+ * @returns {{ commands: string[][], nested: string[], open: boolean, defines: boolean, dollar: boolean, braces: boolean, bare: boolean, sq: boolean, paren: boolean }}
  */
 export function splitShell(text, powershell = false, comments = true, limit, dollarForms = false, braceForms = false) {
   if (limit && (limit.left -= text.length) < 0) throw OUT_OF_WORK
@@ -305,6 +312,14 @@ export function splitShell(text, powershell = false, comments = true, limit, dol
   let sq = false
   /** the reading that starts a quote at a single quote inside double quotes, as bash 3.2.57 does */
   const quoteInDouble = braceForms === 'bashq'
+  /** the reading that also takes a `#` right after a `(` or `)` as the start of a comment (S-72) */
+  const parenComments = comments === 'paren'
+  /** a `#` that follows a `(` or `)` was met and read as a character, which a reading with `parenComments` reads as a comment */
+  let paren = false
+  /** the last real character was a blank, `;`, `&`, `|` or a line break (a backslash-newline is no character: it leaves this as it was) */
+  let boundary = true
+  /** the last real character was a `(` or `)` that is a separator (a continuation leaves this as it was too) */
+  let afterParen = false
   /** where `dollarJoin` found a `(` or `'` */
   let look = -1
   /** the opener `opening` found: the index after it, the character that opens a level, the one that closes it, and the levels open */
@@ -493,16 +508,29 @@ export function splitShell(text, powershell = false, comments = true, limit, dol
   let i = 0
   while (i < text.length) {
     const c = text[i]
+    const began = i
+    /** this step read a backslash-newline: it is no character, so `boundary` and `afterParen` stay as they were */
+    let continued = false
     // Main's reading takes `${…}` and `((` apart; the text is marked, and the caller reads it again with the pieces taken whole (S-71).
     if (!braceForms && (c === '$' || c === '(') && opening(i)) braces = true
+    // A `#` where a word starts is a comment after a real blank or separator (S-72, B-32 item 15), and in PowerShell after the character
+    // before it as main read it. Right after a `(` or `)` it is one only in the `'paren'` reading; any other reading notes it.
+    let comment = false
+    if (comments && c === '#' && !inWord) {
+      comment = powershell ? i === 0 || ' \t\n;&|'.includes(text[i - 1]) : boundary
+      if (!comment && afterParen) {
+        if (parenComments) comment = true
+        else paren = true
+      }
+    }
     if (c === escape) {
       const skip = continuation(i)
       if (skip === 0) {
         word += text[i + 1] ?? ''
         inWord = true
-      }
+      } else continued = true
       i += skip || 2
-    } else if (comments && c === '#' && !inWord && (i === 0 || ' \t\n;&|'.includes(text[i - 1]))) {
+    } else if (comment) {
       const end = text.indexOf('\n', i)
       i = end === -1 ? text.length : end
     } else if (comments && powershell && c === '<' && text[i + 1] === '#' && !inWord) {
@@ -594,9 +622,15 @@ export function splitShell(text, powershell = false, comments = true, limit, dol
       inWord = true
       i++
     }
+    // What the last real character was, for the next `#`. Only a step that took exactly one character can leave a blank, separator or
+    // parenthesis behind (a word, a quote, a piece or an escape ends in some other character, or is longer).
+    if (!continued) {
+      boundary = i === began + 1 && ' \t\n;&|'.includes(c)
+      afterParen = i === began + 1 && (c === '(' || c === ')')
+    }
   }
   endCommand()
-  return { commands, nested, open, defines, dollar, braces, bare, sq }
+  return { commands, nested, open, defines, dollar, braces, bare, sq, paren }
 }
 
 /**
@@ -923,7 +957,7 @@ function nextMatch(words, test) {
  * @param {string[]} words one simple command
  * @param {Set<string>} names
  * @param {number} depth
- * @param {boolean} comments the words come from a reading that skips comments
+ * @param {boolean | 'paren'} comments the words come from a reading that skips comments
  * @param {Limit} limit the work budget, and the marks of S-68 (`checkCommand` always passes it)
  * @returns {string | null} the reason, when the command is a direct read
  */
@@ -1052,7 +1086,7 @@ function readInWords(words, names, depth, comments, limit) {
  * @param {Set<string>} names
  * @param {number} depth
  * @param {boolean} powershell read the text as PowerShell, not as a POSIX shell
- * @param {boolean} comments skip comments and look for a read anywhere in a command; false is main's reading
+ * @param {boolean | 'paren'} comments skip comments and look for a read anywhere in a command; false is main's reading
  * @param {Limit} limit the work budget, and the marks of S-68 (`checkCommand` always passes it)
  * @param {boolean} [refuseOpen] refuse a text that ends inside a quote, a block comment or `$(` and names a read tool, when nothing else was found
  * @returns {string | null}
@@ -1070,10 +1104,10 @@ function readInShell(text, names, depth, powershell, comments, limit, refuseOpen
   // text was just built from part of a text already charged (words joined, a `$( )` slice, the word after `bash -c`), and main builds each
   // script it reads uncharged too, so the work stays in step. Only readings inside a copy are remembered, so a text with no split word keeps
   // nothing (remembering every reading tripled the memory of an 8 MB Bash text; round-2 review).
-  const how = depth * 16 + (powershell ? 8 : 0) + (comments ? 4 : 0) + (refuseOpen ? 2 : 0) + (limit.strict ? 1 : 0)
+  const how = depth * 32 + (comments === 'paren' ? 16 : 0) + (powershell ? 8 : 0) + (comments ? 4 : 0) + (refuseOpen ? 2 : 0) + (limit.strict ? 1 : 0)
   if (limit.copies && limit.read?.[how]?.has(text)) return null
-  let { commands, nested, open, defines, dollar, braces } = splitShell(text, powershell, comments, limit)
-  /** @param {{ commands: string[][], nested: string[], open: boolean, defines: boolean }} more another reading of the same text: add what it finds that the readings so far did not */
+  let { commands, nested, open, defines, dollar, braces, paren } = splitShell(text, powershell, comments, limit)
+  /** @param {{ commands: string[][], nested: string[], open: boolean, defines: boolean, paren: boolean }} more another reading of the same text: add what it finds that the readings so far did not */
   const add = (more) => {
     const known = new Set(commands.map((words) => JSON.stringify(words)))
     commands = commands.concat(more.commands.filter((words) => !known.has(JSON.stringify(words))))
@@ -1081,6 +1115,8 @@ function readInShell(text, names, depth, powershell, comments, limit, refuseOpen
     nested = nested.concat(more.nested.filter((script) => !scripts.has(script)))
     open ||= more.open
     defines ||= more.defines
+    // Any reading that met a `#` after a parenthesis (a reading of the pieces can reach one that the first does not) asks for the paren reading.
+    paren ||= more.paren
   }
   if (dollar) {
     // The text holds a Bash form that main read as plain characters (S-70, B-32 items 2, 3 and 20). It is read a second time with the forms
@@ -1126,6 +1162,14 @@ function readInShell(text, names, depth, powershell, comments, limit, refuseOpen
     const found = readScript(script, names, depth + 1, powershell, comments, limit)
     if (found) return found
   }
+  if (paren && comments === true) {
+    // The text holds a `#` right after a `(` or `)` that the readings above took as a plain character (S-72, B-32 item 9). Shells differ here (a
+    // comment in one, part of a word in the other), so it is read once more with that `#` as a comment, in a mode of its own: the readings above
+    // are unchanged, so nothing they refused is let through, and the scripts it reaches are read in this mode only (never all three ways again).
+    // Only a text with such a `#` is read again, so every other text costs what it did.
+    const found = readInShell(text, names, depth, powershell, 'paren', limit, refuseOpen)
+    if (found) return found
+  }
   if (refuseOpen && open && mentionsRead(text)) return UNCLOSED
   if (limit.copies) ((limit.read ??= [])[how] ??= new Set()).add(text)
   return null
@@ -1162,13 +1206,13 @@ function readBoth(text, names, depth, powershell, limit, refuseOpen) {
  * @param {Set<string>} names
  * @param {number} depth
  * @param {boolean} powershell
- * @param {boolean} comments
+ * @param {boolean | 'paren'} comments
  * @param {Limit} [limit] the work budget
  * @param {boolean} [refuseOpen]
  * @returns {string | null}
  */
 function readScript(text, names, depth, powershell, comments, limit, refuseOpen) {
-  return comments ? readInShell(text, names, depth, powershell, true, limit, refuseOpen) : readBoth(text, names, depth, powershell, limit, refuseOpen)
+  return comments ? readInShell(text, names, depth, powershell, comments, limit, refuseOpen) : readBoth(text, names, depth, powershell, limit, refuseOpen)
 }
 
 /**
