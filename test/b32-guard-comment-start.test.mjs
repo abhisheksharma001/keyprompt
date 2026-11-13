@@ -194,6 +194,37 @@ test('budget: the join and paren readings never use the work that main\'s readin
   }
 })
 
+test('budget: a marked script read before a later one does not use the work the later one needs (the extras have a pass of their own)', () => {
+  // Each `$(true $(a)<continuation>#…)` holds a `#` that the join reading reads another way. Made in main's own pass, that reading used the
+  // budget that the last substitution, which holds an obfuscated read, needed. Main refuses it; found by a sweep of lowered budgets.
+  const obfuscated = "eval security fi\\$\\'nd\\'-generic-password -s keyprompt -w"
+  for (const copies of [2, 4]) {
+    const text = `${'$(true $(a)\\\n# y) '.repeat(copies)}$(${obfuscated})`
+    for (const shell of BASH_TOOLS) {
+      const found = checkCommand(text, SAVED, shell, 4 * text.length + 10)
+      assert.ok(found, `should refuse (${shell ?? 'both ways'}, ${copies} copies): ${JSON.stringify(text)}`)
+    }
+  }
+})
+
+test('both kinds of `#` in one text: the join reading asks for the paren reading, so a quote cannot hide a read after either (items 9 and 15)', () => {
+  for (const text of [
+    `true $(a)\\\n# x\n(true)# don't\n${READ}`,
+    `(true)# don't\ntrue $(a)\\\n# x\n${READ}`,
+    `true $(a)\\\n# x\n(# don't\n${READ}\n)`,
+  ]) {
+    for (const shell of BASH_TOOLS) denied(text, shell)
+  }
+})
+
+test('powershell: a backtick-newline stays a blank (unchanged from main), and a `#` after `{`, `}` or a carriage return is not noted', () => {
+  // The join reading is Bash only. PowerShell's own continuation is treated as main treated it; `{` and `}` are left as main read them.
+  allowed(`(1)#x\nWrite-Output $(1)\`\n# ${PS_READ}`, 'powershell')
+  assert.equal(splitShell('{#b', true, true).paren, false)
+  assert.equal(splitShell('}#b', true, true).paren, false)
+  assert.equal(splitShell('a\r#b', false, true).paren, false)
+})
+
 test('size: the extra readings are made up to 1,000,000 characters; past that a command that names a read tool is refused, as for S-71', () => {
   const read = `(true)# don't\n${READ}`
   const padded = (length) => `${read}${' '.repeat(length - read.length)}`
