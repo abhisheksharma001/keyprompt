@@ -513,7 +513,6 @@ export function splitShell(text, powershell = false, comments = true, limit, dol
   let i = 0
   while (i < text.length) {
     const c = text[i]
-    const began = i
     /** this step read a backslash-newline: it is no character, so `boundary` and `afterParen` stay as they were */
     let continued = false
     // Main's reading takes `${…}` and `((` apart; the text is marked, and the caller reads it again with the pieces taken whole (S-71).
