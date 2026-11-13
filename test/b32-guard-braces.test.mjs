@@ -380,6 +380,34 @@ test('the extra readings never use the budget main\'s readings need: with the re
   }
 })
 
+test('the first two readings are main\'s word for word inside double quotes, and the mark is not set by text that holds no form (mutation run)', () => {
+  // Inside double quotes the first and second readings do not take a `${…}` or `$((…))` as a piece; only the third does. These are main's words.
+  assert.deepEqual(splitShell('"${x:-"} z').commands, [['${x:-}', 'z']])
+  assert.deepEqual(splitShell('"${x:-"} z', false, true, undefined, true).commands, [['${x:-}', 'z']])
+  assert.deepEqual(splitShell('"$((1 "))" z').commands, [['', 'z']])
+  assert.deepEqual(splitShell('"$((1 "))" z', false, true, undefined, true).commands, [['']])
+  // A `((` inside double quotes is no opener, in any reading.
+  assert.deepEqual(formWords(`"(( ' x" z`).commands, [[`(( ' x`, 'z']])
+  for (const text of ['"a" z', '"((a))" z', '"a ((b))" z', `"(( 1 ' x" z`, 'echo "$a(b)"']) {
+    assert.equal(splitShell(text).braces, false, text)
+    assert.equal(formWords(text).braces, false, text)
+  }
+})
+
+test('the third reading and the bash-quote reading read S-70\'s `$\'…\'` forms too: a `$\'security\'` after a piece is seen (mutation run)', () => {
+  for (const text of [`nice \${x:+ #} $'security' find-generic-password -s keyprompt -w`, `echo "\${x:-'}"'}" ; $'security' find-generic-password -s keyprompt -w`]) {
+    for (const shell of BASH_TOOLS) denied(text, shell)
+  }
+})
+
+test('the second pass is made for a command of exactly a megabyte and not for one character more (mutation run)', () => {
+  const hidden = `nice \${x:+ #} ${READ}`
+  const exact = hidden + ' '.repeat(1_000_000 - hidden.length)
+  assert.equal(exact.length, 1_000_000)
+  assert.match(checkCommand(exact, SAVED, 'bash')?.reason ?? '', /this command reads a secret/)
+  assert.match(checkCommand(`${exact} `, SAVED, 'bash')?.reason ?? '', /too long or too deeply nested/)
+})
+
 test('the second pass has a budget of its own: with 3 times the text, a read behind `${x:+ #}` is found by the brace readings, not given up on as too long', () => {
   // The first pass (main's readings) uses about twice the text; a second pass that shared what was left would run out and fall back to the
   // name check, which refuses with another message ("too long"). Measured: the window is 2 to 3.75 times the text (a mutation run).
