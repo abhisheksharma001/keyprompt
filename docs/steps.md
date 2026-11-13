@@ -1474,18 +1474,19 @@ Why that order: S-66 first, so that the extra readings later steps add cannot ma
 **Locked tests:** every file in `test/` at the base commit.
 **Today:** `true $(true)\`, a line break, `# ; timeout 5 <read>` passes: after the continuation, line 141 sees `\n` before the `#` and takes it for a comment. `(true)# don't`, a line break, `<read>` passes: line 141 reads that `#` as part of a word, so the `'` opens a quote that swallows the read. Main swallows it too.
 **Change:**
-1. Item 15: in `splitShell`, keep a `boundary` flag: true at the start and after a blank, `;`, `&`, `|` or newline that is really there; false after any other character. A line continuation (lines 134-140) leaves it as it was. The comment test on line 141 uses `boundary`, not `text[i - 1]`.
-2. Item 9: add an option to `splitShell`, `parenComments`, under which a `#` right after `(` or `)` also starts a comment (Bash and PowerShell modes).
-3. `readBoth` (line 436) adds that third reading next to the two it has: comments on with `parenComments`. Refuse if any of the three finds a read. The third reading reads the scripts it reaches in its own mode only (one more pass per script, never all three ways again), so the work grows by a fixed factor, not per nesting level.
-4. The three readings share S-67's one budget.
+**Built differently from the first plan (item 48, found by the differential run):** the first plan put a `boundary` flag in place of `text[i - 1]` in the comment test and a third reading in `readBoth` on S-67's one budget. The first build did that and let through a text main refused, because the flag changed main's own reading (shared rule 7: a new reading is added to main's, never put in its place), and the extra readings shared main's budget (item 46's class). What is built:
+1. Main's comment test in `splitShell` is unchanged. With `comments` true it notes two marks and does not change its answer: `hashJoined` (a `#` that main takes for a comment because the line break of a backslash-newline came before it, and a real boundary did not) and `paren` (a `#` right after a `(` or `)` that is a separator, which main takes for a word).
+2. Two more values of `comments`: `'join'` (Bash only) keeps a `boundary` flag, true at the start and after a blank, `;`, `&`, `|` or line break that is really there, false after any other character, which a continuation leaves as it was; the comment test uses it, not `text[i - 1]`. `'paren'` is `'join'` plus: a `#` right after a `(` or `)` that is a separator also starts a comment (Bash and PowerShell; PowerShell keeps main's rule otherwise).
+3. `readInShell` makes these readings only in the pass of their own that S-71 added (`limit.extras`, a budget of its own), and only for a text main's reading marked: `'join'` when `hashJoined`, else `'paren'`; the `'join'` reading asks for `'paren'` when it meets a `#` after a parenthesis. Each reads the scripts it reaches in its own mode only (`readScript` passes the mode on), so the work grows by a fixed factor, never per nesting level. A text with neither mark costs what it did.
+4. `checkCommand` makes the second pass for the S-71 mark or this step's (`limit.hashes`). A command over 1,000,000 characters does not get it (S-71's rule): one that names a read tool is refused as when a budget runs out.
 **Acceptance:**
 - WHEN `true $(true)\` + line break + `# ; timeout 5 <read>` is checked as Bash or Monitor, or the same with `<(true)`, `` `true` `` or `a=(x)` THEN the guard SHALL deny.
 - WHEN `(true)# don't` + line break + `<read>`, or `(# don't` / `<read>` / `)` on three lines, is checked as Bash or Monitor THEN the guard SHALL deny.
 - WHEN `(1)# don't` + line break + `Get-StoredCredential -Target keyprompt:X` is checked as PowerShell THEN the guard SHALL deny.
 - WHEN the locked `cat <(true)# ; <read>`, `a=(x)# ; <read>` and `ls (#i)README ; <read>` cases run THEN they SHALL still be denied.
 - WHEN the S-66 timing test runs THEN it SHALL pass.
-**Verify:** shared rules 2 to 8. Two break tests (`text[i - 1]` back in line 141; no third reading), each failing only its own cases. The PR states the slowdown on the S-66 shapes and on B-32 item 17's 1 MB shape (F13).
-**Must not:** replace either of the two existing readings; read nested scripts a third way at every depth (that multiplies the work per level); plus the shared rules.
+**Verify:** shared rules 2 to 8. Break tests (the boundary flag undone; no `'join'` reading; no `'paren'` reading; the extras made in main's own pass), each failing only its own cases. The PR states the slowdown on the S-66 shapes and on B-32 item 17's 1 MB shape (F13).
+**Must not:** replace any existing reading, main's comment test included; read nested scripts a third way at every depth (that multiplies the work per level); put the extra readings on main's budget; plus the shared rules.
 
 ### S-73 — Read as PowerShell, a here-string's body is cut out and checked as its own script, so its quotes cannot swallow later lines (bug B-32 item 7)
 
